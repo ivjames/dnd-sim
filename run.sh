@@ -7,7 +7,7 @@ set -eu
 
 cd "$(dirname "$0")"
 
-PORT="${PORT:-8045}"
+PORT="${PORT:-8071}"
 export PORT
 export PYTHONUNBUFFERED=1
 

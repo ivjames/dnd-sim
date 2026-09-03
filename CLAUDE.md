@@ -17,10 +17,11 @@ about this site rather than about the platform. For the box itself, read the
 
 This repo's own runbook (`deploy/INSTALL.md`, `ecosystem.config.js`) and the
 lab980 conventions disagree on the **checkout dir** (`/opt/dnd-sim` vs
-`/var/www/dndsim`), the **port** (8045 vs the 8060+ range) and **where the
-API key lives** (`/etc/environment` vs a local `.env`). None of that has been
-resolved here — `DEPLOY.md` "Open decisions (conflicts with lab980
-conventions)" lays out both sides of each. Until they are decided,
+`/var/www/dndsim`) and **where the API key lives** (`/etc/environment` vs a
+local `.env`). Neither is resolved here — `DEPLOY.md` "Open decisions
+(conflicts with lab980 conventions)" lays out both sides of each. (The third
+one, the port, was decided 2026-09-03: **8071**, first free in the 8060+ range
+on the droplet.) Until the other two are decided,
 `deploy/INSTALL.md` is the authored runbook and `DEPLOY.md`'s bring-up block
 is the conventions-shaped alternative. Don't quietly pick a side in a code
 change; make it a decision.
@@ -28,7 +29,7 @@ change; make it a decision.
 ## Shape
 
 A **proxied app**: nginx fronts a pm2-managed **Python 3.11 / Flask** process
-on `127.0.0.1:8045`. Not Node — there is no `package.json`, no `npm ci`, no
+on `127.0.0.1:8071`. Not Node — there is no `package.json`, no `npm ci`, no
 build. The install is `python3 -m venv .venv && .venv/bin/pip install -r
 requirements.txt`, and `requirements.txt` is deliberately tiny (Flask,
 anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).

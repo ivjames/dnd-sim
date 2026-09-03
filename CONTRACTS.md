@@ -256,7 +256,7 @@ class Game:
 
 ## 5. web/
 
-Flask app factory `web/app.py: create_app() -> Flask`; `python -m web.app` runs on `PORT` env (default 8045), host 127.0.0.1.
+Flask app factory `web/app.py: create_app() -> Flask`; `python -m web.app` runs on `PORT` env (default 8071), host 127.0.0.1.
 
 Routes:
 ```

@@ -33,7 +33,7 @@ One test per rule in the §1.6 list. Plus a scripted full combat: build the 4 PC
 Set `ANTHROPIC_API_KEY`, run `goblin_ambush` with `--live`, budget $0.50. Read the transcript. Expect to tune `agents/prompts/*.txt` (narration length, player tactics, JSON discipline). Check the ledger: target well under $0.25 for a 4-goblin fight; if higher, shrink `views.py` output or the rules digest.
 
 ### 5. Deploy (lab980 protocol)
-`deploy/INSTALL.md`. Port 8045, PM2 `dnd-sim`, HTTP-only nginx vhost first, certbot after DNS. `instances: 1` is mandatory (games are in-process threads).
+`deploy/INSTALL.md`. Port 8071, PM2 `dnd-sim`, HTTP-only nginx vhost first, certbot after DNS. `instances: 1` is mandatory (games are in-process threads).
 
 ## Non-negotiables
 - LLMs never decide outcomes; the engine does. Any prompt that lets the DM "declare" a hit is a bug.

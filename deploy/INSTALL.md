@@ -1,6 +1,6 @@
 # Deploying dnd-sim on lab980
 
-Target: `dndsim.lab980.com` → `127.0.0.1:8045`, PM2 process `dnd-sim`.
+Target: `dndsim.lab980.com` → `127.0.0.1:8071`, PM2 process `dnd-sim`.
 
 Order matters: **app first, then nginx over HTTP, then DNS, then certbot.**
 Never ship an SSL server block before certbot has run.
@@ -8,7 +8,7 @@ Never ship an SSL server block before certbot has run.
 ## 1. Check the port is free
 
 ```sh
-sudo ss -lntp | grep 8045     # expect nothing (8044 is qa-engine)
+sudo ss -lntp | grep 8071     # expect nothing (8070 is ffc's centeredge mock)
 ```
 
 ## 2. Clone and build
@@ -28,8 +28,8 @@ chmod +x run.sh
 
 ```sh
 cd /opt/dnd-sim
-DND_SIM_MOCK=1 PORT=8045 ./run.sh &
-curl -s localhost:8045/api/health      # {"ok":true,"mock":true,"games_running":0}
+DND_SIM_MOCK=1 PORT=8071 ./run.sh &
+curl -s localhost:8071/api/health      # {"ok":true,"mock":true,"games_running":0}
 kill %1
 ```
 

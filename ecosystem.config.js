@@ -21,7 +21,7 @@ module.exports = {
       max_memory_restart: '600M',
       kill_timeout: 8000,             // let in-flight SSE writes drain
       env: {
-        PORT: '8045',
+        PORT: '8071',
         HOST: '127.0.0.1',
         DND_SIM_DB: '/opt/dnd-sim/data/dndsim.sqlite3',
         PYTHONUNBUFFERED: '1',

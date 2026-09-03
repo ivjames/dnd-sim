@@ -1,7 +1,7 @@
 # dnd-sim — autonomous D&D 5e simulation
 
 Working name: `dnd-sim` (product name undecided; Jimmy names it later).
-Target: `dndsim.lab980.com`, Python app, port **8045** (next after qa-engine's 8044 — confirm with Jimmy), PM2 process `dnd-sim`.
+Target: `dndsim.lab980.com`, Python app, port **8071** (first free port in lab980's 8060+ range, confirmed on the droplet 2026-09-03), PM2 process `dnd-sim`.
 
 ## What it is
 A server that runs a D&D 5e game with no humans at the table:
@@ -60,5 +60,5 @@ Builders must not edit files outside their ownership. Cross-layer needs go throu
 
 ## Deploy (lab980 protocol)
 1. `git clone` to `/opt/dnd-sim` (or wherever the other Python apps live — confirm), `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
-2. `pm2 start ecosystem.config.js` (process `dnd-sim`, port 8045, `ANTHROPIC_API_KEY` from `/etc/environment`).
-3. nginx: HTTP-only vhost for `dndsim.lab980.com` → `127.0.0.1:8045`, SSE-safe (`proxy_buffering off`, long `proxy_read_timeout`). Point DNS. Then `certbot --nginx -d dndsim.lab980.com`. Never ship SSL blocks before certbot has run.
+2. `pm2 start ecosystem.config.js` (process `dnd-sim`, port 8071, `ANTHROPIC_API_KEY` from `/etc/environment`).
+3. nginx: HTTP-only vhost for `dndsim.lab980.com` → `127.0.0.1:8071`, SSE-safe (`proxy_buffering off`, long `proxy_read_timeout`). Point DNS. Then `certbot --nginx -d dndsim.lab980.com`. Never ship SSL blocks before certbot has run.

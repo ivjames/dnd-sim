@@ -1,10 +1,10 @@
 """Flask app factory for dnd-sim.
 
-    python -m web.app          # host 127.0.0.1, port $PORT (default 8045)
+    python -m web.app          # host 127.0.0.1, port $PORT (default 8071)
     DND_SIM_MOCK=1 python -m web.app
 
 Env:
-    PORT              listen port (default 8045)
+    PORT              listen port (default 8071)
     DND_SIM_DB        SQLite path (default ./data/dndsim.sqlite3)
     DND_SIM_MOCK      "1" → MockLLMClient, no API calls
     ANTHROPIC_API_KEY required for live mode (on lab980: /etc/environment)
@@ -83,7 +83,7 @@ def main() -> None:
         level=os.environ.get("DND_SIM_LOGLEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    port = int(os.environ.get("PORT", "8045"))
+    port = int(os.environ.get("PORT", "8071"))
     host = os.environ.get("HOST", "127.0.0.1")
     app = create_app()
     log = logging.getLogger("dnd-sim")

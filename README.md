@@ -47,7 +47,7 @@ python3 -m venv .venv
 DND_SIM_MOCK=1 .venv/bin/python -m web.app
 ```
 
-Open <http://127.0.0.1:8045/>, hit **New game**, pick a preset, start.
+Open <http://127.0.0.1:8071/>, hit **New game**, pick a preset, start.
 
 Headless, same thing without the browser:
 
@@ -73,7 +73,7 @@ Tests:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `PORT` | `8045` | Listen port. |
+| `PORT` | `8071` | Listen port. |
 | `HOST` | `127.0.0.1` | Bind address. Keep it loopback; nginx fronts it. |
 | `ANTHROPIC_API_KEY` | — | Required for live mode. On lab980 it lives in `/etc/environment`. |
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
@@ -114,7 +114,7 @@ prompt-cached, and summaries are written by the cheap model.
 ## Deployment
 
 See [deploy/INSTALL.md](deploy/INSTALL.md). Short version: PM2 process `dnd-sim`
-on 127.0.0.1:8045, nginx vhost proxying `dndsim.lab980.com` with
+on 127.0.0.1:8071, nginx vhost proxying `dndsim.lab980.com` with
 `proxy_buffering off` (SSE dies without it), HTTP first, `certbot --nginx` only
 after DNS resolves.
 

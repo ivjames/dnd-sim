@@ -4,7 +4,7 @@ Target: **https://dndsim.lab980.com** — served from the lab980 droplet (conven
 the `ivjames/lab980.com` repo's `CLAUDE.md`).
 
 Shape: nginx proxies to a pm2-managed **Python/Flask** process on
-`127.0.0.1:8045`. This is not a Node app: pm2 runs `./run.sh`, which execs
+`127.0.0.1:8071`. This is not a Node app: pm2 runs `./run.sh`, which execs
 `.venv/bin/python -m web.app`. There is no `package.json`, no `npm ci` and no
 build step — `pip install -r requirements.txt` into `.venv` is the whole
 install. The pm2 process is named **`dnd-sim`** (from `ecosystem.config.js`),
@@ -31,14 +31,15 @@ match the winner in the same PR.
    to match its pm2 entry to a site dir. `bin/dndsim` derives its root from its
    own path, so it works under either.
 
-2. **Port.** Every project file says **8045** — PLAN.md, README, INSTALL.md,
-   the vhost, `ecosystem.config.js`, `run.sh` and `web/app.py`'s default —
-   chosen as "next after qa-engine's 8044", and PLAN.md itself marks it
-   "confirm with Jimmy". lab980 allocates app ports from **8060+**; per
-   `.claude/sites.json`, 8062 and 8070+ are free, and 8045 is registered to
-   nothing. If it moves, it moves in all of those files plus this one and
-   `bin/dndsim`'s `DNDSIM_PORT` default, and in the vhost on the box. Whatever
-   is chosen, `provision-site --port <n>` must be passed explicitly.
+2. **Port — decided: 8071** (2026-09-03). The repo was authored on 8045,
+   "next after qa-engine's 8044", which is below lab980's **8060+** range.
+   A scan of the droplet (listening sockets + nginx `proxy_pass` targets +
+   the registry) showed 8060–8070 and 8081 in use and 8071 the first free
+   port, so 8071 it is — PLAN.md, README, INSTALL.md, the vhost,
+   `ecosystem.config.js`, `run.sh`, `web/app.py`'s default and `bin/dndsim`'s
+   `DNDSIM_PORT` all say so now. `provision-site --port 8071` must still be
+   passed explicitly, or it allocates its own and the vhost proxies to a port
+   nothing listens on.
 
 3. **Secrets.** `deploy/INSTALL.md` puts `ANTHROPIC_API_KEY` in
    `/etc/environment` and has pm2 inherit it from a login shell. lab980 keeps
@@ -68,13 +69,13 @@ before TLS is added, and re-check it after certbot has run.
 
 ## One-time bring-up (on the droplet, as root) — conventions-shaped
 
-Read "Open decisions" first. This block assumes `/var/www/dndsim`, port 8045
+Read "Open decisions" first. This block assumes `/var/www/dndsim`, port 8071
 and a local `.env`; the repo's `ecosystem.config.js` does not yet agree with
 the first of those, so `pm2 start ecosystem.config.js` from `/var/www/dndsim`
 will run the app from `/opt/dnd-sim` (and fail) until decision 1 lands.
 
 ```bash
-provision-site dndsim ivjames/dnd-sim --port 8045
+provision-site dndsim ivjames/dnd-sim --port 8071
 cd /var/www/dndsim
 python3 -m venv .venv
 .venv/bin/pip install -U pip
@@ -86,8 +87,8 @@ $EDITOR .env                         # provision-site seeded PORT; add the rest 
 $EDITOR /etc/nginx/sites-available/dndsim.lab980.com && nginx -t && systemctl reload nginx
 
 # smoke test in mock mode before pm2 — no key, no API calls
-DND_SIM_MOCK=1 PORT=8045 ./run.sh & sleep 2
-curl -s 127.0.0.1:8045/api/health    # {"ok":true,"mock":true,"games_running":0}
+DND_SIM_MOCK=1 PORT=8071 ./run.sh & sleep 2
+curl -s 127.0.0.1:8071/api/health    # {"ok":true,"mock":true,"games_running":0}
 kill %1
 
 # the app reads process env only (decision 3): export .env into this shell,
@@ -105,9 +106,9 @@ its own way afterward.
 
 Two details in that first line matter more than they look:
 
-- **`--port 8045` is not optional.** Without it `provision-site` picks the
+- **`--port 8071` is not optional.** Without it `provision-site` picks the
   next free port from 8060 and writes *that* into the vhost, while this repo's
-  CLI, `.env` and app config all use `8045`. nginx then proxies to a port
+  CLI, `.env` and app config all use `8071`. nginx then proxies to a port
   nothing is listening on and every request is a 502 that looks like the app is
   down while it runs perfectly on the wrong port.
 - **`provision-site` seeds `.env` with `PORT=` itself** (only if there isn't one
@@ -134,7 +135,7 @@ process environment, not this file (decision 3).
 
 | key | what it is |
 |---|---|
-| `PORT` | `8045` — must match the vhost's `proxy_pass` (seeded by `provision-site`) |
+| `PORT` | `8071` — must match the vhost's `proxy_pass` (seeded by `provision-site`) |
 | `HOST` | `127.0.0.1` — bind address; keep it loopback, nginx fronts it |
 | `ANTHROPIC_API_KEY` | required for live mode; the real money switch |
 | `DND_SIM_MOCK` | unset in production; `1` → `MockLLMClient`, zero API calls |
@@ -195,4 +196,4 @@ nginx is buffering.
 
 - `DNDSIM_FQDN` — default `dndsim.lab980.com`
 - `DNDSIM_BRANCH` — default `main`
-- `DNDSIM_PORT` — default `8045`
+- `DNDSIM_PORT` — default `8071`

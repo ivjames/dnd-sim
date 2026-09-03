@@ -2,7 +2,7 @@
 # dndsim — operate CLI for dndsim.lab980.com (dnd-sim).
 #
 # A proxied app site: nginx fronts a pm2-managed Python/Flask process on
-# 127.0.0.1:8045. The pm2 process is `dnd-sim` (ecosystem.config.js — not the
+# 127.0.0.1:8071. The pm2 process is `dnd-sim` (ecosystem.config.js — not the
 # stub), which runs ./run.sh, which execs .venv/bin/python -m web.app. No
 # Node, no npm, no build step: the install is pip into .venv. Bring-up is
 # `provision-site` (lab980's CLAUDE.md) or deploy/INSTALL.md — DEPLOY.md's
@@ -16,7 +16,7 @@
 # Env overrides:
 #   DNDSIM_FQDN     default dndsim.lab980.com
 #   DNDSIM_BRANCH   default main
-#   DNDSIM_PORT     default 8045
+#   DNDSIM_PORT     default 8071
 #
 # The app dir is wherever this script's checkout lives (/var/www/dndsim by
 # lab980 convention, /opt/dnd-sim per deploy/INSTALL.md — an open decision) —
@@ -28,7 +28,7 @@ SELF="$(readlink -f "$0")"
 ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
-PORT="${DNDSIM_PORT:-8045}"
+PORT="${DNDSIM_PORT:-8071}"
 APP="dnd-sim"                 # pm2 process name, from ecosystem.config.js
 PY=".venv/bin/python"         # relative to $ROOT; run.sh picks the same one
 HEALTH="/api/health"          # {"ok":true,"mock":bool,"games_running":n}
@@ -48,7 +48,7 @@ Usage:
   dndsim logs [-n N]             tail pm2 logs
   dndsim status                  HEAD + pm2 + local/public /api/health probe + cert
 
-Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8045).
+Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071).
 USAGE
 }
 
