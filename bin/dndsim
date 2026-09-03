@@ -29,8 +29,8 @@
 # `env -u <every known key> -u GITHUB_TOKEN`, so pm2's dump.pm2 never carries
 # the root shell's copies. The process gets them from run.sh, not from pm2.
 #
-# The set of keys is KNOWN_KEYS below (one per LLM platform the app can seat
-# at the table). Any subset is fine: only ANTHROPIC_API_KEY is warned about
+# The set of keys is KNOWN_KEYS below (one per LLM platform or inference host
+# the app can seat at the table — llm/providers.py PROVIDERS, same names). Any subset is fine: only ANTHROPIC_API_KEY is warned about
 # when missing, because the default DM needs it; a seat whose platform has
 # no key fails at game creation with a message naming the variable. A new
 # platform needs no code change here — DNDSIM_KEYS overrides the list.
@@ -39,7 +39,9 @@
 #   DNDSIM_FQDN         default dndsim.lab980.com
 #   DNDSIM_BRANCH       default main
 #   DNDSIM_PORT         default 8071
-#   DNDSIM_KEY_SOURCE   default /etc/environment  (where the keys are adopted from)
+#   DNDSIM_KEY_SOURCE   colon-separated files the keys are adopted from, first hit wins
+#                       (default /etc/environment:/var/www/ffc/server/.env — the second
+#                       is where this box's platform keys were found on 2026-09-03)
 #   DNDSIM_ENV_FILE     default <app dir>/.env    (where they are adopted to)
 #   DNDSIM_KEYS         space-separated list of key names to adopt/unset
 #                       (default: the KNOWN_KEYS list below)
@@ -55,13 +57,14 @@ ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
 PORT="${DNDSIM_PORT:-8071}"
-KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
+KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment:/var/www/ffc/server/.env}"
+IFS=: read -r -a KEY_SOURCES <<< "$KEY_SOURCE"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
 # The platform API keys, one per LLM platform: adopted from KEY_SOURCE into
 # ENV_FILE by deploy, unset for pm2's launch, reported by status/keys. Names
 # only ever appear in output — never values. DNDSIM_KEYS (space-separated)
 # replaces the list, so a new platform needs no code change.
-DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY"
+DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY SILICONFLOW_API_KEY DEEPINFRA_API_KEY"
 read -r -a KNOWN_KEYS <<< "${DNDSIM_KEYS:-$DEFAULT_KNOWN_KEYS}"
 REQUIRED_KEY="ANTHROPIC_API_KEY"   # the default DM's platform; the only key whose absence is a warning
 REPO="ivjames/dnd-sim"
@@ -111,9 +114,13 @@ Known keys (any subset is fine; ANTHROPIC_API_KEY is the one the default DM
 needs, and a seat whose platform has no key fails at game creation naming it):
   ANTHROPIC_API_KEY  OPENAI_API_KEY  GEMINI_API_KEY (or GOOGLE_API_KEY, adopted
   under the GEMINI name)  XAI_API_KEY  MISTRAL_API_KEY  DEEPSEEK_API_KEY
+  SILICONFLOW_API_KEY  DEEPINFRA_API_KEY  (the last two are hosts, seated as
+  siliconflow:<id> / deepinfra:<id>; CARTESIA_API_KEY in the store is
+  text-to-speech, not an LLM platform, and is deliberately not on this list)
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
-     DNDSIM_KEY_SOURCE (default /etc/environment), DNDSIM_ENV_FILE (default ./.env),
+     DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment:/var/www/ffc/server/.env),
+     DNDSIM_ENV_FILE (default ./.env),
      DNDSIM_KEYS (space-separated key names; replaces the known list above).
 USAGE
 }
@@ -172,20 +179,25 @@ key_alias() {  # $1=KEY -> alias name on stdout ('' if none)
   case "$1" in GEMINI_API_KEY) printf 'GOOGLE_API_KEY';; esac
 }
 
-source_key_name() {  # $1=KEY -> the name KEY_SOURCE actually holds it under ('' if neither)
-  local key="$1" alias
-  if env_file_has "$KEY_SOURCE" "$key"; then printf '%s' "$key"; return 0; fi
+source_key_name() {  # $1=KEY -> "<file> <name>": the first source holding KEY (canonical
+  local key="$1" alias f  # name first, then its alias), '' if none does. Never the value.
   alias="$(key_alias "$key")"
-  if [ -n "$alias" ] && env_file_has "$KEY_SOURCE" "$alias"; then printf '%s' "$alias"; fi
+  for f in "${KEY_SOURCES[@]}"; do
+    if env_file_has "$f" "$key"; then printf '%s %s' "$f" "$key"; return 0; fi
+  done
+  for f in "${KEY_SOURCES[@]}"; do
+    if [ -n "$alias" ] && env_file_has "$f" "$alias"; then printf '%s %s' "$f" "$alias"; return 0; fi
+  done
   return 0
 }
 
 key_matrix() {  # $1=file [$2=--aliases] -> "present: A B  absent: C" (names only); aliases noted as A(via B)
-  local file="$1" aliases="${2:-}" key src present="" absent=""
+  local file="$1" aliases="${2:-}" key alias present="" absent=""
   for key in "${KNOWN_KEYS[@]}"; do
+    alias="$(key_alias "$key")"
     if env_file_has "$file" "$key"; then present="$present $key"
-    elif [ "$aliases" = "--aliases" ] && src="$(source_key_name "$key")" && [ -n "$src" ] && [ "$src" != "$key" ]; then
-      present="$present $key(via $src)"
+    elif [ "$aliases" = "--aliases" ] && [ -n "$alias" ] && env_file_has "$file" "$alias"; then
+      present="$present $key(via $alias)"
     else absent="$absent $key"; fi
   done
   printf 'present:%s  absent:%s' "${present:- none}" "${absent:- none}"
@@ -204,21 +216,22 @@ ensure_env() {
   # One pass over the known keys: adopt each one that .env lacks (absent or
   # empty) and the store has, under its canonical name. Never overwrites an
   # existing value; never prints one. A second run adopts nothing.
-  local key src val
+  local key hit srcf src val
   for key in "${KNOWN_KEYS[@]}"; do
     env_file_has "$envf" "$key" && continue
-    src="$(source_key_name "$key")"
-    [ -n "$src" ] || continue
-    val="$(env_file_get "$KEY_SOURCE" "$src")"
+    hit="$(source_key_name "$key")"
+    [ -n "$hit" ] || continue
+    srcf="${hit%% *}"; src="${hit#* }"
+    val="$(env_file_get "$srcf" "$src")"
     env_file_append "$envf" "$key" "$val"
     unset val
-    if [ "$src" = "$key" ]; then log "$envf: adopted $key from $KEY_SOURCE"
-    else log "$envf: adopted $key from $KEY_SOURCE (held there as $src)"; fi
+    if [ "$src" = "$key" ]; then log "$envf: adopted $key from $srcf"
+    else log "$envf: adopted $key from $srcf (held there as $src)"; fi
   done
   log "$envf: keys $(key_matrix "$envf")"
   if ! env_file_has "$envf" "$REQUIRED_KEY"; then
-    warn "no $REQUIRED_KEY in $envf or $KEY_SOURCE — the default DM needs it; live games will fail (mock mode still works)."
-    warn "put it in $KEY_SOURCE ($REQUIRED_KEY=sk-ant-...) and re-run: dndsim deploy"
+    warn "no $REQUIRED_KEY in $envf or any of: ${KEY_SOURCES[*]} — the default DM needs it; live games will fail (mock mode still works)."
+    warn "put it in ${KEY_SOURCES[0]} ($REQUIRED_KEY=sk-ant-...) and re-run: dndsim deploy"
   fi
   chmod 600 "$envf"
 }
@@ -533,8 +546,10 @@ cmd_status() {
     printf 'env:       %s missing — run: dndsim deploy\n' "$ENV_FILE"
     printf 'keys:      (no .env)\n'
   fi
-  if [ -r "$KEY_SOURCE" ]; then printf 'key store: %s  %s\n' "$KEY_SOURCE" "$(key_matrix "$KEY_SOURCE" --aliases)"
-  else printf 'key store: %s  unreadable\n' "$KEY_SOURCE"; fi
+  local f; for f in "${KEY_SOURCES[@]}"; do
+    if [ -r "$f" ]; then printf 'key store: %s  %s\n' "$f" "$(key_matrix "$f" --aliases)"
+    else printf 'key store: %s  unreadable\n' "$f"; fi
+  done
   printf 'upstream:  %s\n' "$(upstream_family 2>&1)"
   local vhost
   if vhost="$(vhost_path)"; then
@@ -564,11 +579,13 @@ cmd_keys() {
   printf 'known keys: %s\n' "${KNOWN_KEYS[*]}"
   if [ -e "$ENV_FILE" ]; then printf 'env:        %s  %s\n' "$ENV_FILE" "$(key_matrix "$ENV_FILE")"
   else printf 'env:        %s missing — run: dndsim deploy\n' "$ENV_FILE"; fi
-  if [ -r "$KEY_SOURCE" ]; then printf 'key store:  %s  %s\n' "$KEY_SOURCE" "$(key_matrix "$KEY_SOURCE" --aliases)"
-  else printf 'key store:  %s  unreadable\n' "$KEY_SOURCE"; fi
+  local f; for f in "${KEY_SOURCES[@]}"; do
+    if [ -r "$f" ]; then printf 'key store:  %s  %s\n' "$f" "$(key_matrix "$f" --aliases)"
+    else printf 'key store:  %s  unreadable\n' "$f"; fi
+  done
   printf 'pm2 unsets: %s\n' "$(pm2_unset_names)"
   if env_file_has "$ENV_FILE" "$REQUIRED_KEY"; then return 0; fi
-  warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Put it in $KEY_SOURCE and run: dndsim deploy"
+  warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Put it in ${KEY_SOURCES[0]} and run: dndsim deploy"
   return 1
 }
 

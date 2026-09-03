@@ -68,6 +68,26 @@ PRICES: dict[str, tuple[float, float]] = {
     # the budget stop errs on the side of stopping.
     "deepseek-v4-flash": (0.44, 1.32),
     "deepseek-v4-pro": (1.32, 3.96),
+    # hosts — keyed by the seat id as written, `provider:<host's model id>`
+    # (explicit form only; these rows have no prefixes). Case matters: the
+    # part after the colon is the host's id verbatim.
+    # siliconflow (international platform, api.siliconflow.com) —
+    # https://www.siliconflow.com/models . The usage object on this host has
+    # no cache-hit field, so cached input is billed as input here (errs toward
+    # stopping) and there is no CACHE_READ_PRICES row. Llama-3.3-70B-Instruct
+    # is not listed on the international platform: no row.
+    "siliconflow:deepseek-ai/DeepSeek-V3.2": (0.27, 0.42),
+    "siliconflow:deepseek-ai/DeepSeek-V3": (0.25, 1.0),
+    "siliconflow:Qwen/Qwen3-32B": (0.14, 0.57),
+    "siliconflow:Qwen/Qwen3-14B": (0.07, 0.28),
+    # deepinfra — https://deepinfra.com/pricing (standard tier; the model
+    # pages deepinfra.com/deepseek-ai/DeepSeek-V3.2, deepinfra.com/Qwen/Qwen3-32B
+    # and deepinfra.com/meta-llama/Llama-3.3-70B-Instruct-Turbo say the same).
+    # The non-Turbo meta-llama/Llama-3.3-70B-Instruct page is a 404 today, so
+    # only the -Turbo id is priced.
+    "deepinfra:deepseek-ai/DeepSeek-V3.2": (0.26, 0.38),
+    "deepinfra:Qwen/Qwen3-32B": (0.08, 0.28),
+    "deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo": (0.10, 0.32),
 }
 
 CACHE_READ_MULT = 0.1
@@ -89,6 +109,9 @@ CACHE_READ_PRICES: dict[str, float] = {
     # deepseek — cache-hit input, peak
     "deepseek-v4-flash": 0.014,
     "deepseek-v4-pro": 0.044,
+    # deepinfra — https://deepinfra.com/pricing "$0.26 / $0.13 cached"; only
+    # ever applied if the host reports prompt_tokens_details.cached_tokens
+    "deepinfra:deepseek-ai/DeepSeek-V3.2": 0.13,
 }
 
 

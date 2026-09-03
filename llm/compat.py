@@ -1,11 +1,14 @@
 """OpenAI-compatible chat-completions client over httpx.
 
 Serves every non-Anthropic row of `llm.providers.PROVIDERS` (OpenAI, xAI,
-Mistral, Gemini's compat endpoint, DeepSeek) with one adapter: POST
-`<base_url>/chat/completions`, system + user messages, the provider's
-max-tokens field, `temperature` where the model accepts it, and
-`response_format={"type": "json_object"}` only when the provider supports it
-AND the call asked for JSON. Usage is mapped onto `LLMResponse` so `Ledger`
+Mistral, Gemini's compat endpoint, DeepSeek, and the SiliconFlow / DeepInfra
+hosts) with one adapter: POST `<base_url>/chat/completions`, system + user
+messages, the provider's max-tokens field, `temperature` where the model
+accepts it, and `response_format={"type": "json_object"}` only when the
+provider supports it for that model AND the call asked for JSON. A seat id in
+the explicit `provider:model` form is accepted as-is: only the part after the
+colon goes on the wire, and the response keeps the full id so the ledger
+prices it by its own `provider:model` row. Usage is mapped onto `LLMResponse` so `Ledger`
 works unchanged. Contract: CONTRACTS.md §2, amendment 2026-09-03.
 
 Retry policy mirrors `AnthropicClient`: 429 / 5xx / timeouts / transport
@@ -22,7 +25,7 @@ import time
 from typing import Any
 
 from .client import JSON_ONLY_SUFFIX, LLMError, LLMResponse
-from .providers import Provider, compat_params_for
+from .providers import Provider, compat_params_for, split_model
 
 __all__ = ["OpenAICompatClient"]
 
@@ -116,13 +119,14 @@ class OpenAICompatClient:
         for m in messages or []:
             role = m.get("role", "user")
             msgs.append({"role": role, "content": _message_content(m.get("content", ""))})
+        _name, wire = split_model(model)
         body: dict[str, Any] = {
-            "model": model,
+            "model": wire,
             "messages": msgs,
             self.provider.max_tokens_field: int(max_tokens),
         }
         body.update(compat_params_for(model, temperature=temperature))
-        if json_only and self.provider.json_mode:
+        if json_only and self.provider.accepts_json_mode(wire):
             body["response_format"] = {"type": "json_object"}
         return body
 
@@ -208,13 +212,17 @@ class OpenAICompatClient:
         # the prompt into prompt_cache_hit_tokens + prompt_cache_miss_tokens.
         cached = u("prompt_tokens_details", "cached_tokens") or u("prompt_cache_hit_tokens")
         cached = min(cached, prompt)
+        # The explicit `provider:model` id is the price-row key, so it must
+        # survive into the response; a bare id keeps the server's (possibly
+        # dated) model string, which prices by prefix as before.
+        explicit = split_model(model)[0] is not None
         return LLMResponse(
             text=text,
             input_tokens=prompt - cached,
             output_tokens=u("completion_tokens"),  # includes reasoning tokens
             cache_read_tokens=cached,
             cache_write_tokens=0,  # no provider on this dialect reports writes
-            model=str(raw.get("model") or model),
+            model=model if explicit else str(raw.get("model") or model),
             stop_reason=str(choice.get("finish_reason") or ""),
         )
 
