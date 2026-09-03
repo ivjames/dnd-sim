@@ -22,6 +22,20 @@
     <span id="round-pill" class="pill pill-quiet">round &mdash;</span>
   </div>
   <div class="topbar-right">
+    <div id="voice" class="voice" hidden>
+      <label class="chk" title="Read the game aloud with the browser's own voices">
+        <input type="checkbox" id="voice-on"> voice</label>
+      <select id="voice-rate" aria-label="Speech rate" title="Speech rate">
+        <option value="slow">slow</option>
+        <option value="normal" selected>normal</option>
+        <option value="fast">fast</option>
+      </select>
+      <label class="chk" title="Speak only narration and dialogue">
+        <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
+      <button id="voice-skip" class="btn btn-small" type="button" disabled
+              title="Skip the line being read">skip</button>
+      <span id="voice-hint" class="pill pill-quiet" hidden>tap to start</span>
+    </div>
     <div id="cost-meter" class="cost" title="Spend against budget">
       <span class="cost-usd">$0.0000</span>
       <span class="cost-bar"><i style="width:0%"></i></span>
@@ -137,6 +151,7 @@
   </div>
 </div>
 
+<script src="/static/speech.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

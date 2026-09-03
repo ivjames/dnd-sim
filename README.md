@@ -203,6 +203,27 @@ budget live. Prompts are built for frugality: players see a compact state view
 plus enumerated legal actions (not full state), the static rules digest is
 prompt-cached, and summaries are written by the cheap model.
 
+## Spoken narration
+
+The spectator page can read the game aloud. Tick **voice** in the top bar
+(the tick is the tap that browsers require before a page may speak) and the
+DM's narration, scene openings, the epilogue, every line of dialogue and any DM
+note from the table are spoken as they arrive — never the replayed transcript.
+Mechanics are spoken too, but shaped into a short line ("Goblin 2 hits Thorin
+for 6", "Round 3", "Vessa moves 30 feet") rather than the dice string, and
+**mute mechanics** silences them entirely. The DM has one voice; each PC gets
+its own, picked deterministically from the voices the browser has, with a
+pitch/rate nudge when there are too few to go round (an iPad often has one or
+two). The rate has three steps, **skip** drops the line being read, and the
+transcript line being spoken is highlighted.
+
+This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
+the device and it costs nothing, so voice quality is whatever the OS ships.
+Server-rendered voices (Amazon Polly, Cartesia and the like) would be a later,
+paid option. Selection and wording live in `web/static/speech.js`, a
+dependency-free module that `node` can exercise directly; the queue and the
+speech calls are in `app.js`.
+
 ## Deployment
 
 See [DEPLOY.md](DEPLOY.md). Short version: on the lab980 droplet, `git clone`
