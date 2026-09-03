@@ -1,20 +1,212 @@
 [
-  {"name": "blinded", "desc": "Can't see; automatically fails ability checks that require sight. Attack rolls against it have advantage; its attack rolls have disadvantage."},
-  {"name": "charmed", "desc": "Can't attack the charmer or target it with harmful abilities; the charmer has advantage on social checks against it."},
-  {"name": "deafened", "desc": "Can't hear; automatically fails ability checks that require hearing."},
-  {"name": "frightened", "desc": "Disadvantage on ability checks and attack rolls while the source of fear is in line of sight; can't willingly move closer to it."},
-  {"name": "grappled", "desc": "Speed becomes 0. Ends if the grappler is incapacitated or the grappled creature is moved out of reach."},
-  {"name": "incapacitated", "desc": "Can't take actions or reactions."},
-  {"name": "invisible", "desc": "Impossible to see without magic; heavily obscured for hiding. Attack rolls against it have disadvantage; its attack rolls have advantage."},
-  {"name": "paralyzed", "desc": "Incapacitated; can't move or speak; auto-fails STR and DEX saves; attacks against it have advantage and hit within 5 ft are critical hits."},
-  {"name": "petrified", "desc": "Transformed to stone; incapacitated; weight x10; resistance to all damage; immune to poison and disease; auto-fails STR and DEX saves; attacks against it have advantage."},
-  {"name": "poisoned", "desc": "Disadvantage on attack rolls and ability checks."},
-  {"name": "prone", "desc": "May only crawl; disadvantage on attack rolls; attacks against it have advantage within 5 ft and disadvantage beyond. Standing costs half speed."},
-  {"name": "restrained", "desc": "Speed 0; attacks against it have advantage; its attacks have disadvantage; disadvantage on DEX saves."},
-  {"name": "stunned", "desc": "Incapacitated; can't move; can speak only falteringly; auto-fails STR and DEX saves; attacks against it have advantage."},
-  {"name": "unconscious", "desc": "Incapacitated; can't move or speak; unaware; drops what it holds and falls prone; auto-fails STR and DEX saves; attacks against it have advantage and hits within 5 ft are critical hits."},
-  {"name": "exhaustion", "desc": "Levels 1-6: 1 disadvantage on ability checks; 2 speed halved; 3 disadvantage on attacks and saves; 4 HP maximum halved; 5 speed 0; 6 death."},
-  {"name": "turned", "desc": "(Turn Undead) Must spend turns moving away from the cleric; can't take reactions; can only Dash or try to escape; ends after 1 minute or on taking damage."},
-  {"name": "hidden", "desc": "(engine) Unseen by enemies after a successful Hide; attacks from hiding have advantage and attacks against it disadvantage. Revealed on attacking or casting."},
-  {"name": "faerie_fire", "desc": "(engine) Outlined in light: attack rolls against it have advantage and it cannot benefit from being invisible."}
+ {
+  "name": "blinded",
+  "effects": [
+   "Can't see and automatically fails any ability check that requires sight.",
+   "Attack rolls against the creature have advantage, and the creature's attack rolls have disadvantage."
+  ],
+  "attack_by": "advantage",
+  "attack_own": "disadvantage",
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "charmed",
+  "effects": [
+   "Can't attack the charmer or target the charmer with harmful abilities or magical effects.",
+   "The charmer has advantage on ability checks to interact socially with the creature."
+  ],
+  "attack_by": null,
+  "attack_own": null,
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "deafened",
+  "effects": [
+   "Can't hear and automatically fails any ability check that requires hearing."
+  ],
+  "attack_by": null,
+  "attack_own": null,
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "frightened",
+  "effects": [
+   "Has disadvantage on ability checks and attack rolls while the source of its fear is within line of sight.",
+   "Can't willingly move closer to the source of its fear."
+  ],
+  "attack_by": null,
+  "attack_own": "disadvantage",
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "grappled",
+  "effects": [
+   "Speed becomes 0, and it can't benefit from any bonus to its speed.",
+   "The condition ends if the grappler is incapacitated or removed from reach."
+  ],
+  "attack_by": null,
+  "attack_own": null,
+  "auto_fail_saves": [],
+  "speed_zero": true,
+  "incapacitated": false
+ },
+ {
+  "name": "incapacitated",
+  "effects": [
+   "Can't take actions or reactions."
+  ],
+  "attack_by": null,
+  "attack_own": null,
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": true
+ },
+ {
+  "name": "invisible",
+  "effects": [
+   "Impossible to see without the aid of magic or a special sense; counts as heavily obscured.",
+   "Attack rolls against the creature have disadvantage, and the creature's attack rolls have advantage."
+  ],
+  "attack_by": "disadvantage",
+  "attack_own": "advantage",
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "paralyzed",
+  "effects": [
+   "Incapacitated and can't move or speak.",
+   "Automatically fails Strength and Dexterity saving throws.",
+   "Attack rolls against the creature have advantage.",
+   "Any attack that hits the creature is a critical hit if the attacker is within 5 feet."
+  ],
+  "attack_by": "advantage",
+  "attack_own": null,
+  "auto_fail_saves": [
+   "STR",
+   "DEX"
+  ],
+  "speed_zero": true,
+  "incapacitated": true,
+  "auto_crit_within_5": true
+ },
+ {
+  "name": "petrified",
+  "effects": [
+   "Transformed into inanimate substance, weight x10, ceases aging.",
+   "Incapacitated, can't move or speak, unaware of surroundings.",
+   "Attack rolls against the creature have advantage.",
+   "Automatically fails Strength and Dexterity saving throws.",
+   "Has resistance to all damage; immune to poison and disease."
+  ],
+  "attack_by": "advantage",
+  "attack_own": null,
+  "auto_fail_saves": [
+   "STR",
+   "DEX"
+  ],
+  "speed_zero": true,
+  "incapacitated": true
+ },
+ {
+  "name": "poisoned",
+  "effects": [
+   "Has disadvantage on attack rolls and ability checks."
+  ],
+  "attack_by": null,
+  "attack_own": "disadvantage",
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "prone",
+  "effects": [
+   "Can only crawl unless it stands up (costs half its movement).",
+   "Has disadvantage on attack rolls.",
+   "Attack rolls against it have advantage if the attacker is within 5 feet, otherwise disadvantage."
+  ],
+  "attack_by": "special",
+  "attack_own": "disadvantage",
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false
+ },
+ {
+  "name": "restrained",
+  "effects": [
+   "Speed becomes 0 and it can't benefit from any bonus to its speed.",
+   "Attack rolls against the creature have advantage, and its attack rolls have disadvantage.",
+   "Has disadvantage on Dexterity saving throws."
+  ],
+  "attack_by": "advantage",
+  "attack_own": "disadvantage",
+  "auto_fail_saves": [],
+  "speed_zero": true,
+  "incapacitated": false,
+  "save_disadvantage": [
+   "DEX"
+  ]
+ },
+ {
+  "name": "stunned",
+  "effects": [
+   "Incapacitated, can't move, and can speak only falteringly.",
+   "Automatically fails Strength and Dexterity saving throws.",
+   "Attack rolls against the creature have advantage."
+  ],
+  "attack_by": "advantage",
+  "attack_own": null,
+  "auto_fail_saves": [
+   "STR",
+   "DEX"
+  ],
+  "speed_zero": true,
+  "incapacitated": true
+ },
+ {
+  "name": "unconscious",
+  "effects": [
+   "Incapacitated, can't move or speak, and is unaware of its surroundings.",
+   "Drops whatever it is holding and falls prone.",
+   "Automatically fails Strength and Dexterity saving throws.",
+   "Attack rolls against the creature have advantage.",
+   "Any attack that hits the creature is a critical hit if the attacker is within 5 feet."
+  ],
+  "attack_by": "advantage",
+  "attack_own": null,
+  "auto_fail_saves": [
+   "STR",
+   "DEX"
+  ],
+  "speed_zero": true,
+  "incapacitated": true,
+  "auto_crit_within_5": true
+ },
+ {
+  "name": "exhaustion",
+  "effects": [
+   "Level 1: Disadvantage on ability checks.",
+   "Level 2: Speed halved.",
+   "Level 3: Disadvantage on attack rolls and saving throws.",
+   "Level 4: Hit point maximum halved.",
+   "Level 5: Speed reduced to 0.",
+   "Level 6: Death."
+  ],
+  "attack_by": null,
+  "attack_own": null,
+  "auto_fail_saves": [],
+  "speed_zero": false,
+  "incapacitated": false,
+  "leveled": true
+ }
 ]

@@ -1,257 +1,2282 @@
 [
-  {"name": "Goblin", "size": "S", "type": "humanoid (goblinoid)", "alignment": "neutral evil", "ac": 15, "hp": 7, "hit_dice": "2d6", "speed": 30, "cr": 0.25,
-   "abilities": {"STR": 8, "DEX": 14, "CON": 10, "INT": 10, "WIS": 8, "CHA": 8}, "saving_throws": {}, "skills": {"Stealth": 6}, "senses": "darkvision 60 ft", "passive_perception": 9,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "nimble_escape", "name": "Nimble Escape", "desc": "Can Disengage or Hide as a bonus action."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Scimitar", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d6+2", "damage_type": "slashing"},
-     {"name": "Shortbow", "kind": "ranged_weapon", "attack_bonus": 4, "range": [80, 320], "damage": "1d6+2", "damage_type": "piercing"}
-   ]},
-  {"name": "Goblin Boss", "size": "S", "type": "humanoid (goblinoid)", "alignment": "neutral evil", "ac": 17, "hp": 21, "hit_dice": "6d6", "speed": 30, "cr": 1,
-   "abilities": {"STR": 10, "DEX": 14, "CON": 10, "INT": 10, "WIS": 8, "CHA": 10}, "saving_throws": {}, "skills": {"Stealth": 6}, "senses": "darkvision 60 ft", "passive_perception": 9,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "nimble_escape", "name": "Nimble Escape", "desc": "Can Disengage or Hide as a bonus action."}],
-   "multiattack": [{"name": "Scimitar"}, {"name": "Scimitar", "disadvantage": true}],
-   "actions": [
-     {"name": "Scimitar", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d6+2", "damage_type": "slashing"},
-     {"name": "Javelin", "kind": "melee_or_ranged", "attack_bonus": 2, "reach": 5, "range": [30, 120], "damage": "1d6", "damage_type": "piercing"}
-   ]},
-  {"name": "Skeleton", "size": "M", "type": "undead", "alignment": "lawful evil", "ac": 13, "hp": 13, "hit_dice": "2d8+4", "speed": 30, "cr": 0.25,
-   "abilities": {"STR": 10, "DEX": 14, "CON": 15, "INT": 6, "WIS": 8, "CHA": 5}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 9,
-   "damage_resistances": [], "damage_immunities": ["poison"], "damage_vulnerabilities": ["bludgeoning"], "condition_immunities": ["exhaustion", "poisoned"],
-   "traits": [], "multiattack": null,
-   "actions": [
-     {"name": "Shortsword", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d6+2", "damage_type": "piercing"},
-     {"name": "Shortbow", "kind": "ranged_weapon", "attack_bonus": 4, "range": [80, 320], "damage": "1d6+2", "damage_type": "piercing"}
-   ]},
-  {"name": "Zombie", "size": "M", "type": "undead", "alignment": "neutral evil", "ac": 8, "hp": 22, "hit_dice": "3d8+9", "speed": 20, "cr": 0.25,
-   "abilities": {"STR": 13, "DEX": 6, "CON": 16, "INT": 3, "WIS": 6, "CHA": 5}, "saving_throws": {"WIS": 0}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 8,
-   "damage_resistances": [], "damage_immunities": ["poison"], "damage_vulnerabilities": [], "condition_immunities": ["poisoned"],
-   "traits": [{"id": "undead_fortitude", "name": "Undead Fortitude", "desc": "If damage reduces it to 0 HP, it makes a CON save (DC 5 + damage taken) to drop to 1 HP instead, unless the damage is radiant or from a critical hit."}],
-   "multiattack": null,
-   "actions": [{"name": "Slam", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "1d6+1", "damage_type": "bludgeoning"}]},
-  {"name": "Ghoul", "size": "M", "type": "undead", "alignment": "chaotic evil", "ac": 12, "hp": 22, "hit_dice": "5d8", "speed": 30, "cr": 1,
-   "abilities": {"STR": 13, "DEX": 15, "CON": 10, "INT": 7, "WIS": 10, "CHA": 6}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": ["poison"], "damage_vulnerabilities": [], "condition_immunities": ["charmed", "exhaustion", "poisoned"],
-   "traits": [], "multiattack": null,
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 2, "reach": 5, "damage": "2d6+2", "damage_type": "piercing"},
-     {"name": "Claws", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "2d4+2", "damage_type": "slashing",
-      "on_hit": {"save": "CON", "dc": 10, "condition": "paralyzed", "duration_rounds": 10, "repeat_save": true, "immune_races": ["Elf"]}}
-   ]},
-  {"name": "Ghast", "size": "M", "type": "undead", "alignment": "chaotic evil", "ac": 13, "hp": 36, "hit_dice": "8d8", "speed": 30, "cr": 2,
-   "abilities": {"STR": 16, "DEX": 17, "CON": 10, "INT": 11, "WIS": 10, "CHA": 8}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": ["necrotic"], "damage_immunities": ["poison"], "damage_vulnerabilities": [], "condition_immunities": ["charmed", "exhaustion", "poisoned"],
-   "traits": [{"id": "stench", "name": "Stench", "desc": "A creature starting its turn within 5 ft makes a DC 10 CON save or is poisoned until the start of its next turn."},
-              {"id": "turn_defiance", "name": "Turn Defiance", "desc": "Advantage on saving throws against effects that turn undead."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "2d8+3", "damage_type": "piercing"},
-     {"name": "Claws", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "2d6+3", "damage_type": "slashing",
-      "on_hit": {"save": "CON", "dc": 10, "condition": "paralyzed", "duration_rounds": 10, "repeat_save": true}}
-   ]},
-  {"name": "Wolf", "size": "M", "type": "beast", "alignment": "unaligned", "ac": 13, "hp": 11, "hit_dice": "2d8+2", "speed": 40, "cr": 0.25,
-   "abilities": {"STR": 12, "DEX": 15, "CON": 12, "INT": 3, "WIS": 12, "CHA": 6}, "saving_throws": {}, "skills": {"Perception": 3, "Stealth": 4}, "senses": "passive Perception 13", "passive_perception": 13,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_hearing_and_smell", "name": "Keen Hearing and Smell", "desc": "Advantage on Perception checks relying on hearing or smell."},
-              {"id": "pack_tactics", "name": "Pack Tactics", "desc": "Advantage on attack rolls against a creature if an ally is within 5 ft of it."}],
-   "multiattack": null,
-   "actions": [{"name": "Bite", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "2d4+2", "damage_type": "piercing",
-                "on_hit": {"save": "STR", "dc": 11, "condition": "prone"}}]},
-  {"name": "Dire Wolf", "size": "L", "type": "beast", "alignment": "unaligned", "ac": 14, "hp": 37, "hit_dice": "5d10+10", "speed": 50, "cr": 1,
-   "abilities": {"STR": 17, "DEX": 15, "CON": 15, "INT": 3, "WIS": 12, "CHA": 7}, "saving_throws": {}, "skills": {"Perception": 3, "Stealth": 4}, "senses": "passive Perception 13", "passive_perception": 13,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_hearing_and_smell", "name": "Keen Hearing and Smell", "desc": "Advantage on Perception checks relying on hearing or smell."},
-              {"id": "pack_tactics", "name": "Pack Tactics", "desc": "Advantage on attack rolls against a creature if an ally is within 5 ft of it."}],
-   "multiattack": null,
-   "actions": [{"name": "Bite", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "2d6+3", "damage_type": "piercing",
-                "on_hit": {"save": "STR", "dc": 13, "condition": "prone"}}]},
-  {"name": "Worg", "size": "L", "type": "monstrosity", "alignment": "neutral evil", "ac": 13, "hp": 26, "hit_dice": "4d10+4", "speed": 50, "cr": 0.5,
-   "abilities": {"STR": 16, "DEX": 13, "CON": 13, "INT": 7, "WIS": 11, "CHA": 8}, "saving_throws": {}, "skills": {"Perception": 4}, "senses": "darkvision 60 ft", "passive_perception": 14,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_hearing_and_smell", "name": "Keen Hearing and Smell", "desc": "Advantage on Perception checks relying on hearing or smell."}],
-   "multiattack": null,
-   "actions": [{"name": "Bite", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "2d6+3", "damage_type": "piercing"}]},
-  {"name": "Giant Rat", "size": "S", "type": "beast", "alignment": "unaligned", "ac": 12, "hp": 7, "hit_dice": "2d6", "speed": 30, "cr": 0.125,
-   "abilities": {"STR": 7, "DEX": 15, "CON": 11, "INT": 2, "WIS": 10, "CHA": 4}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_smell", "name": "Keen Smell", "desc": "Advantage on Perception checks relying on smell."},
-              {"id": "pack_tactics", "name": "Pack Tactics", "desc": "Advantage on attack rolls against a creature if an ally is within 5 ft of it."}],
-   "multiattack": null,
-   "actions": [{"name": "Bite", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d4+2", "damage_type": "piercing"}]},
-  {"name": "Kobold", "size": "S", "type": "humanoid (kobold)", "alignment": "lawful evil", "ac": 12, "hp": 5, "hit_dice": "2d6-2", "speed": 30, "cr": 0.125,
-   "abilities": {"STR": 7, "DEX": 15, "CON": 9, "INT": 8, "WIS": 7, "CHA": 8}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 8,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "sunlight_sensitivity", "name": "Sunlight Sensitivity", "desc": "Disadvantage on attacks and Perception in sunlight."},
-              {"id": "pack_tactics", "name": "Pack Tactics", "desc": "Advantage on attack rolls against a creature if an ally is within 5 ft of it."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Dagger", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d4+2", "damage_type": "piercing"},
-     {"name": "Sling", "kind": "ranged_weapon", "attack_bonus": 4, "range": [30, 120], "damage": "1d4+2", "damage_type": "bludgeoning"}
-   ]},
-  {"name": "Bandit", "size": "M", "type": "humanoid (any race)", "alignment": "any non-lawful", "ac": 12, "hp": 11, "hit_dice": "2d8+2", "speed": 30, "cr": 0.125,
-   "abilities": {"STR": 11, "DEX": 12, "CON": 12, "INT": 10, "WIS": 10, "CHA": 10}, "saving_throws": {}, "skills": {}, "senses": "passive Perception 10", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [], "multiattack": null,
-   "actions": [
-     {"name": "Scimitar", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "1d6+1", "damage_type": "slashing"},
-     {"name": "Light Crossbow", "kind": "ranged_weapon", "attack_bonus": 3, "range": [80, 320], "damage": "1d8+1", "damage_type": "piercing"}
-   ]},
-  {"name": "Bandit Captain", "size": "M", "type": "humanoid (any race)", "alignment": "any non-lawful", "ac": 15, "hp": 65, "hit_dice": "10d8+20", "speed": 30, "cr": 2,
-   "abilities": {"STR": 15, "DEX": 16, "CON": 14, "INT": 14, "WIS": 11, "CHA": 14}, "saving_throws": {"STR": 4, "DEX": 5, "WIS": 2}, "skills": {"Athletics": 4, "Deception": 4}, "senses": "passive Perception 10", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [], "multiattack": [{"name": "Scimitar"}, {"name": "Scimitar"}, {"name": "Dagger"}],
-   "actions": [
-     {"name": "Scimitar", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "1d6+3", "damage_type": "slashing"},
-     {"name": "Dagger", "kind": "melee_or_ranged", "attack_bonus": 5, "reach": 5, "range": [20, 60], "damage": "1d4+3", "damage_type": "piercing"}
-   ]},
-  {"name": "Thug", "size": "M", "type": "humanoid (any race)", "alignment": "any non-good", "ac": 11, "hp": 32, "hit_dice": "5d8+10", "speed": 30, "cr": 0.5,
-   "abilities": {"STR": 15, "DEX": 11, "CON": 14, "INT": 10, "WIS": 10, "CHA": 11}, "saving_throws": {}, "skills": {"Intimidation": 2}, "senses": "passive Perception 10", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "pack_tactics", "name": "Pack Tactics", "desc": "Advantage on attack rolls against a creature if an ally is within 5 ft of it."}],
-   "multiattack": [{"name": "Mace"}, {"name": "Mace"}],
-   "actions": [
-     {"name": "Mace", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d6+2", "damage_type": "bludgeoning"},
-     {"name": "Heavy Crossbow", "kind": "ranged_weapon", "attack_bonus": 2, "range": [100, 400], "damage": "1d10", "damage_type": "piercing"}
-   ]},
-  {"name": "Guard", "size": "M", "type": "humanoid (any race)", "alignment": "any", "ac": 16, "hp": 11, "hit_dice": "2d8+2", "speed": 30, "cr": 0.125,
-   "abilities": {"STR": 13, "DEX": 12, "CON": 12, "INT": 10, "WIS": 11, "CHA": 10}, "saving_throws": {}, "skills": {"Perception": 2}, "senses": "passive Perception 12", "passive_perception": 12,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [], "multiattack": null,
-   "actions": [{"name": "Spear", "kind": "melee_or_ranged", "attack_bonus": 3, "reach": 5, "range": [20, 60], "damage": "1d6+1", "damage_type": "piercing"}]},
-  {"name": "Cultist", "size": "M", "type": "humanoid (any race)", "alignment": "any non-good", "ac": 12, "hp": 9, "hit_dice": "2d8", "speed": 30, "cr": 0.125,
-   "abilities": {"STR": 11, "DEX": 12, "CON": 10, "INT": 10, "WIS": 11, "CHA": 10}, "saving_throws": {}, "skills": {"Deception": 2, "Religion": 2}, "senses": "passive Perception 10", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "dark_devotion", "name": "Dark Devotion", "desc": "Advantage on saving throws against being charmed or frightened."}],
-   "multiattack": null,
-   "actions": [{"name": "Scimitar", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "1d6+1", "damage_type": "slashing"}]},
-  {"name": "Cult Fanatic", "size": "M", "type": "humanoid (any race)", "alignment": "any non-good", "ac": 13, "hp": 33, "hit_dice": "6d8+6", "speed": 30, "cr": 2,
-   "abilities": {"STR": 11, "DEX": 14, "CON": 12, "INT": 10, "WIS": 13, "CHA": 14}, "saving_throws": {}, "skills": {"Deception": 4, "Persuasion": 4, "Religion": 2}, "senses": "passive Perception 11", "passive_perception": 11,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "dark_devotion", "name": "Dark Devotion", "desc": "Advantage on saving throws against being charmed or frightened."}],
-   "spellcasting": {"ability": "WIS", "dc": 11, "attack_bonus": 3, "slots": {"1": 4, "2": 3}, "spells": ["Sacred Flame", "Inflict Wounds", "Shield of Faith", "Hold Person", "Spiritual Weapon"]},
-   "multiattack": [{"name": "Dagger"}, {"name": "Dagger"}],
-   "actions": [{"name": "Dagger", "kind": "melee_or_ranged", "attack_bonus": 4, "reach": 5, "range": [20, 60], "damage": "1d4+2", "damage_type": "piercing"}]},
-  {"name": "Acolyte", "size": "M", "type": "humanoid (any race)", "alignment": "any", "ac": 10, "hp": 9, "hit_dice": "2d8", "speed": 30, "cr": 0.25,
-   "abilities": {"STR": 10, "DEX": 10, "CON": 10, "INT": 10, "WIS": 14, "CHA": 11}, "saving_throws": {}, "skills": {"Medicine": 4, "Religion": 2}, "senses": "passive Perception 12", "passive_perception": 12,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [],
-   "spellcasting": {"ability": "WIS", "dc": 12, "attack_bonus": 4, "slots": {"1": 3}, "spells": ["Sacred Flame", "Bless", "Cure Wounds"]},
-   "multiattack": null,
-   "actions": [{"name": "Club", "kind": "melee_weapon", "attack_bonus": 2, "reach": 5, "damage": "1d4", "damage_type": "bludgeoning"}]},
-  {"name": "Orc", "size": "M", "type": "humanoid (orc)", "alignment": "chaotic evil", "ac": 13, "hp": 15, "hit_dice": "2d8+6", "speed": 30, "cr": 0.5,
-   "abilities": {"STR": 16, "DEX": 12, "CON": 16, "INT": 7, "WIS": 11, "CHA": 10}, "saving_throws": {}, "skills": {"Intimidation": 2}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "aggressive", "name": "Aggressive", "desc": "As a bonus action, move up to its speed toward a hostile creature it can see."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Greataxe", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "1d12+3", "damage_type": "slashing"},
-     {"name": "Javelin", "kind": "melee_or_ranged", "attack_bonus": 5, "reach": 5, "range": [30, 120], "damage": "1d6+3", "damage_type": "piercing"}
-   ]},
-  {"name": "Hobgoblin", "size": "M", "type": "humanoid (goblinoid)", "alignment": "lawful evil", "ac": 18, "hp": 11, "hit_dice": "2d8+2", "speed": 30, "cr": 0.5,
-   "abilities": {"STR": 13, "DEX": 12, "CON": 12, "INT": 10, "WIS": 10, "CHA": 9}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "martial_advantage", "name": "Martial Advantage", "desc": "Once per turn, +2d6 damage to a creature hit with a weapon attack if an ally is within 5 ft of it."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Longsword", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "1d8+1", "damage_type": "slashing"},
-     {"name": "Longbow", "kind": "ranged_weapon", "attack_bonus": 3, "range": [150, 600], "damage": "1d8+1", "damage_type": "piercing"}
-   ]},
-  {"name": "Bugbear", "size": "M", "type": "humanoid (goblinoid)", "alignment": "chaotic evil", "ac": 16, "hp": 27, "hit_dice": "5d8+5", "speed": 30, "cr": 1,
-   "abilities": {"STR": 15, "DEX": 14, "CON": 13, "INT": 8, "WIS": 11, "CHA": 9}, "saving_throws": {}, "skills": {"Stealth": 6, "Survival": 2}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "brute", "name": "Brute", "desc": "Melee weapons deal one extra die of damage (already included)."},
-              {"id": "surprise_attack", "name": "Surprise Attack", "desc": "+2d6 damage against a surprised creature in the first round."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Morningstar", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "2d8+2", "damage_type": "piercing"},
-     {"name": "Javelin", "kind": "melee_or_ranged", "attack_bonus": 4, "reach": 5, "range": [30, 120], "damage": "2d6+2", "damage_type": "piercing", "ranged_damage": "1d6+2"}
-   ]},
-  {"name": "Gnoll", "size": "M", "type": "humanoid (gnoll)", "alignment": "chaotic evil", "ac": 15, "hp": 22, "hit_dice": "5d8", "speed": 30, "cr": 0.5,
-   "abilities": {"STR": 14, "DEX": 12, "CON": 11, "INT": 6, "WIS": 10, "CHA": 7}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "rampage", "name": "Rampage", "desc": "When it reduces a creature to 0 HP with a melee attack on its turn, it can move up to half its speed and make a bite attack as a bonus action."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d4+2", "damage_type": "piercing"},
-     {"name": "Spear", "kind": "melee_or_ranged", "attack_bonus": 4, "reach": 5, "range": [20, 60], "damage": "1d6+2", "damage_type": "piercing"},
-     {"name": "Longbow", "kind": "ranged_weapon", "attack_bonus": 3, "range": [150, 600], "damage": "1d8+1", "damage_type": "piercing"}
-   ]},
-  {"name": "Ogre", "size": "L", "type": "giant", "alignment": "chaotic evil", "ac": 11, "hp": 59, "hit_dice": "7d10+21", "speed": 40, "cr": 2,
-   "abilities": {"STR": 19, "DEX": 8, "CON": 16, "INT": 5, "WIS": 7, "CHA": 7}, "saving_throws": {}, "skills": {}, "senses": "darkvision 60 ft", "passive_perception": 8,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [], "multiattack": null,
-   "actions": [
-     {"name": "Greatclub", "kind": "melee_weapon", "attack_bonus": 6, "reach": 5, "damage": "2d8+4", "damage_type": "bludgeoning"},
-     {"name": "Javelin", "kind": "melee_or_ranged", "attack_bonus": 6, "reach": 5, "range": [30, 120], "damage": "2d6+4", "damage_type": "piercing"}
-   ]},
-  {"name": "Black Bear", "size": "M", "type": "beast", "alignment": "unaligned", "ac": 11, "hp": 19, "hit_dice": "3d8+6", "speed": 40, "cr": 0.5,
-   "abilities": {"STR": 15, "DEX": 10, "CON": 14, "INT": 2, "WIS": 12, "CHA": 7}, "saving_throws": {}, "skills": {"Perception": 3}, "senses": "passive Perception 13", "passive_perception": 13,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_smell", "name": "Keen Smell", "desc": "Advantage on Perception checks relying on smell."}],
-   "multiattack": [{"name": "Bite"}, {"name": "Claws"}],
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "1d6+2", "damage_type": "piercing"},
-     {"name": "Claws", "kind": "melee_weapon", "attack_bonus": 3, "reach": 5, "damage": "2d4+2", "damage_type": "slashing"}
-   ]},
-  {"name": "Giant Spider", "size": "L", "type": "beast", "alignment": "unaligned", "ac": 14, "hp": 26, "hit_dice": "4d10+4", "speed": 30, "cr": 1,
-   "abilities": {"STR": 14, "DEX": 16, "CON": 12, "INT": 2, "WIS": 11, "CHA": 4}, "saving_throws": {}, "skills": {"Stealth": 7}, "senses": "blindsight 10 ft, darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "spider_climb", "name": "Spider Climb", "desc": "Can climb difficult surfaces."}, {"id": "web_walker", "name": "Web Walker", "desc": "Ignores movement restrictions from webbing."}],
-   "multiattack": null,
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 5, "reach": 5, "damage": "1d8+3", "damage_type": "piercing",
-      "on_hit": {"save": "CON", "dc": 11, "damage": "2d8", "damage_type": "poison", "half_on_save": true}},
-     {"name": "Web", "kind": "ranged_weapon", "attack_bonus": 5, "range": [30, 60], "damage": "0", "damage_type": "none", "recharge": "5-6", "desc": "Recharge 5-6. On a hit the target is restrained (DC 12 STR to escape).",
-      "on_hit": {"condition": "restrained", "duration_rounds": 10, "repeat_save": true, "save": "STR", "dc": 12}}
-   ]},
-  {"name": "Owlbear", "size": "L", "type": "monstrosity", "alignment": "unaligned", "ac": 13, "hp": 59, "hit_dice": "7d10+21", "speed": 40, "cr": 3,
-   "abilities": {"STR": 20, "DEX": 12, "CON": 17, "INT": 3, "WIS": 12, "CHA": 7}, "saving_throws": {}, "skills": {"Perception": 3}, "senses": "darkvision 60 ft", "passive_perception": 13,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_sight_and_smell", "name": "Keen Sight and Smell", "desc": "Advantage on Perception checks relying on sight or smell."}],
-   "multiattack": [{"name": "Beak"}, {"name": "Claws"}],
-   "actions": [
-     {"name": "Beak", "kind": "melee_weapon", "attack_bonus": 7, "reach": 5, "damage": "1d10+5", "damage_type": "piercing"},
-     {"name": "Claws", "kind": "melee_weapon", "attack_bonus": 7, "reach": 5, "damage": "2d8+5", "damage_type": "slashing"}
-   ]},
-  {"name": "Wight", "size": "M", "type": "undead", "alignment": "neutral evil", "ac": 14, "hp": 45, "hit_dice": "6d8+18", "speed": 30, "cr": 3,
-   "abilities": {"STR": 15, "DEX": 14, "CON": 16, "INT": 10, "WIS": 13, "CHA": 15}, "saving_throws": {}, "skills": {"Perception": 3, "Stealth": 4}, "senses": "darkvision 60 ft", "passive_perception": 13,
-   "damage_resistances": ["necrotic", "bludgeoning", "piercing", "slashing"], "damage_immunities": ["poison"], "damage_vulnerabilities": [], "condition_immunities": ["exhaustion", "poisoned"],
-   "traits": [{"id": "sunlight_sensitivity", "name": "Sunlight Sensitivity", "desc": "Disadvantage on attacks and Perception in sunlight."}],
-   "multiattack": [{"name": "Longsword"}, {"name": "Longsword"}],
-   "actions": [
-     {"name": "Life Drain", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d6+2", "damage_type": "necrotic",
-      "on_hit": {"save": "CON", "dc": 13, "reduce_max_hp": true}},
-     {"name": "Longsword", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "1d8+2", "damage_type": "slashing"},
-     {"name": "Longbow", "kind": "ranged_weapon", "attack_bonus": 4, "range": [150, 600], "damage": "1d8+2", "damage_type": "piercing"}
-   ]},
-  {"name": "Shadow", "size": "M", "type": "undead", "alignment": "chaotic evil", "ac": 12, "hp": 16, "hit_dice": "3d8+3", "speed": 40, "cr": 0.5,
-   "abilities": {"STR": 6, "DEX": 14, "CON": 13, "INT": 6, "WIS": 10, "CHA": 8}, "saving_throws": {}, "skills": {"Stealth": 4}, "senses": "darkvision 60 ft", "passive_perception": 10,
-   "damage_resistances": ["acid", "cold", "fire", "lightning", "thunder", "bludgeoning", "piercing", "slashing"], "damage_immunities": ["necrotic", "poison"], "damage_vulnerabilities": ["radiant"],
-   "condition_immunities": ["exhaustion", "frightened", "grappled", "paralyzed", "petrified", "poisoned", "prone", "restrained"],
-   "traits": [{"id": "amorphous", "name": "Amorphous", "desc": "Can move through a space as narrow as 1 inch."},
-              {"id": "shadow_stealth", "name": "Shadow Stealth", "desc": "In dim light or darkness it can Hide as a bonus action."},
-              {"id": "sunlight_weakness", "name": "Sunlight Weakness", "desc": "Disadvantage on attacks, checks and saves in sunlight."}],
-   "multiattack": null,
-   "actions": [{"name": "Strength Drain", "kind": "melee_weapon", "attack_bonus": 4, "reach": 5, "damage": "2d6+2", "damage_type": "necrotic",
-                "on_hit": {"drain_ability": "STR", "drain": "1d4"}}]},
-  {"name": "Troll", "size": "L", "type": "giant", "alignment": "chaotic evil", "ac": 15, "hp": 84, "hit_dice": "8d10+40", "speed": 30, "cr": 5,
-   "abilities": {"STR": 18, "DEX": 13, "CON": 20, "INT": 7, "WIS": 9, "CHA": 7}, "saving_throws": {}, "skills": {"Perception": 2}, "senses": "darkvision 60 ft", "passive_perception": 12,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [{"id": "keen_smell", "name": "Keen Smell", "desc": "Advantage on Perception checks relying on smell."},
-              {"id": "regeneration", "name": "Regeneration", "desc": "Regains 10 HP at the start of its turn unless it took acid or fire damage since its last turn; dies only if it starts its turn at 0 HP and does not regenerate.", "amount": 10, "blocked_by": ["acid", "fire"]}],
-   "multiattack": [{"name": "Bite"}, {"name": "Claw"}, {"name": "Claw"}],
-   "actions": [
-     {"name": "Bite", "kind": "melee_weapon", "attack_bonus": 7, "reach": 5, "damage": "1d6+4", "damage_type": "piercing"},
-     {"name": "Claw", "kind": "melee_weapon", "attack_bonus": 7, "reach": 5, "damage": "2d6+4", "damage_type": "slashing"}
-   ]},
-  {"name": "Hill Giant", "size": "H", "type": "giant", "alignment": "chaotic evil", "ac": 13, "hp": 105, "hit_dice": "10d12+40", "speed": 40, "cr": 5,
-   "abilities": {"STR": 21, "DEX": 8, "CON": 19, "INT": 5, "WIS": 9, "CHA": 6}, "saving_throws": {}, "skills": {"Perception": 2}, "senses": "passive Perception 12", "passive_perception": 12,
-   "damage_resistances": [], "damage_immunities": [], "damage_vulnerabilities": [], "condition_immunities": [],
-   "traits": [], "multiattack": [{"name": "Greatclub"}, {"name": "Greatclub"}],
-   "actions": [
-     {"name": "Greatclub", "kind": "melee_weapon", "attack_bonus": 8, "reach": 10, "damage": "3d8+5", "damage_type": "bludgeoning"},
-     {"name": "Rock", "kind": "ranged_weapon", "attack_bonus": 8, "range": [60, 240], "damage": "3d10+5", "damage_type": "bludgeoning"}
-   ]}
+ {
+  "name": "Goblin",
+  "size": "S",
+  "type": "humanoid (goblinoid)",
+  "alignment": "neutral evil",
+  "ac": 15,
+  "ac_source": "leather armor, shield",
+  "hp": 7,
+  "hit_dice": "2d6",
+  "speed": 30,
+  "abilities": {
+   "STR": 8,
+   "DEX": 14,
+   "CON": 10,
+   "INT": 10,
+   "WIS": 8,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {
+   "Stealth": 6
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 9,
+  "languages": "Common, Goblin",
+  "cr": 0.25,
+  "xp": 50,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Nimble Escape",
+    "desc": "The goblin can take the Disengage or Hide action as a bonus action on each of its turns."
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Scimitar",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+2",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Shortbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 4,
+    "reach": 0,
+    "range": [
+     80,
+     320
+    ],
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [
+   "disengage",
+   "hide"
+  ],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Goblin Boss",
+  "size": "S",
+  "type": "humanoid (goblinoid)",
+  "alignment": "neutral evil",
+  "ac": 17,
+  "ac_source": "chain shirt, shield",
+  "hp": 21,
+  "hit_dice": "6d6",
+  "speed": 30,
+  "abilities": {
+   "STR": 10,
+   "DEX": 14,
+   "CON": 10,
+   "INT": 10,
+   "WIS": 8,
+   "CHA": 10
+  },
+  "saving_throws": {},
+  "skills": {
+   "Stealth": 6
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 9,
+  "languages": "Common, Goblin",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Nimble Escape",
+    "desc": "The goblin can take the Disengage or Hide action as a bonus action on each of its turns."
+   }
+  ],
+  "multiattack": [
+   "Scimitar",
+   "Scimitar"
+  ],
+  "actions": [
+   {
+    "name": "Scimitar",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+2",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Javelin",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": [
+     30,
+     120
+    ],
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [
+   "disengage",
+   "hide"
+  ],
+  "reactions": [
+   {
+    "name": "Redirect Attack",
+    "desc": "When a creature the goblin can see targets it with an attack, the goblin chooses another goblin within 5 feet; the two swap places and the chosen goblin becomes the target instead."
+   }
+  ],
+  "spellcasting": null
+ },
+ {
+  "name": "Hobgoblin",
+  "size": "M",
+  "type": "humanoid (goblinoid)",
+  "alignment": "lawful evil",
+  "ac": 18,
+  "ac_source": "chain mail, shield",
+  "hp": 11,
+  "hit_dice": "2d8+2",
+  "speed": 30,
+  "abilities": {
+   "STR": 13,
+   "DEX": 12,
+   "CON": 12,
+   "INT": 10,
+   "WIS": 10,
+   "CHA": 9
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Common, Goblin",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Martial Advantage",
+    "desc": "Once per turn the hobgoblin can deal an extra 2d6 damage to a creature it hits with a weapon attack if that creature is within 5 feet of an ally of the hobgoblin that isn't incapacitated.",
+    "id": "martial_advantage",
+    "damage": "2d6"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Longsword",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "1d8+1",
+    "damage_type": "slashing",
+    "versatile": "1d10+1",
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Longbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 3,
+    "reach": 0,
+    "range": [
+     150,
+     600
+    ],
+    "damage": "1d8+1",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Bugbear",
+  "size": "M",
+  "type": "humanoid (goblinoid)",
+  "alignment": "chaotic evil",
+  "ac": 16,
+  "ac_source": "hide armor, shield",
+  "hp": 27,
+  "hit_dice": "5d8+5",
+  "speed": 30,
+  "abilities": {
+   "STR": 15,
+   "DEX": 14,
+   "CON": 13,
+   "INT": 8,
+   "WIS": 11,
+   "CHA": 9
+  },
+  "saving_throws": {},
+  "skills": {
+   "Stealth": 6,
+   "Survival": 2
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Common, Goblin",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Brute",
+    "desc": "A melee weapon deals one extra die of its damage when the bugbear hits with it (included in the attack)."
+   },
+   {
+    "name": "Surprise Attack",
+    "desc": "If the bugbear surprises a creature and hits it with an attack during the first round of combat, the target takes an extra 2d6 damage.",
+    "id": "surprise_attack",
+    "damage": "2d6"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Morningstar",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "Includes the extra die from Brute.",
+    "target": "one target"
+   },
+   {
+    "name": "Javelin",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": [
+     30,
+     120
+    ],
+    "damage": "2d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "Ranged: 1d6+2 piercing damage (Brute applies only in melee).",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Orc",
+  "size": "M",
+  "type": "humanoid (orc)",
+  "alignment": "chaotic evil",
+  "ac": 13,
+  "ac_source": "hide armor",
+  "hp": 15,
+  "hit_dice": "2d8+6",
+  "speed": 30,
+  "abilities": {
+   "STR": 16,
+   "DEX": 12,
+   "CON": 16,
+   "INT": 7,
+   "WIS": 11,
+   "CHA": 10
+  },
+  "saving_throws": {},
+  "skills": {
+   "Intimidation": 2
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Common, Orc",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Aggressive",
+    "desc": "As a bonus action the orc can move up to its speed toward a hostile creature it can see."
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Greataxe",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "1d12+3",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Javelin",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": [
+     30,
+     120
+    ],
+    "damage": "1d6+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [
+   "dash_toward_enemy"
+  ],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Skeleton",
+  "size": "M",
+  "type": "undead",
+  "alignment": "lawful evil",
+  "ac": 13,
+  "ac_source": "armor scraps",
+  "hp": 13,
+  "hit_dice": "2d8+4",
+  "speed": 30,
+  "abilities": {
+   "STR": 10,
+   "DEX": 14,
+   "CON": 15,
+   "INT": 6,
+   "WIS": 8,
+   "CHA": 5
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 9,
+  "languages": "understands all it knew in life but can't speak",
+  "cr": 0.25,
+  "xp": 50,
+  "damage_resistances": [],
+  "damage_immunities": [
+   "poison"
+  ],
+  "damage_vulnerabilities": [
+   "bludgeoning"
+  ],
+  "condition_immunities": [
+   "exhaustion",
+   "poisoned"
+  ],
+  "traits": [],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Shortsword",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Shortbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 4,
+    "reach": 0,
+    "range": [
+     80,
+     320
+    ],
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Zombie",
+  "size": "M",
+  "type": "undead",
+  "alignment": "neutral evil",
+  "ac": 8,
+  "ac_source": "natural armor",
+  "hp": 22,
+  "hit_dice": "3d8+9",
+  "speed": 20,
+  "abilities": {
+   "STR": 13,
+   "DEX": 6,
+   "CON": 16,
+   "INT": 3,
+   "WIS": 6,
+   "CHA": 5
+  },
+  "saving_throws": {
+   "WIS": 0
+  },
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 8,
+  "languages": "understands the languages it knew in life but can't speak",
+  "cr": 0.25,
+  "xp": 50,
+  "damage_resistances": [],
+  "damage_immunities": [
+   "poison"
+  ],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [
+   "poisoned"
+  ],
+  "traits": [
+   {
+    "name": "Undead Fortitude",
+    "desc": "If damage reduces the zombie to 0 hit points, it must make a Constitution saving throw with a DC of 5 + the damage taken, unless the damage is radiant or from a critical hit. On a success the zombie drops to 1 hit point instead.",
+    "id": "undead_fortitude"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Slam",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+1",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Ghoul",
+  "size": "M",
+  "type": "undead",
+  "alignment": "chaotic evil",
+  "ac": 12,
+  "ac_source": "natural armor",
+  "hp": 22,
+  "hit_dice": "5d8",
+  "speed": 30,
+  "abilities": {
+   "STR": 13,
+   "DEX": 15,
+   "CON": 10,
+   "INT": 7,
+   "WIS": 10,
+   "CHA": 6
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Common",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [
+   "poison"
+  ],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [
+   "charmed",
+   "exhaustion",
+   "poisoned"
+  ],
+  "traits": [],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 2,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claws",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "2d4+2",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "CON",
+      "dc": 10,
+      "condition": "paralyzed",
+      "duration": 10,
+      "repeat_save": true,
+      "immune_races": [
+       "Elf",
+       "High Elf"
+      ],
+      "note": "target other than an elf or undead must succeed on a DC 10 Constitution save or be paralyzed for 1 minute, repeating the save at the end of each of its turns"
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Ghast",
+  "size": "M",
+  "type": "undead",
+  "alignment": "chaotic evil",
+  "ac": 13,
+  "ac_source": "natural armor",
+  "hp": 36,
+  "hit_dice": "8d8",
+  "speed": 30,
+  "abilities": {
+   "STR": 16,
+   "DEX": 17,
+   "CON": 10,
+   "INT": 11,
+   "WIS": 10,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Common",
+  "cr": 2,
+  "xp": 450,
+  "damage_resistances": [
+   "necrotic"
+  ],
+  "damage_immunities": [
+   "poison"
+  ],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [
+   "charmed",
+   "exhaustion",
+   "poisoned"
+  ],
+  "traits": [
+   {
+    "name": "Stench",
+    "desc": "Any creature that starts its turn within 5 feet of the ghast must succeed on a DC 10 Constitution saving throw or be poisoned until the start of its next turn.",
+    "id": "stench_aura",
+    "save": "CON",
+    "dc": 10,
+    "condition": "poisoned",
+    "radius": 5
+   },
+   {
+    "name": "Turning Defiance",
+    "desc": "The ghast and any ghouls within 30 feet of it have advantage on saving throws against effects that turn undead.",
+    "id": "turning_defiance"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claws",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+3",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "CON",
+      "dc": 10,
+      "condition": "paralyzed",
+      "duration": 10,
+      "repeat_save": true,
+      "immune_races": [
+       "Elf",
+       "High Elf"
+      ]
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Wolf",
+  "size": "M",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 13,
+  "ac_source": "natural armor",
+  "hp": 11,
+  "hit_dice": "2d8+2",
+  "speed": 40,
+  "abilities": {
+   "STR": 12,
+   "DEX": 15,
+   "CON": 12,
+   "INT": 3,
+   "WIS": 12,
+   "CHA": 6
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3,
+   "Stealth": 4
+  },
+  "senses": [],
+  "passive_perception": 13,
+  "languages": "\u2014",
+  "cr": 0.25,
+  "xp": 50,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Hearing and Smell",
+    "desc": "The wolf has advantage on Wisdom (Perception) checks that rely on hearing or smell."
+   },
+   {
+    "name": "Pack Tactics",
+    "desc": "The wolf has advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally isn't incapacitated.",
+    "id": "pack_tactics"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "2d4+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "STR",
+      "dc": 11,
+      "condition": "prone"
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Dire Wolf",
+  "size": "L",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 14,
+  "ac_source": "natural armor",
+  "hp": 37,
+  "hit_dice": "5d10+10",
+  "speed": 50,
+  "abilities": {
+   "STR": 17,
+   "DEX": 15,
+   "CON": 15,
+   "INT": 3,
+   "WIS": 12,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3,
+   "Stealth": 4
+  },
+  "senses": [],
+  "passive_perception": 13,
+  "languages": "\u2014",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Hearing and Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on hearing or smell."
+   },
+   {
+    "name": "Pack Tactics",
+    "desc": "Advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally isn't incapacitated.",
+    "id": "pack_tactics"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "STR",
+      "dc": 13,
+      "condition": "prone"
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Giant Spider",
+  "size": "L",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 14,
+  "ac_source": "natural armor",
+  "hp": 26,
+  "hit_dice": "4d10+4",
+  "speed": 30,
+  "abilities": {
+   "STR": 14,
+   "DEX": 16,
+   "CON": 12,
+   "INT": 2,
+   "WIS": 11,
+   "CHA": 4
+  },
+  "saving_throws": {},
+  "skills": {
+   "Stealth": 7
+  },
+  "senses": [
+   "blindsight 10 ft.",
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "\u2014",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Spider Climb",
+    "desc": "The spider can climb difficult surfaces, including upside down on ceilings, without needing to make an ability check."
+   },
+   {
+    "name": "Web Sense",
+    "desc": "While in contact with a web, the spider knows the exact location of any other creature in contact with the same web."
+   },
+   {
+    "name": "Web Walker",
+    "desc": "The spider ignores movement restrictions caused by webbing."
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "1d8+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "CON",
+      "dc": 11,
+      "damage": "2d8",
+      "damage_type": "poison",
+      "half_on_save": true
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Web",
+    "kind": "ranged_weapon",
+    "attack_bonus": 5,
+    "reach": 0,
+    "range": [
+     30,
+     60
+    ],
+    "damage": "0",
+    "damage_type": "none",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "DEX",
+      "dc": 12,
+      "condition": "restrained",
+      "duration": 10,
+      "escape_dc": 12
+     }
+    ],
+    "desc": "Recharge 5-6. The target is restrained by webbing. As an action the restrained target can make a DC 12 Strength check, bursting the webbing on a success.",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Bandit",
+  "size": "M",
+  "type": "humanoid (any race)",
+  "alignment": "any non-lawful alignment",
+  "ac": 12,
+  "ac_source": "leather armor",
+  "hp": 11,
+  "hit_dice": "2d8+2",
+  "speed": 30,
+  "abilities": {
+   "STR": 11,
+   "DEX": 12,
+   "CON": 12,
+   "INT": 10,
+   "WIS": 10,
+   "CHA": 10
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [],
+  "passive_perception": 10,
+  "languages": "any one language (usually Common)",
+  "cr": 0.125,
+  "xp": 25,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Scimitar",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+1",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Light crossbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 3,
+    "reach": 0,
+    "range": [
+     80,
+     320
+    ],
+    "damage": "1d8+1",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Bandit Captain",
+  "size": "M",
+  "type": "humanoid (any race)",
+  "alignment": "any non-lawful alignment",
+  "ac": 15,
+  "ac_source": "studded leather",
+  "hp": 65,
+  "hit_dice": "10d8+20",
+  "speed": 30,
+  "abilities": {
+   "STR": 15,
+   "DEX": 16,
+   "CON": 14,
+   "INT": 14,
+   "WIS": 11,
+   "CHA": 14
+  },
+  "saving_throws": {
+   "STR": 4,
+   "DEX": 5,
+   "WIS": 2
+  },
+  "skills": {
+   "Athletics": 4,
+   "Deception": 4
+  },
+  "senses": [],
+  "passive_perception": 10,
+  "languages": "any two languages",
+  "cr": 2,
+  "xp": 450,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [],
+  "multiattack": [
+   "Scimitar",
+   "Scimitar",
+   "Dagger"
+  ],
+  "actions": [
+   {
+    "name": "Scimitar",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+3",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Dagger",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": [
+     20,
+     60
+    ],
+    "damage": "1d4+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [
+   {
+    "name": "Parry",
+    "desc": "The captain adds 2 to its AC against one melee attack that would hit it. To do so, the captain must see the attacker and be wielding a melee weapon.",
+    "id": "parry",
+    "ac_bonus": 2
+   }
+  ],
+  "spellcasting": null
+ },
+ {
+  "name": "Cultist",
+  "size": "M",
+  "type": "humanoid (any race)",
+  "alignment": "any non-good alignment",
+  "ac": 12,
+  "ac_source": "leather armor",
+  "hp": 9,
+  "hit_dice": "2d8",
+  "speed": 30,
+  "abilities": {
+   "STR": 11,
+   "DEX": 12,
+   "CON": 10,
+   "INT": 10,
+   "WIS": 11,
+   "CHA": 10
+  },
+  "saving_throws": {},
+  "skills": {
+   "Deception": 2,
+   "Religion": 2
+  },
+  "senses": [],
+  "passive_perception": 10,
+  "languages": "any one language",
+  "cr": 0.125,
+  "xp": 25,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Dark Devotion",
+    "desc": "The cultist has advantage on saving throws against being charmed or frightened.",
+    "id": "dark_devotion"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Scimitar",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+1",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Acolyte",
+  "size": "M",
+  "type": "humanoid (any race)",
+  "alignment": "any alignment",
+  "ac": 10,
+  "ac_source": "",
+  "hp": 9,
+  "hit_dice": "2d8",
+  "speed": 30,
+  "abilities": {
+   "STR": 10,
+   "DEX": 10,
+   "CON": 10,
+   "INT": 10,
+   "WIS": 14,
+   "CHA": 11
+  },
+  "saving_throws": {},
+  "skills": {
+   "Medicine": 4,
+   "Religion": 2
+  },
+  "senses": [],
+  "passive_perception": 12,
+  "languages": "any one language",
+  "cr": 0.25,
+  "xp": 50,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Club",
+    "kind": "melee_weapon",
+    "attack_bonus": 2,
+    "reach": 5,
+    "range": null,
+    "damage": "1d4",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": {
+   "ability": "WIS",
+   "dc": 12,
+   "attack_bonus": 4,
+   "level": 1,
+   "cantrips": [
+    "Light",
+    "Sacred Flame",
+    "Spare the Dying"
+   ],
+   "slots": {
+    "1": 3
+   },
+   "spells": {
+    "1": [
+     "Bless",
+     "Cure Wounds",
+     "Guiding Bolt"
+    ]
+   }
+  }
+ },
+ {
+  "name": "Kobold",
+  "size": "S",
+  "type": "humanoid (kobold)",
+  "alignment": "lawful evil",
+  "ac": 12,
+  "ac_source": "",
+  "hp": 5,
+  "hit_dice": "2d6-2",
+  "speed": 30,
+  "abilities": {
+   "STR": 7,
+   "DEX": 15,
+   "CON": 9,
+   "INT": 8,
+   "WIS": 7,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 8,
+  "languages": "Common, Draconic",
+  "cr": 0.125,
+  "xp": 25,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Sunlight Sensitivity",
+    "desc": "While in sunlight, the kobold has disadvantage on attack rolls as well as on Wisdom (Perception) checks that rely on sight.",
+    "id": "sunlight_sensitivity"
+   },
+   {
+    "name": "Pack Tactics",
+    "desc": "Advantage on an attack roll against a creature if at least one ally is within 5 feet of it and isn't incapacitated.",
+    "id": "pack_tactics"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Dagger",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": [
+     20,
+     60
+    ],
+    "damage": "1d4+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Sling",
+    "kind": "ranged_weapon",
+    "attack_bonus": 4,
+    "reach": 0,
+    "range": [
+     30,
+     120
+    ],
+    "damage": "1d4+2",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Giant Rat",
+  "size": "S",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 12,
+  "ac_source": "",
+  "hp": 7,
+  "hit_dice": "2d6",
+  "speed": 30,
+  "abilities": {
+   "STR": 7,
+   "DEX": 15,
+   "CON": 11,
+   "INT": 2,
+   "WIS": 10,
+   "CHA": 4
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "\u2014",
+  "cr": 0.125,
+  "xp": 25,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on smell."
+   },
+   {
+    "name": "Pack Tactics",
+    "desc": "Advantage on an attack roll against a creature if at least one ally is within 5 feet of it and isn't incapacitated.",
+    "id": "pack_tactics"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d4+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Gnoll",
+  "size": "M",
+  "type": "humanoid (gnoll)",
+  "alignment": "chaotic evil",
+  "ac": 15,
+  "ac_source": "hide armor, shield",
+  "hp": 22,
+  "hit_dice": "5d8",
+  "speed": 30,
+  "abilities": {
+   "STR": 14,
+   "DEX": 12,
+   "CON": 11,
+   "INT": 6,
+   "WIS": 10,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "Gnoll",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Rampage",
+    "desc": "When the gnoll reduces a creature to 0 hit points with a melee attack on its turn, it can take a bonus action to move up to half its speed and make a bite attack.",
+    "id": "rampage"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d4+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Spear",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": [
+     20,
+     60
+    ],
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": "1d8+2",
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Longbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 3,
+    "reach": 0,
+    "range": [
+     150,
+     600
+    ],
+    "damage": "1d8+1",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Ogre",
+  "size": "L",
+  "type": "giant",
+  "alignment": "chaotic evil",
+  "ac": 11,
+  "ac_source": "hide armor",
+  "hp": 59,
+  "hit_dice": "7d10+21",
+  "speed": 40,
+  "abilities": {
+   "STR": 19,
+   "DEX": 8,
+   "CON": 16,
+   "INT": 5,
+   "WIS": 7,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {},
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 8,
+  "languages": "Common, Giant",
+  "cr": 2,
+  "xp": 450,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Greatclub",
+    "kind": "melee_weapon",
+    "attack_bonus": 6,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+4",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Javelin",
+    "kind": "melee_or_ranged",
+    "attack_bonus": 6,
+    "reach": 5,
+    "range": [
+     30,
+     120
+    ],
+    "damage": "2d6+4",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Owlbear",
+  "size": "L",
+  "type": "monstrosity",
+  "alignment": "unaligned",
+  "ac": 13,
+  "ac_source": "natural armor",
+  "hp": 59,
+  "hit_dice": "7d10+21",
+  "speed": 40,
+  "abilities": {
+   "STR": 20,
+   "DEX": 12,
+   "CON": 17,
+   "INT": 3,
+   "WIS": 12,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 13,
+  "languages": "\u2014",
+  "cr": 3,
+  "xp": 700,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Sight and Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on sight or smell."
+   }
+  ],
+  "multiattack": [
+   "Beak",
+   "Claws"
+  ],
+  "actions": [
+   {
+    "name": "Beak",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "1d10+5",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claws",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+5",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Wight",
+  "size": "M",
+  "type": "undead",
+  "alignment": "neutral evil",
+  "ac": 14,
+  "ac_source": "studded leather",
+  "hp": 45,
+  "hit_dice": "6d8+18",
+  "speed": 30,
+  "abilities": {
+   "STR": 15,
+   "DEX": 14,
+   "CON": 16,
+   "INT": 10,
+   "WIS": 13,
+   "CHA": 15
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3,
+   "Stealth": 4
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 13,
+  "languages": "the languages it knew in life",
+  "cr": 3,
+  "xp": 700,
+  "damage_resistances": [
+   "necrotic",
+   "bludgeoning from nonmagical attacks",
+   "piercing from nonmagical attacks",
+   "slashing from nonmagical attacks"
+  ],
+  "damage_immunities": [
+   "poison"
+  ],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [
+   "exhaustion",
+   "poisoned"
+  ],
+  "traits": [
+   {
+    "name": "Sunlight Sensitivity",
+    "desc": "While in sunlight, the wight has disadvantage on attack rolls and on Wisdom (Perception) checks that rely on sight.",
+    "id": "sunlight_sensitivity"
+   }
+  ],
+  "multiattack": [
+   "Longsword",
+   "Longsword"
+  ],
+  "actions": [
+   {
+    "name": "Longsword",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d8+2",
+    "damage_type": "slashing",
+    "versatile": "1d10+2",
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Longbow",
+    "kind": "ranged_weapon",
+    "attack_bonus": 4,
+    "reach": 0,
+    "range": [
+     150,
+     600
+    ],
+    "damage": "1d8+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Life Drain",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+2",
+    "damage_type": "necrotic",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "CON",
+      "dc": 13,
+      "max_hp_reduction": true,
+      "note": "the target's hit point maximum is reduced by an amount equal to the damage taken"
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Shadow",
+  "size": "M",
+  "type": "undead",
+  "alignment": "chaotic evil",
+  "ac": 12,
+  "ac_source": "",
+  "hp": 16,
+  "hit_dice": "3d8+3",
+  "speed": 40,
+  "abilities": {
+   "STR": 6,
+   "DEX": 14,
+   "CON": 13,
+   "INT": 6,
+   "WIS": 10,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {
+   "Stealth": 4
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 10,
+  "languages": "\u2014",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [
+   "acid",
+   "cold",
+   "fire",
+   "lightning",
+   "thunder",
+   "bludgeoning from nonmagical attacks",
+   "piercing from nonmagical attacks",
+   "slashing from nonmagical attacks"
+  ],
+  "damage_immunities": [
+   "necrotic",
+   "poison"
+  ],
+  "damage_vulnerabilities": [
+   "radiant"
+  ],
+  "condition_immunities": [
+   "exhaustion",
+   "frightened",
+   "grappled",
+   "paralyzed",
+   "petrified",
+   "poisoned",
+   "prone",
+   "restrained"
+  ],
+  "traits": [
+   {
+    "name": "Amorphous",
+    "desc": "The shadow can move through a space as narrow as 1 inch wide without squeezing."
+   },
+   {
+    "name": "Shadow Stealth",
+    "desc": "While in dim light or darkness, the shadow can take the Hide action as a bonus action."
+   },
+   {
+    "name": "Sunlight Weakness",
+    "desc": "While in sunlight, the shadow has disadvantage on attack rolls, ability checks, and saving throws.",
+    "id": "sunlight_weakness"
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Strength Drain",
+    "kind": "melee_weapon",
+    "attack_bonus": 4,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+2",
+    "damage_type": "necrotic",
+    "versatile": null,
+    "extra": [
+     {
+      "ability_drain": "STR",
+      "amount": "1d4"
+     }
+    ],
+    "desc": "The target's Strength score is reduced by 1d4. The target dies if this reduces its Strength to 0.",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Black Bear",
+  "size": "M",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 11,
+  "ac_source": "natural armor",
+  "hp": 19,
+  "hit_dice": "3d8+6",
+  "speed": 40,
+  "abilities": {
+   "STR": 15,
+   "DEX": 10,
+   "CON": 14,
+   "INT": 2,
+   "WIS": 12,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3
+  },
+  "senses": [],
+  "passive_perception": 13,
+  "languages": "\u2014",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on smell."
+   }
+  ],
+  "multiattack": [
+   "Bite",
+   "Claws"
+  ],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+2",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claws",
+    "kind": "melee_weapon",
+    "attack_bonus": 3,
+    "reach": 5,
+    "range": null,
+    "damage": "2d4+2",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Brown Bear",
+  "size": "L",
+  "type": "beast",
+  "alignment": "unaligned",
+  "ac": 11,
+  "ac_source": "natural armor",
+  "hp": 34,
+  "hit_dice": "4d10+12",
+  "speed": 40,
+  "abilities": {
+   "STR": 19,
+   "DEX": 10,
+   "CON": 16,
+   "INT": 2,
+   "WIS": 13,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 3
+  },
+  "senses": [],
+  "passive_perception": 13,
+  "languages": "\u2014",
+  "cr": 1,
+  "xp": 200,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on smell."
+   }
+  ],
+  "multiattack": [
+   "Bite",
+   "Claws"
+  ],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "1d8+4",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claws",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+4",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Worg",
+  "size": "L",
+  "type": "monstrosity",
+  "alignment": "neutral evil",
+  "ac": 13,
+  "ac_source": "natural armor",
+  "hp": 26,
+  "hit_dice": "4d10+4",
+  "speed": 50,
+  "abilities": {
+   "STR": 16,
+   "DEX": 13,
+   "CON": 13,
+   "INT": 7,
+   "WIS": 11,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 4
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 14,
+  "languages": "Goblin, Worg",
+  "cr": 0.5,
+  "xp": 100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Hearing and Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on hearing or smell."
+   }
+  ],
+  "multiattack": [],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 5,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+3",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [
+     {
+      "save": "STR",
+      "dc": 13,
+      "condition": "prone"
+     }
+    ],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Ettin",
+  "size": "L",
+  "type": "giant",
+  "alignment": "chaotic evil",
+  "ac": 12,
+  "ac_source": "natural armor",
+  "hp": 85,
+  "hit_dice": "10d10+30",
+  "speed": 40,
+  "abilities": {
+   "STR": 21,
+   "DEX": 8,
+   "CON": 17,
+   "INT": 6,
+   "WIS": 10,
+   "CHA": 8
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 4
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 14,
+  "languages": "Giant, Orc",
+  "cr": 4,
+  "xp": 1100,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Two Heads",
+    "desc": "The ettin has advantage on Wisdom (Perception) checks and on saving throws against being blinded, charmed, deafened, frightened, stunned, and knocked unconscious.",
+    "id": "two_heads",
+    "save_advantage_conditions": [
+     "blinded",
+     "charmed",
+     "deafened",
+     "frightened",
+     "stunned",
+     "unconscious"
+    ]
+   },
+   {
+    "name": "Wakeful",
+    "desc": "When one of the ettin's heads is asleep, its other head is awake."
+   }
+  ],
+  "multiattack": [
+   "Battleaxe",
+   "Morningstar"
+  ],
+  "actions": [
+   {
+    "name": "Battleaxe",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+5",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Morningstar",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "2d8+5",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Hill Giant",
+  "size": "H",
+  "type": "giant",
+  "alignment": "chaotic evil",
+  "ac": 13,
+  "ac_source": "natural armor",
+  "hp": 105,
+  "hit_dice": "10d12+40",
+  "speed": 40,
+  "abilities": {
+   "STR": 21,
+   "DEX": 8,
+   "CON": 19,
+   "INT": 5,
+   "WIS": 9,
+   "CHA": 6
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 2
+  },
+  "senses": [],
+  "passive_perception": 12,
+  "languages": "Giant",
+  "cr": 5,
+  "xp": 1800,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [],
+  "multiattack": [
+   "Greatclub",
+   "Greatclub"
+  ],
+  "actions": [
+   {
+    "name": "Greatclub",
+    "kind": "melee_weapon",
+    "attack_bonus": 8,
+    "reach": 10,
+    "range": null,
+    "damage": "3d8+5",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Rock",
+    "kind": "ranged_weapon",
+    "attack_bonus": 8,
+    "reach": 0,
+    "range": [
+     60,
+     240
+    ],
+    "damage": "3d10+5",
+    "damage_type": "bludgeoning",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ },
+ {
+  "name": "Troll",
+  "size": "L",
+  "type": "giant",
+  "alignment": "chaotic evil",
+  "ac": 15,
+  "ac_source": "natural armor",
+  "hp": 84,
+  "hit_dice": "8d10+40",
+  "speed": 30,
+  "abilities": {
+   "STR": 18,
+   "DEX": 13,
+   "CON": 20,
+   "INT": 7,
+   "WIS": 9,
+   "CHA": 7
+  },
+  "saving_throws": {},
+  "skills": {
+   "Perception": 2
+  },
+  "senses": [
+   "darkvision 60 ft."
+  ],
+  "passive_perception": 12,
+  "languages": "Giant",
+  "cr": 5,
+  "xp": 1800,
+  "damage_resistances": [],
+  "damage_immunities": [],
+  "damage_vulnerabilities": [],
+  "condition_immunities": [],
+  "traits": [
+   {
+    "name": "Keen Smell",
+    "desc": "Advantage on Wisdom (Perception) checks that rely on smell."
+   },
+   {
+    "name": "Regeneration",
+    "desc": "The troll regains 10 hit points at the start of its turn. If it takes acid or fire damage, this trait doesn't function at the start of its next turn. The troll dies only if it starts its turn with 0 hit points and doesn't regenerate.",
+    "id": "regeneration",
+    "amount": 10,
+    "stopped_by": [
+     "acid",
+     "fire"
+    ]
+   }
+  ],
+  "multiattack": [
+   "Bite",
+   "Claw",
+   "Claw"
+  ],
+  "actions": [
+   {
+    "name": "Bite",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "1d6+4",
+    "damage_type": "piercing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   },
+   {
+    "name": "Claw",
+    "kind": "melee_weapon",
+    "attack_bonus": 7,
+    "reach": 5,
+    "range": null,
+    "damage": "2d6+4",
+    "damage_type": "slashing",
+    "versatile": null,
+    "extra": [],
+    "desc": "",
+    "target": "one target"
+   }
+  ],
+  "bonus_actions": [],
+  "reactions": [],
+  "spellcasting": null
+ }
 ]

@@ -1,15 +1,133 @@
 [
-  {"name": "Padded", "category": "light", "base_ac": 11, "dex_cap": null, "stealth_disadvantage": true, "str_req": 0},
-  {"name": "Leather", "category": "light", "base_ac": 11, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0},
-  {"name": "Studded Leather", "category": "light", "base_ac": 12, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0},
-  {"name": "Hide", "category": "medium", "base_ac": 12, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
-  {"name": "Chain Shirt", "category": "medium", "base_ac": 13, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
-  {"name": "Scale Mail", "category": "medium", "base_ac": 14, "dex_cap": 2, "stealth_disadvantage": true, "str_req": 0},
-  {"name": "Breastplate", "category": "medium", "base_ac": 14, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
-  {"name": "Half Plate", "category": "medium", "base_ac": 15, "dex_cap": 2, "stealth_disadvantage": true, "str_req": 0},
-  {"name": "Ring Mail", "category": "heavy", "base_ac": 14, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 0},
-  {"name": "Chain Mail", "category": "heavy", "base_ac": 16, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 13},
-  {"name": "Splint", "category": "heavy", "base_ac": 17, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 15},
-  {"name": "Plate", "category": "heavy", "base_ac": 18, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 15},
-  {"name": "Shield", "category": "shield", "base_ac": 2, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0}
+ {
+  "name": "Padded",
+  "category": "light",
+  "cost": "5 gp",
+  "base_ac": 11,
+  "dex_cap": null,
+  "str_req": 0,
+  "stealth_disadvantage": true,
+  "weight": 8
+ },
+ {
+  "name": "Leather",
+  "category": "light",
+  "cost": "10 gp",
+  "base_ac": 11,
+  "dex_cap": null,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 10
+ },
+ {
+  "name": "Studded leather",
+  "category": "light",
+  "cost": "45 gp",
+  "base_ac": 12,
+  "dex_cap": null,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 13
+ },
+ {
+  "name": "Hide",
+  "category": "medium",
+  "cost": "10 gp",
+  "base_ac": 12,
+  "dex_cap": 2,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 12
+ },
+ {
+  "name": "Chain shirt",
+  "category": "medium",
+  "cost": "50 gp",
+  "base_ac": 13,
+  "dex_cap": 2,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 20
+ },
+ {
+  "name": "Scale mail",
+  "category": "medium",
+  "cost": "50 gp",
+  "base_ac": 14,
+  "dex_cap": 2,
+  "str_req": 0,
+  "stealth_disadvantage": true,
+  "weight": 45
+ },
+ {
+  "name": "Breastplate",
+  "category": "medium",
+  "cost": "400 gp",
+  "base_ac": 14,
+  "dex_cap": 2,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 20
+ },
+ {
+  "name": "Half plate",
+  "category": "medium",
+  "cost": "750 gp",
+  "base_ac": 15,
+  "dex_cap": 2,
+  "str_req": 0,
+  "stealth_disadvantage": true,
+  "weight": 40
+ },
+ {
+  "name": "Ring mail",
+  "category": "heavy",
+  "cost": "30 gp",
+  "base_ac": 14,
+  "dex_cap": 0,
+  "str_req": 0,
+  "stealth_disadvantage": true,
+  "weight": 40
+ },
+ {
+  "name": "Chain mail",
+  "category": "heavy",
+  "cost": "75 gp",
+  "base_ac": 16,
+  "dex_cap": 0,
+  "str_req": 13,
+  "stealth_disadvantage": true,
+  "weight": 55
+ },
+ {
+  "name": "Splint",
+  "category": "heavy",
+  "cost": "200 gp",
+  "base_ac": 17,
+  "dex_cap": 0,
+  "str_req": 15,
+  "stealth_disadvantage": true,
+  "weight": 60
+ },
+ {
+  "name": "Plate",
+  "category": "heavy",
+  "cost": "1500 gp",
+  "base_ac": 18,
+  "dex_cap": 0,
+  "str_req": 15,
+  "stealth_disadvantage": true,
+  "weight": 65
+ },
+ {
+  "name": "Shield",
+  "category": "shield",
+  "cost": "10 gp",
+  "base_ac": 0,
+  "dex_cap": null,
+  "str_req": 0,
+  "stealth_disadvantage": false,
+  "weight": 6,
+  "ac_bonus": 2
+ }
 ]

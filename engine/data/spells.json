@@ -1,125 +1,1734 @@
 [
-  {"name": "Fire Bolt", "level": 0, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "ranged", "save": null, "half_on_save": false, "damage": "1d10", "damage_type": "fire", "damage_by_level": {"1": "1d10", "5": "2d10", "11": "3d10", "17": "4d10"}, "upcast": null, "area": null, "range": 120, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy"},
-   "desc": "A mote of fire; ranged spell attack for fire damage."},
-  {"name": "Ray of Frost", "level": 0, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "ranged", "save": null, "half_on_save": false, "damage": "1d8", "damage_type": "cold", "damage_by_level": {"1": "1d8", "5": "2d8", "11": "3d8", "17": "4d8"}, "upcast": null, "area": null, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy", "on_hit": {"speed_penalty": 10}},
-   "desc": "A beam of cold; on a hit the target's speed drops by 10 ft until the start of your next turn."},
-  {"name": "Shocking Grasp", "level": 0, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "melee", "save": null, "half_on_save": false, "damage": "1d8", "damage_type": "lightning", "damage_by_level": {"1": "1d8", "5": "2d8", "11": "3d8", "17": "4d8"}, "upcast": null, "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy", "on_hit": {"no_reactions": true}},
-   "desc": "Lightning springs from your hand; on a hit the target can't take reactions until the start of its next turn."},
-  {"name": "Poison Spray", "level": 0, "school": "conjuration", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "CON", "half_on_save": false, "damage": "1d12", "damage_type": "poison", "damage_by_level": {"1": "1d12", "5": "2d12", "11": "3d12", "17": "4d12"}, "upcast": null, "area": null, "range": 10, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy"},
-   "desc": "A puff of noxious gas; CON save or take poison damage."},
-  {"name": "Acid Splash", "level": 0, "school": "conjuration", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": false, "damage": "1d6", "damage_type": "acid", "damage_by_level": {"1": "1d6", "5": "2d6", "11": "3d6", "17": "4d6"}, "upcast": null, "area": null, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy"},
-   "desc": "A bubble of acid; DEX save or take acid damage."},
-  {"name": "Sacred Flame", "level": 0, "school": "evocation", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": false, "damage": "1d8", "damage_type": "radiant", "damage_by_level": {"1": "1d8", "5": "2d8", "11": "3d8", "17": "4d8"}, "upcast": null, "area": null, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy", "ignore_cover": true},
-   "desc": "Flame-like radiance descends; DEX save or take radiant damage, no benefit from cover."},
-  {"name": "Guidance", "level": 0, "school": "divination", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 5, "duration_rounds": 10, "concentration": true, "conditions_applied": [], "targets": 1, "target_side": "ally", "buff": "guidance", "combat": false},
-   "desc": "Touch a willing creature; it adds 1d4 to one ability check of its choice before the spell ends."},
-  {"name": "Spare the Dying", "level": 0, "school": "necromancy", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "ally", "stabilize": true},
-   "desc": "Touch a living creature at 0 hit points; it becomes stable."},
-  {"name": "Light", "level": 0, "school": "evocation", "classes": ["Cleric", "Wizard"], "casting_time": "action",
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "self", "combat": false},
-   "desc": "An object sheds bright light in a 20-foot radius for 1 hour."},
-
-  {"name": "Magic Missile", "level": 1, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": null, "auto_hit": true, "save": null, "half_on_save": false, "damage": "1d4+1", "damage_type": "force", "upcast": "+1 target/slot", "area": null, "range": 120, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 3, "target_side": "enemy"},
-   "desc": "Three darts of force, each hitting automatically for 1d4+1; one more dart per slot above 1st."},
-  {"name": "Cure Wounds", "level": 1, "school": "evocation", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "heal", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "heal": "1d8", "add_mod": true, "upcast": "+1d8/slot", "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "ally"},
-   "desc": "A creature you touch regains 1d8 + your spellcasting modifier hit points."},
-  {"name": "Healing Word", "level": 1, "school": "evocation", "classes": ["Cleric"], "casting_time": "bonus",
-   "effect": {"kind": "heal", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "heal": "1d4", "add_mod": true, "upcast": "+1d4/slot", "area": null, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "ally"},
-   "desc": "A creature within 60 ft regains 1d4 + your spellcasting modifier hit points."},
-  {"name": "Bless", "level": 1, "school": "enchantment", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+1 target/slot", "area": null, "range": 30, "duration_rounds": 10, "concentration": true, "conditions_applied": [], "targets": 3, "target_side": "ally", "buff": "bless"},
-   "desc": "Up to three creatures add 1d4 to attack rolls and saving throws for 1 minute."},
-  {"name": "Guiding Bolt", "level": 1, "school": "evocation", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "ranged", "save": null, "half_on_save": false, "damage": "4d6", "damage_type": "radiant", "upcast": "+1d6/slot", "area": null, "range": 120, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy", "on_hit": {"advantage_against": true}},
-   "desc": "A flash of light; on a hit, the next attack roll against the target before the end of your next turn has advantage."},
-  {"name": "Shield of Faith", "level": 1, "school": "abjuration", "classes": ["Cleric"], "casting_time": "bonus",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 60, "duration_rounds": 100, "concentration": true, "conditions_applied": [], "targets": 1, "target_side": "ally", "buff": "shield_of_faith"},
-   "desc": "A shimmering field grants +2 AC for 10 minutes."},
-  {"name": "Inflict Wounds", "level": 1, "school": "necromancy", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "melee", "save": null, "half_on_save": false, "damage": "3d10", "damage_type": "necrotic", "upcast": "+1d10/slot", "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy"},
-   "desc": "Melee spell attack for 3d10 necrotic damage."},
-  {"name": "Shield", "level": 1, "school": "abjuration", "classes": ["Wizard"], "casting_time": "reaction",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 0, "duration_rounds": 1, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "self", "buff": "shield"},
-   "desc": "Reaction when hit: +5 AC until the start of your next turn, including against the triggering attack; immune to magic missile."},
-  {"name": "Burning Hands", "level": 1, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": true, "damage": "3d6", "damage_type": "fire", "upcast": "+1d6/slot", "area": {"shape": "cone", "size": 15}, "range": 0, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "any"},
-   "desc": "A 15-foot cone of flame; DEX save for half."},
-  {"name": "Thunderwave", "level": 1, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "CON", "half_on_save": true, "damage": "2d8", "damage_type": "thunder", "upcast": "+1d8/slot", "area": {"shape": "cube", "size": 15}, "range": 0, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "any", "push_ft": 10},
-   "desc": "A wave of thunderous force in a 15-foot cube from you; CON save for half, failures are pushed 10 ft."},
-  {"name": "Sleep", "level": 1, "school": "enchantment", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "debuff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+2d8/slot", "area": {"shape": "sphere", "size": 20}, "range": 90, "duration_rounds": 10, "concentration": false, "conditions_applied": ["unconscious"], "targets": 0, "target_side": "any", "sleep": "5d8", "creature_types_excluded": ["undead", "construct"]},
-   "desc": "Roll 5d8; creatures in a 20-foot sphere fall unconscious in ascending order of current HP until the total is spent. Undead are unaffected."},
-  {"name": "Mage Armor", "level": 1, "school": "abjuration", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 5, "duration_rounds": 4800, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "ally", "buff": "mage_armor", "requires_unarmored": true},
-   "desc": "Touch a willing unarmored creature; its base AC becomes 13 + DEX for 8 hours."},
-  {"name": "False Life", "level": 1, "school": "necromancy", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+5/slot", "area": null, "range": 0, "duration_rounds": 600, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "self", "temp_hp": "1d4+4"},
-   "desc": "Gain 1d4+4 temporary hit points for 1 hour; +5 per slot above 1st."},
-  {"name": "Detect Magic", "level": 1, "school": "divination", "classes": ["Cleric", "Wizard"], "casting_time": "action", "ritual": true,
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 0, "duration_rounds": 100, "concentration": true, "conditions_applied": [], "targets": 1, "target_side": "self", "combat": false},
-   "desc": "Sense magic within 30 feet for 10 minutes."},
-
-  {"name": "Scorching Ray", "level": 2, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "ranged", "save": null, "half_on_save": false, "damage": "2d6", "damage_type": "fire", "upcast": "+1 target/slot", "area": null, "range": 120, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 3, "target_side": "enemy"},
-   "desc": "Three rays of fire, each a separate ranged spell attack for 2d6 fire; one more ray per slot above 2nd."},
-  {"name": "Hold Person", "level": 2, "school": "enchantment", "classes": ["Cleric", "Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "WIS", "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+1 target/slot", "area": null, "range": 60, "duration_rounds": 10, "concentration": true, "conditions_applied": ["paralyzed"], "repeat_save": true, "targets": 1, "target_side": "enemy", "creature_types": ["humanoid"]},
-   "desc": "A humanoid must succeed on a WIS save or be paralyzed for 1 minute; it repeats the save at the end of each of its turns."},
-  {"name": "Web", "level": 2, "school": "conjuration", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": {"shape": "cube", "size": 20}, "range": 60, "duration_rounds": 10, "concentration": true, "conditions_applied": ["restrained"], "repeat_save": true, "escape_ability": "STR", "targets": 0, "target_side": "any"},
-   "desc": "Sticky webs fill a 20-foot cube; creatures inside make a DEX save or are restrained, and can spend their turn-end on a STR check to escape."},
-  {"name": "Misty Step", "level": 2, "school": "conjuration", "classes": ["Wizard"], "casting_time": "bonus",
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 30, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "self", "teleport": 30},
-   "desc": "Teleport up to 30 feet to an unoccupied space you can see."},
-  {"name": "Shatter", "level": 2, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "CON", "half_on_save": true, "damage": "3d8", "damage_type": "thunder", "upcast": "+1d8/slot", "area": {"shape": "sphere", "size": 10}, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "any"},
-   "desc": "A painful ringing in a 10-foot sphere; CON save for half thunder damage."},
-  {"name": "Spiritual Weapon", "level": 2, "school": "evocation", "classes": ["Cleric"], "casting_time": "bonus",
-   "effect": {"kind": "attack", "attack_type": "melee", "save": null, "half_on_save": false, "damage": "1d8", "damage_type": "force", "add_mod": true, "upcast": "+1d8/2slots", "area": null, "range": 60, "duration_rounds": 10, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "enemy", "ongoing": "spiritual_weapon"},
-   "desc": "A floating weapon strikes a creature within 60 ft (melee spell attack, 1d8 + mod force) when cast and as a bonus action on later turns for 1 minute."},
-  {"name": "Lesser Restoration", "level": 2, "school": "abjuration", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 5, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "ally", "remove_conditions": ["blinded", "deafened", "paralyzed", "poisoned"]},
-   "desc": "Touch a creature to end one of: blinded, deafened, paralyzed, poisoned."},
-  {"name": "Aid", "level": 2, "school": "abjuration", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+5/slot", "area": null, "range": 30, "duration_rounds": 4800, "concentration": false, "conditions_applied": [], "targets": 3, "target_side": "ally", "buff": "aid", "max_hp_bonus": 5},
-   "desc": "Up to three creatures gain +5 hit point maximum and current hit points for 8 hours."},
-  {"name": "Blindness/Deafness", "level": 2, "school": "necromancy", "classes": ["Cleric", "Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "CON", "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+1 target/slot", "area": null, "range": 30, "duration_rounds": 10, "concentration": false, "conditions_applied": ["blinded"], "repeat_save": true, "targets": 1, "target_side": "enemy"},
-   "desc": "CON save or blinded for 1 minute; the target repeats the save at the end of each of its turns."},
-  {"name": "Invisibility", "level": 2, "school": "illusion", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "buff", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": "+1 target/slot", "area": null, "range": 5, "duration_rounds": 600, "concentration": true, "conditions_applied": ["invisible"], "targets": 1, "target_side": "ally", "buff": "invisibility"},
-   "desc": "A creature you touch becomes invisible until it attacks or casts a spell (up to 1 hour)."},
-
-  {"name": "Fireball", "level": 3, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": true, "damage": "8d6", "damage_type": "fire", "upcast": "+1d6/slot", "area": {"shape": "sphere", "size": 20}, "range": 150, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "any"},
-   "desc": "An explosion in a 20-foot-radius sphere; DEX save for half of 8d6 fire."},
-  {"name": "Lightning Bolt", "level": 3, "school": "evocation", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "DEX", "half_on_save": true, "damage": "8d6", "damage_type": "lightning", "upcast": "+1d6/slot", "area": {"shape": "line", "size": 100}, "range": 0, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 0, "target_side": "any"},
-   "desc": "A 100-foot line of lightning from you; DEX save for half of 8d6 lightning."},
-  {"name": "Spirit Guardians", "level": 3, "school": "conjuration", "classes": ["Cleric"], "casting_time": "action",
-   "effect": {"kind": "debuff", "attack_type": null, "save": "WIS", "half_on_save": true, "damage": "3d8", "damage_type": "radiant", "upcast": "+1d8/slot", "area": {"shape": "sphere", "size": 15}, "range": 0, "duration_rounds": 100, "concentration": true, "conditions_applied": [], "targets": 0, "target_side": "enemy", "aura": {"radius": 15, "trigger": "start_of_turn"}},
-   "desc": "Spirits guard a 15-foot radius around you for 10 minutes; an enemy that starts its turn there makes a WIS save, taking 3d8 radiant (half on success)."},
-  {"name": "Mass Healing Word", "level": 3, "school": "evocation", "classes": ["Cleric"], "casting_time": "bonus",
-   "effect": {"kind": "heal", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "heal": "1d4", "add_mod": true, "upcast": "+1d4/slot", "area": null, "range": 60, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 6, "target_side": "ally"},
-   "desc": "Up to six creatures within 60 ft regain 1d4 + your spellcasting modifier hit points."},
-  {"name": "Fear", "level": 3, "school": "illusion", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "save", "attack_type": null, "save": "WIS", "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": {"shape": "cone", "size": 30}, "range": 0, "duration_rounds": 10, "concentration": true, "conditions_applied": ["frightened"], "repeat_save": true, "targets": 0, "target_side": "enemy"},
-   "desc": "Creatures in a 30-foot cone make a WIS save or are frightened for 1 minute, repeating the save at the end of each turn."},
-  {"name": "Vampiric Touch", "level": 3, "school": "necromancy", "classes": ["Wizard"], "casting_time": "action",
-   "effect": {"kind": "attack", "attack_type": "melee", "save": null, "half_on_save": false, "damage": "3d6", "damage_type": "necrotic", "upcast": "+1d6/slot", "area": null, "range": 5, "duration_rounds": 10, "concentration": true, "conditions_applied": [], "targets": 1, "target_side": "enemy", "on_hit": {"heal_half": true}},
-   "desc": "Melee spell attack for 3d6 necrotic; you regain half the damage dealt."},
-  {"name": "Dispel Magic", "level": 3, "school": "abjuration", "classes": ["Cleric", "Wizard"], "casting_time": "action",
-   "effect": {"kind": "utility", "attack_type": null, "save": null, "half_on_save": false, "damage": null, "damage_type": null, "upcast": null, "area": null, "range": 120, "duration_rounds": null, "concentration": false, "conditions_applied": [], "targets": 1, "target_side": "any", "dispel": true},
-   "desc": "End every spell of 3rd level or lower on one creature (buffs, magical conditions, and its concentration)."}
+ {
+  "name": "Fire Bolt",
+  "level": 0,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You hurl a mote of fire at a creature or object within range. Make a ranged spell attack. On a hit the target takes 1d10 fire damage. The spell's damage increases by 1d10 at 5th, 11th, and 17th level.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d10",
+   "damage_type": "fire",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true
+  }
+ },
+ {
+  "name": "Ray of Frost",
+  "level": 0,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A frigid beam streaks toward a creature. Ranged spell attack; on a hit 1d8 cold damage and its speed is reduced by 10 feet until the start of your next turn. Damage increases at 5th, 11th, and 17th level.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": "cold",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true,
+   "speed_reduction": 10,
+   "effect_duration_rounds": 1
+  }
+ },
+ {
+  "name": "Chill Touch",
+  "level": 0,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "1 round",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A ghostly skeletal hand assails a creature. Ranged spell attack; on a hit 1d8 necrotic damage and the target can't regain hit points until the start of your next turn. Undead also have disadvantage on attack rolls against you.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": "necrotic",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": 1,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true,
+   "no_healing_rounds": 1
+  }
+ },
+ {
+  "name": "Shocking Grasp",
+  "level": 0,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Lightning springs from your hand. Melee spell attack with advantage if the target is wearing metal armor; on a hit 1d8 lightning damage and it can't take reactions until the start of its next turn.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "melee",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": "lightning",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true,
+   "no_reactions_rounds": 1
+  }
+ },
+ {
+  "name": "Acid Splash",
+  "level": 0,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "You hurl a bubble of acid at one creature, or two creatures within 5 feet of each other. Each must succeed on a Dexterity saving throw or take 1d6 acid damage.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": false,
+   "damage": "1d6",
+   "damage_type": "acid",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 2,
+   "cantrip_scaling": true
+  }
+ },
+ {
+  "name": "Poison Spray",
+  "level": 0,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "10 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You extend your hand and project a puff of noxious gas. The target must succeed on a Constitution saving throw or take 1d12 poison damage.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "CON",
+   "half_on_save": false,
+   "damage": "1d12",
+   "damage_type": "poison",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 10,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true
+  }
+ },
+ {
+  "name": "Sacred Flame",
+  "level": 0,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Flame-like radiance descends on a creature you can see. It must succeed on a Dexterity saving throw or take 1d8 radiant damage. The target gains no benefit from cover for this save.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": "radiant",
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "cantrip_scaling": true,
+   "ignores_cover": true
+  }
+ },
+ {
+  "name": "Guidance",
+  "level": 0,
+  "school": "divination",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Touch one willing creature. Once before the spell ends it can roll a d4 and add the number to one ability check of its choice.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "check_bonus_die": "1d4",
+   "uses": 1
+  }
+ },
+ {
+  "name": "Resistance",
+  "level": 0,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Touch one willing creature. Once before the spell ends it can roll a d4 and add the number to one saving throw of its choice.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "save_bonus_die": "1d4",
+   "uses": 1
+  }
+ },
+ {
+  "name": "Spare the Dying",
+  "level": 0,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You touch a living creature that has 0 hit points. The creature becomes stable. This spell has no effect on undead or constructs.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "stabilize": true,
+   "ally_only": true
+  }
+ },
+ {
+  "name": "Light",
+  "level": 0,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, M",
+  "duration": "1 hour",
+  "classes": [
+   "Cleric",
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "self",
+  "desc": "You touch an object; it sheds bright light in a 20-foot radius and dim light for an additional 20 feet.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 600,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Mage Hand",
+  "level": 0,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V, S",
+  "duration": "1 minute",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A spectral hand appears at a point you choose within range. You can use it to manipulate objects, open doors and containers, and pour contents out of a vial. It can't attack.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 10,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Prestidigitation",
+  "level": 0,
+  "school": "transmutation",
+  "casting_time": "action",
+  "range": "10 feet",
+  "components": "V, S",
+  "duration": "Up to 1 hour",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "none",
+  "desc": "A minor magical trick: a harmless sensory effect, lighting or snuffing a small flame, cleaning or soiling an object, or creating a trinket.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 10,
+   "duration_rounds": 60,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Magic Missile",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "You create three glowing darts of magical force. Each dart hits a creature of your choice that you can see within range, dealing 1d4+1 force damage. Casting at a higher level creates one more dart per slot level above 1st.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d4+1",
+   "damage_type": "force",
+   "upcast": "+1 dart/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 3,
+   "auto_hit": true,
+   "rays": 3
+  }
+ },
+ {
+  "name": "Burning Hands",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Self (15-foot cone)",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A thin sheet of flames shoots from your fingertips. Each creature in a 15-foot cone must make a Dexterity saving throw, taking 3d6 fire damage on a failed save, or half as much on a success.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": true,
+   "damage": "3d6",
+   "damage_type": "fire",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": "cone",
+    "size": 15
+   },
+   "range": 15,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Thunderwave",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Self (15-foot cube)",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A wave of thunderous force sweeps out from you. Each creature in a 15-foot cube originating from you must make a Constitution saving throw. On a failure it takes 2d8 thunder damage and is pushed 10 feet away from you; on a success half damage and no push.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "CON",
+   "half_on_save": true,
+   "damage": "2d8",
+   "damage_type": "thunder",
+   "upcast": "+1d8/slot",
+   "area": {
+    "shape": "cube",
+    "size": 15
+   },
+   "range": 15,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "push_ft": 10
+  }
+ },
+ {
+  "name": "Shield",
+  "level": 1,
+  "school": "abjuration",
+  "casting_time": "reaction",
+  "range": "Self",
+  "components": "V, S",
+  "duration": "1 round",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "self",
+  "desc": "An invisible barrier of force protects you. Until the start of your next turn you have a +5 bonus to AC, including against the triggering attack, and you take no damage from magic missile.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 0,
+   "duration_rounds": 1,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "ac_bonus": 5,
+   "self_only": true,
+   "trigger": "attacked"
+  }
+ },
+ {
+  "name": "Mage Armor",
+  "level": 1,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S, M",
+  "duration": "8 hours",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You touch a willing creature that isn't wearing armor. Its base AC becomes 13 + its Dexterity modifier until the spell ends.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 4800,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "set_base_ac": 13
+  }
+ },
+ {
+  "name": "Chromatic Orb",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "90 feet",
+  "components": "V, S, M",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You hurl a 4-inch sphere of energy at a creature. Make a ranged spell attack; on a hit the target takes 3d8 damage of a type you choose: acid, cold, fire, lightning, poison, or thunder.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "3d8",
+   "damage_type": "fire",
+   "upcast": "+1d8/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 90,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "choose_damage_type": [
+    "acid",
+    "cold",
+    "fire",
+    "lightning",
+    "poison",
+    "thunder"
+   ]
+  }
+ },
+ {
+  "name": "False Life",
+  "level": 1,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "Self",
+  "components": "V, S, M",
+  "duration": "1 hour",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "self",
+  "desc": "You gain 1d4+4 temporary hit points. Casting at a higher level grants 5 more temporary hit points per slot level above 1st.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+5/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 0,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "self_only": true,
+   "temp_hp": "1d4+4"
+  }
+ },
+ {
+  "name": "Cure Wounds",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A creature you touch regains hit points equal to 1d8 + your spellcasting ability modifier. This spell has no effect on undead or constructs. Casting at a higher level heals an extra 1d8 per slot level above 1st.",
+  "effect": {
+   "kind": "heal",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": null,
+   "upcast": "+1d8/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "add_mod": true,
+   "ally_only": true
+  }
+ },
+ {
+  "name": "Healing Word",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "bonus",
+  "range": "60 feet",
+  "components": "V",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A creature of your choice that you can see regains hit points equal to 1d4 + your spellcasting ability modifier. Casting at a higher level heals an extra 1d4 per slot level above 1st.",
+  "effect": {
+   "kind": "heal",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d4",
+   "damage_type": null,
+   "upcast": "+1d4/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "add_mod": true,
+   "ally_only": true
+  }
+ },
+ {
+  "name": "Bless",
+  "level": 1,
+  "school": "enchantment",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "You bless up to three creatures. Whenever a target makes an attack roll or a saving throw before the spell ends, it adds 1d4 to the roll. One extra target per slot level above 1st.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 target/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 3,
+   "ally_only": true,
+   "attack_bonus_die": "1d4",
+   "save_bonus_die": "1d4"
+  }
+ },
+ {
+  "name": "Guiding Bolt",
+  "level": 1,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "1 round",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A flash of light streaks toward a creature. Make a ranged spell attack; on a hit the target takes 4d6 radiant damage and the next attack roll made against it before the end of your next turn has advantage.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "4d6",
+   "damage_type": "radiant",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "grants_advantage_rounds": 1
+  }
+ },
+ {
+  "name": "Inflict Wounds",
+  "level": 1,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Make a melee spell attack against a creature you can reach. On a hit the target takes 3d10 necrotic damage.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "melee",
+   "save": null,
+   "half_on_save": false,
+   "damage": "3d10",
+   "damage_type": "necrotic",
+   "upcast": "+1d10/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Shield of Faith",
+  "level": 1,
+  "school": "abjuration",
+  "casting_time": "bonus",
+  "range": "60 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 10 minutes",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A shimmering field appears and surrounds a creature of your choice within range, granting it a +2 bonus to AC for the duration.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "ac_bonus": 2
+  }
+ },
+ {
+  "name": "Command",
+  "level": 1,
+  "school": "enchantment",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V",
+  "duration": "1 round",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You speak a one-word command to a creature you can see. It must succeed on a Wisdom saving throw or follow the command on its next turn. Undead and creatures that don't understand your language are unaffected.",
+  "effect": {
+   "kind": "debuff",
+   "attack_type": null,
+   "save": "WIS",
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 target/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": 1,
+   "concentration": false,
+   "conditions_applied": [
+    "incapacitated"
+   ],
+   "targets": 1,
+   "condition_duration": 1,
+   "immune_types": [
+    "undead"
+   ]
+  }
+ },
+ {
+  "name": "Detect Magic",
+  "level": 1,
+  "school": "divination",
+  "casting_time": "action",
+  "range": "Self",
+  "components": "V, S",
+  "duration": "Concentration, up to 10 minutes",
+  "classes": [
+   "Cleric",
+   "Wizard"
+  ],
+  "ritual": true,
+  "needs": "self",
+  "desc": "For the duration you sense the presence of magic within 30 feet of you, and can see a faint aura around any visible creature or object that bears magic.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Scorching Ray",
+  "level": 2,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "You create three rays of fire and hurl them at targets within range. Make a ranged spell attack for each ray; a ray deals 2d6 fire damage on a hit. One extra ray per slot level above 2nd.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "ranged",
+   "save": null,
+   "half_on_save": false,
+   "damage": "2d6",
+   "damage_type": "fire",
+   "upcast": "+1 ray/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 3,
+   "rays": 3
+  }
+ },
+ {
+  "name": "Misty Step",
+  "level": 2,
+  "school": "conjuration",
+  "casting_time": "bonus",
+  "range": "Self",
+  "components": "V",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "Briefly surrounded by silvery mist, you teleport up to 30 feet to an unoccupied space that you can see.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "teleport_ft": 30,
+   "self_only": true
+  }
+ },
+ {
+  "name": "Hold Person",
+  "level": 2,
+  "school": "enchantment",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Cleric",
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Choose a humanoid you can see. It must succeed on a Wisdom saving throw or be paralyzed for the duration. At the end of each of its turns it can make another Wisdom saving throw, ending the effect on itself on a success. One extra humanoid per slot level above 2nd.",
+  "effect": {
+   "kind": "debuff",
+   "attack_type": null,
+   "save": "WIS",
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 target/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [
+    "paralyzed"
+   ],
+   "targets": 1,
+   "condition_duration": 10,
+   "repeat_save": true,
+   "only_types": [
+    "humanoid"
+   ]
+  }
+ },
+ {
+  "name": "Web",
+  "level": 2,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 hour",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "You conjure thick sticky webbing filling a 20-foot cube. The area is difficult terrain. Each creature that starts its turn in the webs or enters them must make a Dexterity saving throw or be restrained. A restrained creature can use its action to make a Strength check against your spell save DC to free itself.",
+  "effect": {
+   "kind": "debuff",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": "cube",
+    "size": 20
+   },
+   "range": 60,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [
+    "restrained"
+   ],
+   "targets": 1,
+   "condition_duration": 10,
+   "repeat_save": true,
+   "difficult_terrain": true
+  }
+ },
+ {
+  "name": "Shatter",
+  "level": 2,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S, M",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A sudden loud ringing noise erupts from a point you choose. Each creature in a 10-foot-radius sphere must make a Constitution saving throw, taking 3d8 thunder damage on a failed save or half as much on a success. Creatures made of inorganic material have disadvantage on the save.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "CON",
+   "half_on_save": true,
+   "damage": "3d8",
+   "damage_type": "thunder",
+   "upcast": "+1d8/slot",
+   "area": {
+    "shape": "sphere",
+    "size": 10
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Blur",
+  "level": 2,
+  "school": "illusion",
+  "casting_time": "action",
+  "range": "Self",
+  "components": "V",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "self",
+  "desc": "Your body becomes blurred. For the duration any creature has disadvantage on attack rolls against you.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 0,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "self_only": true,
+   "attackers_disadvantage": true
+  }
+ },
+ {
+  "name": "Invisibility",
+  "level": 2,
+  "school": "illusion",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 hour",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "A creature you touch becomes invisible until the spell ends. The spell ends for a target that attacks or casts a spell. One extra creature per slot level above 2nd.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 target/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [
+    "invisible"
+   ],
+   "targets": 1,
+   "ally_only": true,
+   "condition_duration": 100,
+   "ends_on_attack": true
+  }
+ },
+ {
+  "name": "Flaming Sphere",
+  "level": 2,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "60 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A 5-foot-diameter sphere of fire appears in an unoccupied space. Any creature that ends its turn within 5 feet of the sphere must make a Dexterity saving throw, taking 2d6 fire damage on a failure or half as much on a success. As a bonus action you can move the sphere up to 30 feet.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": true,
+   "damage": "2d6",
+   "damage_type": "fire",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": "sphere",
+    "size": 5
+   },
+   "range": 60,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "persistent_aura": true
+  }
+ },
+ {
+  "name": "Spiritual Weapon",
+  "level": 2,
+  "school": "evocation",
+  "casting_time": "bonus",
+  "range": "60 feet",
+  "components": "V, S",
+  "duration": "1 minute",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You create a floating spectral weapon. As a bonus action you can move it up to 20 feet and make a melee spell attack against a creature within 5 feet of it, dealing 1d8 + your spellcasting modifier force damage. Damage increases by 1d8 for every two slot levels above 2nd.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "melee",
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d8",
+   "damage_type": "force",
+   "upcast": "+1d8/2slots",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": 10,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "add_mod": true,
+   "summoned_weapon": true
+  }
+ },
+ {
+  "name": "Aid",
+  "level": 2,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V, S, M",
+  "duration": "8 hours",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "Your spell bolsters up to three creatures. Each target's hit point maximum and current hit points increase by 5 for the duration, +5 per slot level above 2nd.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+5/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 4800,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 3,
+   "ally_only": true,
+   "max_hp_bonus": 5
+  }
+ },
+ {
+  "name": "Lesser Restoration",
+  "level": 2,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You touch a creature and end one disease or one condition afflicting it: blinded, deafened, paralyzed, or poisoned.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "removes_conditions": [
+    "blinded",
+    "deafened",
+    "paralyzed",
+    "poisoned"
+   ]
+  }
+ },
+ {
+  "name": "Blindness/Deafness",
+  "level": 2,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V",
+  "duration": "1 minute",
+  "classes": [
+   "Cleric",
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "One creature you can see must succeed on a Constitution saving throw or be blinded for the duration. At the end of each of its turns it can make another Constitution saving throw, ending the effect on a success. One extra target per slot level above 2nd.",
+  "effect": {
+   "kind": "debuff",
+   "attack_type": null,
+   "save": "CON",
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 target/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 10,
+   "concentration": false,
+   "conditions_applied": [
+    "blinded"
+   ],
+   "targets": 1,
+   "condition_duration": 10,
+   "repeat_save": true
+  }
+ },
+ {
+  "name": "Fireball",
+  "level": 3,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "150 feet",
+  "components": "V, S, M",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A bright streak flashes to a point you choose and blossoms into an explosion of flame. Each creature in a 20-foot-radius sphere must make a Dexterity saving throw, taking 8d6 fire damage on a failed save or half as much on a success.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": true,
+   "damage": "8d6",
+   "damage_type": "fire",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": "sphere",
+    "size": 20
+   },
+   "range": 150,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Lightning Bolt",
+  "level": 3,
+  "school": "evocation",
+  "casting_time": "action",
+  "range": "Self (100-foot line)",
+  "components": "V, S, M",
+  "duration": "Instantaneous",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "point",
+  "desc": "A stroke of lightning forming a line 100 feet long and 5 feet wide blasts out from you. Each creature in the line must make a Dexterity saving throw, taking 8d6 lightning damage on a failed save or half as much on a success.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "DEX",
+   "half_on_save": true,
+   "damage": "8d6",
+   "damage_type": "lightning",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": "line",
+    "size": 100
+   },
+   "range": 100,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1
+  }
+ },
+ {
+  "name": "Haste",
+  "level": 3,
+  "school": "transmutation",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Choose a willing creature. Until the spell ends its speed is doubled, it gains +2 to AC, it has advantage on Dexterity saving throws, and it gains an additional action on each of its turns that can be used for Attack (one weapon attack only), Dash, Disengage, Hide, or Use an Object.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "ac_bonus": 2,
+   "speed_multiplier": 2,
+   "extra_action": true
+  }
+ },
+ {
+  "name": "Fly",
+  "level": 3,
+  "school": "transmutation",
+  "casting_time": "action",
+  "range": "Touch",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 10 minutes",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "You touch a willing creature. It gains a flying speed of 60 feet for the duration.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "ally_only": true,
+   "fly_speed": 60
+  }
+ },
+ {
+  "name": "Vampiric Touch",
+  "level": 3,
+  "school": "necromancy",
+  "casting_time": "action",
+  "range": "Self",
+  "components": "V, S",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "The touch of your shadow-wreathed hand can siphon life force. Make a melee spell attack; on a hit the target takes 3d6 necrotic damage and you regain hit points equal to half the damage dealt. You can make the attack again on each of your turns.",
+  "effect": {
+   "kind": "attack",
+   "attack_type": "melee",
+   "save": null,
+   "half_on_save": false,
+   "damage": "3d6",
+   "damage_type": "necrotic",
+   "upcast": "+1d6/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 5,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "drain_half": true
+  }
+ },
+ {
+  "name": "Spirit Guardians",
+  "level": 3,
+  "school": "conjuration",
+  "casting_time": "action",
+  "range": "Self (15-foot radius)",
+  "components": "V, S, M",
+  "duration": "Concentration, up to 10 minutes",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "self",
+  "desc": "Spirits flit around you in a 15-foot radius. The area is difficult terrain for your enemies. When a creature enters the area for the first time on a turn or starts its turn there, it must make a Wisdom saving throw, taking 3d8 radiant damage on a failure or half as much on a success.",
+  "effect": {
+   "kind": "save",
+   "attack_type": null,
+   "save": "WIS",
+   "half_on_save": true,
+   "damage": "3d8",
+   "damage_type": "radiant",
+   "upcast": "+1d8/slot",
+   "area": {
+    "shape": "sphere",
+    "size": 15
+   },
+   "range": 15,
+   "duration_rounds": 100,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 1,
+   "persistent_aura": true,
+   "difficult_terrain": true,
+   "enemies_only": true
+  }
+ },
+ {
+  "name": "Mass Healing Word",
+  "level": 3,
+  "school": "evocation",
+  "casting_time": "bonus",
+  "range": "60 feet",
+  "components": "V",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "Up to six creatures of your choice that you can see within range regain hit points equal to 1d4 + your spellcasting ability modifier. One extra 1d4 per slot level above 3rd.",
+  "effect": {
+   "kind": "heal",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": "1d4",
+   "damage_type": null,
+   "upcast": "+1d4/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 60,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 6,
+   "add_mod": true,
+   "ally_only": true
+  }
+ },
+ {
+  "name": "Beacon of Hope",
+  "level": 3,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "30 feet",
+  "components": "V, S",
+  "duration": "Concentration, up to 1 minute",
+  "classes": [
+   "Cleric"
+  ],
+  "ritual": false,
+  "needs": "targets",
+  "desc": "Up to six creatures of your choice gain advantage on Wisdom saving throws and death saving throws, and regain the maximum number of hit points possible from any healing.",
+  "effect": {
+   "kind": "buff",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": null,
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 30,
+   "duration_rounds": 10,
+   "concentration": true,
+   "conditions_applied": [],
+   "targets": 6,
+   "ally_only": true,
+   "max_healing": true,
+   "save_advantage": [
+    "WIS"
+   ]
+  }
+ },
+ {
+  "name": "Dispel Magic",
+  "level": 3,
+  "school": "abjuration",
+  "casting_time": "action",
+  "range": "120 feet",
+  "components": "V, S",
+  "duration": "Instantaneous",
+  "classes": [
+   "Cleric",
+   "Wizard"
+  ],
+  "ritual": false,
+  "needs": "target",
+  "desc": "Choose one creature, object, or magical effect within range. Any spell of 3rd level or lower on the target ends. For higher-level spells make an ability check using your spellcasting ability against DC 10 + the spell's level.",
+  "effect": {
+   "kind": "utility",
+   "attack_type": null,
+   "save": null,
+   "half_on_save": false,
+   "damage": null,
+   "damage_type": null,
+   "upcast": "+1 level/slot",
+   "area": {
+    "shape": null,
+    "size": 0
+   },
+   "range": 120,
+   "duration_rounds": null,
+   "concentration": false,
+   "conditions_applied": [],
+   "targets": 1,
+   "dispel_level": 3
+  }
+ }
 ]

@@ -1,11 +1,44 @@
-This work includes material taken from the System Reference Document 5.1
-("SRD 5.1") by Wizards of the Coast LLC and available at
-https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is
-licensed under the Creative Commons Attribution 4.0 International License
-available at https://creativecommons.org/licenses/by/4.0/legalsummary.
+SYSTEM REFERENCE DOCUMENT 5.1 — ATTRIBUTION AND LICENSE
+=======================================================
 
-Only SRD 5.1 content is reproduced in engine/data/*.json (races, classes,
-spells, monsters, weapons, armor, conditions and equipment). Everything else
-in this repository is original. The JSON files reduce the SRD text to
-machine-readable statistics and short paraphrased descriptions; they are not
-verbatim copies of the rules text.
+The game-rules content in this directory (races.json, classes.json, spells.json,
+monsters.json, weapons.json, armor.json, conditions.json, equipment.json,
+meta.json) is derived from the System Reference Document 5.1 and is used under
+the Creative Commons Attribution 4.0 International License.
+
+REQUIRED ATTRIBUTION NOTICE
+---------------------------
+
+    This work includes material taken from the System Reference Document 5.1
+    ("SRD 5.1") by Wizards of the Coast LLC and available at
+    https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1
+    is licensed under the Creative Commons Attribution 4.0 International
+    License available at https://creativecommons.org/licenses/by/4.0/legalcode.
+
+LICENSE SUMMARY
+---------------
+
+Creative Commons Attribution 4.0 International (CC BY 4.0). You are free to
+share and adapt this material for any purpose, including commercially, provided
+you give appropriate credit, provide a link to the license, and indicate if
+changes were made. The full license text is available at:
+
+    https://creativecommons.org/licenses/by/4.0/legalcode
+
+CHANGES MADE
+------------
+
+The SRD 5.1 text has been reformatted into machine-readable JSON for use by a
+rules engine. Descriptive prose has been abridged, and machine-resolvable
+`effect`, `traits[].id`, and `actions[].extra` records have been added by the
+authors of this project to let code adjudicate the rules. Content selection is
+a Phase 1 subset (four classes at levels 1-5, four races, ~49 spells of levels
+0-3, ~29 monsters of CR 0-5, the full weapon and armor tables, and the fifteen
+conditions plus exhaustion). Any errors introduced by that transformation are
+the responsibility of this project, not of Wizards of the Coast LLC.
+
+NOT INCLUDED
+------------
+
+No Product Identity and no non-SRD content is present in this directory.
+Wizards of the Coast is not affiliated with this project and does not endorse it.

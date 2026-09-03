@@ -1,39 +1,208 @@
 [
-  {
-    "name": "Human", "size": "M", "speed": 30,
-    "ability_bonuses": {"STR": 1, "DEX": 1, "CON": 1, "INT": 1, "WIS": 1, "CHA": 1},
-    "skill_proficiencies": [], "features": [], "hp_per_level": 0,
-    "damage_resistances": [], "saving_throw_advantages": [],
-    "languages": ["Common", "one extra"]
+ {
+  "name": "Human",
+  "ability_bonuses": {
+   "STR": 1,
+   "DEX": 1,
+   "CON": 1,
+   "INT": 1,
+   "WIS": 1,
+   "CHA": 1
   },
-  {
-    "name": "Elf (High)", "size": "M", "speed": 30,
-    "ability_bonuses": {"DEX": 2, "INT": 1},
-    "skill_proficiencies": ["Perception"],
-    "features": ["darkvision", "fey_ancestry", "trance", "elf_weapon_training", "elf_cantrip"],
-    "hp_per_level": 0, "damage_resistances": [],
-    "saving_throw_advantages": ["charmed"],
-    "condition_immunities": ["magical_sleep"],
-    "weapon_proficiencies": ["Longsword", "Shortsword", "Shortbow", "Longbow"],
-    "languages": ["Common", "Elvish", "one extra"]
+  "size": "M",
+  "speed": 30,
+  "darkvision": 0,
+  "languages": [
+   "Common",
+   "one extra language of your choice"
+  ],
+  "traits": [
+   {
+    "name": "Ability Score Increase",
+    "desc": "Your ability scores each increase by 1."
+   },
+   {
+    "name": "Age",
+    "desc": "Humans reach adulthood in their late teens and live less than a century."
+   }
+  ],
+  "features": [],
+  "weapon_proficiencies": [],
+  "armor_proficiencies": [],
+  "skill_proficiencies": [],
+  "saving_throw_advantages": []
+ },
+ {
+  "name": "High Elf",
+  "ability_bonuses": {
+   "DEX": 2,
+   "INT": 1
   },
-  {
-    "name": "Dwarf (Hill)", "size": "M", "speed": 25,
-    "ability_bonuses": {"CON": 2, "WIS": 1},
-    "skill_proficiencies": [],
-    "features": ["darkvision", "dwarven_resilience", "dwarven_combat_training", "stonecunning", "dwarven_toughness"],
-    "hp_per_level": 1, "damage_resistances": ["poison"],
-    "saving_throw_advantages": ["poison"],
-    "weapon_proficiencies": ["Battleaxe", "Handaxe", "Light Hammer", "Warhammer"],
-    "languages": ["Common", "Dwarvish"]
+  "size": "M",
+  "speed": 30,
+  "darkvision": 60,
+  "languages": [
+   "Common",
+   "Elvish",
+   "one extra language of your choice"
+  ],
+  "traits": [
+   {
+    "name": "Ability Score Increase",
+    "desc": "Your Dexterity score increases by 2 and your Intelligence score increases by 1."
+   },
+   {
+    "name": "Darkvision",
+    "desc": "You can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light."
+   },
+   {
+    "name": "Keen Senses",
+    "desc": "You have proficiency in the Perception skill."
+   },
+   {
+    "name": "Fey Ancestry",
+    "desc": "You have advantage on saving throws against being charmed, and magic can't put you to sleep."
+   },
+   {
+    "name": "Trance",
+    "desc": "Elves meditate deeply for 4 hours a day instead of sleeping."
+   },
+   {
+    "name": "Elf Weapon Training",
+    "desc": "You have proficiency with the longsword, shortsword, shortbow, and longbow."
+   },
+   {
+    "name": "Cantrip",
+    "desc": "You know one cantrip of your choice from the wizard spell list. Intelligence is your spellcasting ability for it."
+   }
+  ],
+  "features": [
+   "fey_ancestry",
+   "elf_cantrip"
+  ],
+  "weapon_proficiencies": [
+   "Longsword",
+   "Shortsword",
+   "Shortbow",
+   "Longbow"
+  ],
+  "armor_proficiencies": [],
+  "skill_proficiencies": [
+   "Perception"
+  ],
+  "saving_throw_advantages": [
+   "charmed"
+  ],
+  "bonus_cantrip_list": "Wizard"
+ },
+ {
+  "name": "Hill Dwarf",
+  "ability_bonuses": {
+   "CON": 2,
+   "WIS": 1
   },
-  {
-    "name": "Halfling (Lightfoot)", "size": "S", "speed": 25,
-    "ability_bonuses": {"DEX": 2, "CHA": 1},
-    "skill_proficiencies": [],
-    "features": ["lucky", "brave", "halfling_nimbleness", "naturally_stealthy"],
-    "hp_per_level": 0, "damage_resistances": [],
-    "saving_throw_advantages": ["frightened"],
-    "languages": ["Common", "Halfling"]
-  }
+  "size": "M",
+  "speed": 25,
+  "darkvision": 60,
+  "languages": [
+   "Common",
+   "Dwarvish"
+  ],
+  "traits": [
+   {
+    "name": "Ability Score Increase",
+    "desc": "Your Constitution score increases by 2 and your Wisdom score increases by 1."
+   },
+   {
+    "name": "Darkvision",
+    "desc": "You can see in dim light within 60 feet as if it were bright light, and in darkness as if it were dim light."
+   },
+   {
+    "name": "Dwarven Resilience",
+    "desc": "You have advantage on saving throws against poison, and you have resistance against poison damage."
+   },
+   {
+    "name": "Dwarven Combat Training",
+    "desc": "You have proficiency with the battleaxe, handaxe, light hammer, and warhammer."
+   },
+   {
+    "name": "Stonecunning",
+    "desc": "You add double your proficiency bonus to History checks related to stonework."
+   },
+   {
+    "name": "Dwarven Toughness",
+    "desc": "Your hit point maximum increases by 1, and it increases by 1 every time you gain a level."
+   },
+   {
+    "name": "Speed",
+    "desc": "Your speed is not reduced by wearing heavy armor."
+   }
+  ],
+  "features": [
+   "dwarven_resilience",
+   "dwarven_toughness"
+  ],
+  "weapon_proficiencies": [
+   "Battleaxe",
+   "Handaxe",
+   "Light hammer",
+   "Warhammer"
+  ],
+  "armor_proficiencies": [],
+  "skill_proficiencies": [],
+  "saving_throw_advantages": [
+   "poisoned"
+  ],
+  "damage_resistances": [
+   "poison"
+  ],
+  "hp_per_level": 1
+ },
+ {
+  "name": "Lightfoot Halfling",
+  "ability_bonuses": {
+   "DEX": 2,
+   "CHA": 1
+  },
+  "size": "S",
+  "speed": 25,
+  "darkvision": 0,
+  "languages": [
+   "Common",
+   "Halfling"
+  ],
+  "traits": [
+   {
+    "name": "Ability Score Increase",
+    "desc": "Your Dexterity score increases by 2 and your Charisma score increases by 1."
+   },
+   {
+    "name": "Lucky",
+    "desc": "When you roll a 1 on the d20 for an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll."
+   },
+   {
+    "name": "Brave",
+    "desc": "You have advantage on saving throws against being frightened."
+   },
+   {
+    "name": "Halfling Nimbleness",
+    "desc": "You can move through the space of any creature that is of a size larger than yours."
+   },
+   {
+    "name": "Naturally Stealthy",
+    "desc": "You can attempt to hide even when you are obscured only by a creature that is at least one size larger than you."
+   }
+  ],
+  "features": [
+   "lucky",
+   "brave",
+   "naturally_stealthy"
+  ],
+  "weapon_proficiencies": [],
+  "armor_proficiencies": [],
+  "skill_proficiencies": [],
+  "saving_throw_advantages": [
+   "frightened"
+  ]
+ }
 ]
