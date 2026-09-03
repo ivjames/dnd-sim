@@ -1,0 +1,9 @@
+PREVIOUS SUMMARY:
+{previous_summary}
+
+NEW EVENTS:
+{events}
+
+RESPONSE_SHAPE: summary
+Reply with JSON only:
+{{"summary": "<merged running summary, 150 words max>"}}

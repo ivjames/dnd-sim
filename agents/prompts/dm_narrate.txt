@@ -1,0 +1,9 @@
+{view}
+
+THE ENGINE JUST RESOLVED THESE EVENTS (authoritative, already final):
+{events}
+{dm_note}
+RESPONSE_SHAPE: dm_narration
+Reply with JSON only:
+{{"narration": "<describe those exact events in-world, 120 words max>"}}
+Cover what happened, in order, without contradicting a single number, hit, miss, or death above. Add no new events. Do not roll. Do not act for player characters.

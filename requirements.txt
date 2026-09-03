@@ -1,0 +1,5 @@
+# dnd-sim runtime + test deps. Deliberately tiny (CONTRACTS.md: no Pydantic).
+# Ranges, not hard pins: lab980 boxes run whatever python3.11 ships.
+flask>=3.0,<4.0
+anthropic>=0.40,<1.0
+pytest>=8.0,<10.0

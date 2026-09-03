@@ -1,0 +1,8 @@
+{view}
+
+The game has ended. Outcome: {outcome}
+{dm_note}
+RESPONSE_SHAPE: dm_narration
+Reply with JSON only:
+{{"narration": "<close the story in 150 words max: the aftermath, what it cost, where the survivors go>"}}
+Stay consistent with who lived, who died, and what actually happened above. Invent no new events.

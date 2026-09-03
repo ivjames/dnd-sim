@@ -1,0 +1,92 @@
+{
+  "title": "The Kingsroad Ambush",
+  "seed": 42,
+  "setting": "The muddy Kingsroad two days out from Phandalin, in the wet grey spring. Goblins have been robbing supply carts and leaving the drivers alive to spread the story.",
+  "tone": "classic heroic, with dry humour between the blows",
+  "budget_usd": 1.0,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 20,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Thorin Cragmantle",
+      "race": "Dwarf (Hill)",
+      "klass": "Fighter",
+      "level": 3,
+      "abilities": {"STR": 16, "DEX": 12, "CON": 16, "INT": 10, "WIS": 12, "CHA": 8},
+      "equipment": "default",
+      "persona": "A retired caravan guard with a bad knee and a better shield. Talks like a foreman: short sentences, orders phrased as suggestions. Believes the front line is the only honest place to stand and will physically put himself between danger and anyone smaller than him. Grumbles constantly, never once complains."
+    },
+    {
+      "id": "pc_2",
+      "name": "Vessa Quill",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 3,
+      "abilities": {"STR": 8, "DEX": 17, "CON": 14, "INT": 12, "WIS": 13, "CHA": 14},
+      "equipment": "default",
+      "persona": "A former ledger clerk who discovered that stealing is just accounting with better hours. Narrates the fight like an auditor: cheerful, precise, faintly disappointed in everyone's technique. Always angling for flanking position, always claims the killing blow was 'load-bearing'."
+    },
+    {
+      "id": "pc_3",
+      "name": "Sister Marigold Penn",
+      "race": "Human",
+      "klass": "Cleric",
+      "level": 3,
+      "abilities": {"STR": 12, "DEX": 10, "CON": 14, "INT": 11, "WIS": 17, "CHA": 13},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "A field priest of the Morninglord who has patched up more brawls than she has attended sermons. Warm, blunt, and entirely unsentimental about violence: heal the ones who can stand, bless the ones who can swing, and pray afterwards. Keeps a running tally of who owes her a drink."
+    },
+    {
+      "id": "pc_4",
+      "name": "Ilbrandt Ash",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 3,
+      "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 17, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "An academy dropout who left because the syllabus was too slow, not because it was too hard. Insufferably confident, genuinely brilliant, physically frail and aware of it. Announces spells like lecture titles. Will absolutely burn a slot to look impressive, then regret it in round four."
+    }
+  ],
+  "scenario": {
+    "opening": "The cart track narrows between two brush-choked banks. There are fresh ruts in the mud, a broken axle pin, and a smell of woodsmoke that has no business being here. Somewhere in the gorse, something small is trying very hard to be quiet.",
+    "location": "A cut in the Kingsroad, banked with gorse and wet stone",
+    "objectives": [
+      "Find out who has been hitting the supply carts",
+      "Keep the party alive"
+    ],
+    "max_scenes": 2,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "Fresh Ruts in the Mud",
+        "description": "The ambush site, minutes old. Tracks, smoke, and the wrong kind of quiet.",
+        "location": "The cut in the Kingsroad"
+      },
+      {
+        "title": "Up the Bank",
+        "description": "Past the gorse the ground rises to a rough camp of hide tents and stolen sacking.",
+        "location": "The goblin camp above the road"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Goblin", "count": 4},
+          {"name": "Goblin Boss", "count": 1}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 10,
+          "party_start": [[1, 4], [1, 5], [2, 4], [2, 5]],
+          "enemy_start": [[10, 3], [10, 6], [9, 2], [9, 7], [11, 5]],
+          "difficult": [[5, 4], [5, 5], [5, 6], [6, 4], [6, 5]],
+          "walls": [[7, 0], [7, 1], [7, 2], [7, 8], [7, 9]]
+        }
+      }
+    ]
+  }
+}

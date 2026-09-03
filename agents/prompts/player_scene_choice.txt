@@ -1,0 +1,9 @@
+{view}
+
+The party must pick what to do next:
+{options}
+
+RESPONSE_SHAPE: scene_choice
+Reply with JSON only:
+{{"choice": <0-based index of one option above>, "speech": "<in-character line, 40 words max>"}}
+Choose in character. State intent only — no dice, no outcomes.

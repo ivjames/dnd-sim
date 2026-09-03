@@ -1,0 +1,10 @@
+{view}
+
+LEGAL ACTIONS (choose exactly one id)
+{actions}
+
+RESPONSE_SHAPE: player_action
+Reply with JSON only:
+{{"action": "<one id above, e.g. a3>", "params": {{}}, "speech": "<in-character, 40 words max, or null>", "reasoning": "<25 words max>"}}
+Fill "params" only with the fields the chosen action says it needs; otherwise leave it {{}}.
+Declare intent only — no dice, no results.

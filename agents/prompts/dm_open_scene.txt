@@ -1,0 +1,9 @@
+Open a new scene.
+
+SCENE: {scene}
+THE PARTY: {party_summary}
+{dm_note}
+RESPONSE_SHAPE: dm_narration
+Reply with JSON only:
+{{"narration": "<open the scene in 150 words max: where they are, what they sense, what is at stake>"}}
+Describe only what is in the scene data. Do not roll, do not resolve anything, do not act for the players.

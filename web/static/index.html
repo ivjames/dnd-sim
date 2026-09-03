@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="color-scheme" content="dark">
+<title>dnd-sim — spectator</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="flame" aria-hidden="true">&#9679;</span>
+    <span class="brand-name">dnd&#8209;sim</span>
+  </div>
+  <div class="topbar-mid">
+    <label class="sr-only" for="game-select">Game</label>
+    <select id="game-select" aria-label="Select game"></select>
+    <span id="status-pill" class="pill pill-idle">idle</span>
+    <span id="round-pill" class="pill pill-quiet">round &mdash;</span>
+  </div>
+  <div class="topbar-right">
+    <div id="cost-meter" class="cost" title="Spend against budget">
+      <span class="cost-usd">$0.0000</span>
+      <span class="cost-bar"><i style="width:0%"></i></span>
+      <span class="cost-tokens">0 tok</span>
+    </div>
+    <button id="btn-new" class="btn btn-primary" type="button">New game</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- LEFT: party + initiative -->
+  <section class="col col-left" aria-label="Party and initiative">
+    <div class="panel">
+      <h2 class="panel-title">Initiative</h2>
+      <ol id="initiative" class="initiative"><li class="empty">No combat.</li></ol>
+    </div>
+    <div class="panel">
+      <h2 class="panel-title">Party</h2>
+      <div id="party" class="party"><p class="empty">No game loaded.</p></div>
+    </div>
+    <div class="panel panel-collapsible">
+      <h2 class="panel-title">Enemies</h2>
+      <div id="enemies" class="party party-compact"><p class="empty">&mdash;</p></div>
+    </div>
+  </section>
+
+  <!-- CENTER: transcript -->
+  <section class="col col-center" aria-label="Transcript">
+    <div class="panel panel-fill">
+      <div class="panel-head">
+        <h2 class="panel-title">Transcript</h2>
+        <div class="transcript-tools">
+          <label class="chk"><input type="checkbox" id="toggle-mech" checked> mechanics</label>
+          <label class="chk"><input type="checkbox" id="toggle-follow" checked> follow</label>
+        </div>
+      </div>
+      <div id="transcript" class="transcript" tabindex="0">
+        <p class="empty">Start a game or pick one above.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT: map + controls -->
+  <section class="col col-right" aria-label="Battle map and controls">
+    <div class="panel">
+      <h2 class="panel-title">Battle map</h2>
+      <div class="canvas-wrap">
+        <canvas id="grid" width="480" height="400" role="img" aria-label="Battle grid"></canvas>
+      </div>
+      <div id="grid-legend" class="legend">
+        <span><i class="sw party"></i>party</span>
+        <span><i class="sw enemy"></i>enemy</span>
+        <span><i class="sw neutral"></i>neutral</span>
+        <span><i class="sw diff"></i>difficult</span>
+        <span><i class="sw wall"></i>wall</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2 class="panel-title">Controls</h2>
+      <div class="controls">
+        <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
+        <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
+        <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
+      </div>
+      <form id="note-form" class="note-form">
+        <label class="lbl" for="note-text">DM note from the table</label>
+        <textarea id="note-text" rows="2" maxlength="2000"
+                  placeholder="A raven lands on the cart&hellip;"></textarea>
+        <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
+      </form>
+      <p id="conn" class="conn conn-off">stream: offline</p>
+    </div>
+  </section>
+</main>
+
+<!-- NEW GAME PANEL -->
+<div id="newgame" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ng-title">
+    <h2 id="ng-title">New game</h2>
+    <form id="newgame-form">
+      <label class="lbl" for="ng-preset">Scenario</label>
+      <select id="ng-preset"></select>
+      <p id="ng-desc" class="hint"></p>
+
+      <div class="row">
+        <div>
+          <label class="lbl" for="ng-seed">Seed</label>
+          <input id="ng-seed" type="number" inputmode="numeric" value="42">
+        </div>
+        <div>
+          <label class="lbl" for="ng-budget">Budget (USD)</label>
+          <input id="ng-budget" type="number" step="0.05" min="0" value="1.00">
+        </div>
+        <div>
+          <label class="lbl" for="ng-tempo">Tempo (ms)</label>
+          <input id="ng-tempo" type="number" step="100" min="0" value="800">
+        </div>
+      </div>
+
+      <label class="lbl" for="ng-setting">Setting</label>
+      <textarea id="ng-setting" rows="2"></textarea>
+
+      <label class="lbl" for="ng-tone">Tone</label>
+      <input id="ng-tone" type="text" value="classic heroic">
+
+      <p id="ng-error" class="err" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="ng-cancel" class="btn">Cancel</button>
+        <button type="submit" id="ng-start" class="btn btn-primary">Start game</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

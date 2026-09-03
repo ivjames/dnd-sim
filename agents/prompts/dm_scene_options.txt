@@ -1,0 +1,6 @@
+{view}
+{dm_note}
+RESPONSE_SHAPE: scene_options
+Reply with JSON only:
+{{"options": ["<short action the party could take>", "<another>", "<another>"]}}
+Give 3 or 4 concrete options, 10 words max each, all possible from where the party is standing right now. No outcomes, no dice.

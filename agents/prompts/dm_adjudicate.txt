@@ -1,0 +1,13 @@
+{view}
+
+THE PARTY WANTS TO: {request}
+{dm_note}
+Decide how this resolves.
+- "skill_check": the engine should roll one skill check. Give skill, dc (5 trivial, 10 easy, 13 moderate, 15 hard, 18 very hard) and the acting character's id.
+- "narrative": it simply happens; describe it.
+- "start_combat": something hostile engages now; fill "encounter" with monsters that fit the scene.
+
+RESPONSE_SHAPE: dm_adjudication
+Reply with JSON only:
+{{"resolution": "skill_check"|"narrative"|"start_combat", "skill": "<skill name or null>", "dc": <int or null>, "actor": "<combatant id or null>", "narration": "<80 words max setting it up, no outcome>", "encounter": {{"monsters": [{{"name": "Goblin", "count": 3}}]}} or null}}
+Do not state the result of a check — the engine rolls it. Use only monsters that fit the setting.

@@ -1,0 +1,108 @@
+{
+  "title": "The Crypt of Saint Ombrace",
+  "seed": 7,
+  "setting": "A hillside crypt above a drowned village, sealed for ninety years and recently, badly, unsealed. The dead here do not rest so much as wait.",
+  "tone": "grim, close, candlelit; gallows humour welcome",
+  "budget_usd": 1.5,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 25,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Dame Ysolde Harrower",
+      "race": "Human",
+      "klass": "Fighter",
+      "level": 5,
+      "abilities": {"STR": 18, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 12},
+      "equipment": "default",
+      "persona": "A knight of a disbanded order who kept the oath after the order stopped existing. Formal to the point of comedy, addresses monsters as 'sir'. Fights with grim patience and refuses to leave a body unburied, which has nearly killed her twice."
+    },
+    {
+      "id": "pc_2",
+      "name": "Crick",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 5,
+      "abilities": {"STR": 10, "DEX": 18, "CON": 14, "INT": 13, "WIS": 12, "CHA": 14},
+      "equipment": "default",
+      "persona": "A grave-robber turned reluctant hero who knows exactly what a crypt is worth and exactly what it costs. Superstitious about everything, brave anyway. Talks to the dead politely before looting them. Terrified of ghouls and will say so, loudly, while stabbing one."
+    },
+    {
+      "id": "pc_3",
+      "name": "Brother Aldous Mott",
+      "race": "Dwarf (Hill)",
+      "klass": "Cleric",
+      "level": 5,
+      "abilities": {"STR": 14, "DEX": 10, "CON": 16, "INT": 11, "WIS": 18, "CHA": 12},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "An old dwarf priest who has buried three generations of this village and takes the walking dead as a personal insult. Rolls up his sleeves for undead. Channels divinity like a man clearing his own gutters: unglamorous, thorough, muttering the whole time."
+    },
+    {
+      "id": "pc_4",
+      "name": "Nyra Solveig",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 5,
+      "abilities": {"STR": 8, "DEX": 14, "CON": 14, "INT": 18, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "A necromancy scholar with strictly academic interests and an increasingly unconvincing denial of that fact. Fascinated rather than frightened by everything in this crypt, which alarms her companions. Narrates undead behaviour as if presenting a paper, mid-fight."
+    }
+  ],
+  "scenario": {
+    "opening": "The seal on the crypt door has been broken outward, not inward. Cold air comes up the steps carrying wet stone, old incense, and something sweeter underneath it. At the bottom, the ninety-year silence has already been spent.",
+    "location": "The stair and ossuary of Saint Ombrace",
+    "objectives": [
+      "Find who broke the seal and why",
+      "Put the dead back down",
+      "Do not become part of the collection"
+    ],
+    "max_scenes": 2,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "The Ossuary",
+        "description": "Bone-stacked niches to the ceiling, a floor of loose grave-gravel, and one lamp still burning that nobody lit.",
+        "location": "The upper ossuary"
+      },
+      {
+        "title": "The Reliquary Vault",
+        "description": "A low vault where the saint's box sits open and empty, and the smell of sweetness is at its worst.",
+        "location": "The reliquary vault"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Skeleton", "count": 4},
+          {"name": "Zombie", "count": 2}
+        ],
+        "grid": {
+          "width": 14,
+          "height": 10,
+          "party_start": [[1, 4], [1, 5], [2, 4], [2, 5]],
+          "enemy_start": [[11, 3], [11, 6], [12, 4], [12, 5], [10, 2], [10, 7]],
+          "difficult": [[6, 3], [6, 4], [6, 5], [6, 6]],
+          "walls": [[8, 0], [8, 1], [8, 8], [8, 9]]
+        }
+      },
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Ghoul", "count": 3},
+          {"name": "Skeleton", "count": 2}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 12,
+          "party_start": [[2, 6], [2, 7], [3, 6], [3, 7]],
+          "enemy_start": [[9, 5], [9, 8], [10, 6], [8, 4], [10, 9]],
+          "difficult": [[5, 5], [5, 6], [5, 7], [6, 6]],
+          "walls": [[7, 1], [7, 2], [7, 10], [7, 11]]
+        }
+      }
+    ]
+  }
+}
