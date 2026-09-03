@@ -954,3 +954,27 @@ def test_explicit_provider_that_does_not_route_the_bare_id_is_unpriced(mismatche
 
     assert not has_price(mismatched)
     assert price_for(mismatched) == _DEFAULT_PRICE
+
+
+@pytest.mark.parametrize(
+    "unpriced_variant",
+    [
+        "siliconflow:deepseek-ai/DeepSeek-V3.1",
+        "siliconflow:deepseek-ai/DeepSeek-V3-0324",
+        "deepinfra:deepseek-ai/DeepSeek-V3.2-Exp",
+        "deepinfra:Qwen/Qwen3-32B-Instruct",
+    ],
+)
+def test_host_qualified_keys_match_exactly_never_by_prefix(unpriced_variant):
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    assert not has_price(unpriced_variant)
+    assert price_for(unpriced_variant) == _DEFAULT_PRICE
+
+
+def test_explicit_prefix_provider_still_honours_dated_ids():
+    from llm.cost import has_price, price_for
+
+    # Dated Anthropic ids keep boundary matching through the bare-id fallback.
+    assert has_price("anthropic:claude-haiku-4-5-20251001")
+    assert price_for("anthropic:claude-haiku-4-5-20251001") == price_for("claude-haiku-4-5-20251001")

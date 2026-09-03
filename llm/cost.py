@@ -136,14 +136,17 @@ def _lookup(table: dict, model: str):
     (`deepinfra:...`, `siliconflow:...`) never fall back: the same model id
     costs different money on different hosts, so those rows are keyed in full.
     """
-    hit = _lookup_raw(table, model)
-    if hit is not None:
-        return hit
     from .providers import provider_for, provider_named, split_model  # noqa: PLC0415
 
     name, wire = split_model(model)
     if name is None or wire == model:
-        return None
+        return _lookup_raw(table, model)
+    # The explicit form matches a row exactly or not at all: boundary-prefix
+    # matching exists for dated Anthropic ids (`claude-haiku-4-5-20251001` →
+    # `claude-haiku-4-5`), and on a host key it would let `DeepSeek-V3` answer
+    # for `DeepSeek-V3.1`, a model with no verified rate.
+    if model in table:
+        return table[model]
     prov = provider_named(name)
     # Only when the bare id would route to this very provider: `anthropic:gpt-5.4-nano`
     # names a provider that will reject the id, so it must not borrow OpenAI's rate.
