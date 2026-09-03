@@ -105,6 +105,7 @@
     g.appendChild(det);
     S.group = g; S.groupBody = body;
     appendNode(g);
+    return head;
   }
 
   function mechLine(ev) {
@@ -123,39 +124,47 @@
       var d = ev.data || {};
       if (d.total_usd !== undefined) setCost(num(d.total_usd), null);
     }
-    if (ev.kind === 'turn_start') { S.activeId = ev.actor; startTurnGroup(ev); return; }
-    if (ev.kind === 'turn_end') { S.group = null; S.groupBody = null; return; }
-
-    if (ev.kind === 'narration') {
-      appendNode(el('p', 'narration', ev.text));
+    var node = null;   // the transcript node for this event (voice highlights it)
+    if (ev.kind === 'turn_start') {
+      S.activeId = ev.actor;
+      node = startTurnGroup(ev);
+    } else if (ev.kind === 'turn_end') {
+      S.group = null; S.groupBody = null;
+    } else if (ev.kind === 'narration') {
+      node = el('p', 'narration', ev.text);
+      appendNode(node);
     } else if (ev.kind === 'dialogue') {
-      var p = el('p', 'dialogue');
+      node = el('p', 'dialogue');
       var who = (ev.data && ev.data.speaker) || nameOf(ev.actor) || ev.actor;
-      if (who) p.appendChild(el('span', 'speaker', who + ':'));
-      p.appendChild(document.createTextNode(ev.text || ''));
-      appendNode(p);
+      if (who) node.appendChild(el('span', 'speaker', who + ':'));
+      node.appendChild(document.createTextNode(ev.text || ''));
+      appendNode(node);
     } else if (ev.kind === 'dm_note') {
-      appendNode(el('p', 'dmnote', 'DM note from the table: ' + (ev.text || '')));
+      node = el('p', 'dmnote', 'DM note from the table: ' + (ev.text || ''));
+      appendNode(node);
     } else if (ev.kind === 'scene') {
-      var box = el('div', 'scene');
+      node = el('div', 'scene');
       var title = (ev.data && (ev.data.title || ev.data.location)) || 'Scene';
-      box.appendChild(el('span', 'scene-title', title));
-      box.appendChild(document.createTextNode(ev.text || ''));
-      appendNode(box);
+      node.appendChild(el('span', 'scene-title', title));
+      node.appendChild(document.createTextNode(ev.text || ''));
+      appendNode(node);
     } else if (ev.kind === 'combat_start' || ev.kind === 'combat_end' || ev.kind === 'round_start') {
       S.group = null; S.groupBody = null;
-      appendNode(el('div', 'end-banner', ev.text || ev.kind.replace('_', ' ')));
+      node = el('div', 'end-banner', ev.text || ev.kind.replace('_', ' '));
+      appendNode(node);
     } else {
-      var line = mechLine(ev);
+      node = mechLine(ev);
       if (S.groupBody) {
         var t = transcriptEl();
         var follow = $('toggle-follow').checked, wasBottom = atBottom(t);
-        S.groupBody.appendChild(line);
+        S.groupBody.appendChild(node);
         if (follow && wasBottom) t.scrollTop = t.scrollHeight;
       } else {
-        appendNode(line);
+        appendNode(node);
       }
     }
+    if (node) node.setAttribute('data-seq', String(ev.seq));
+    voiceOnEvent(ev);
     if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
   }
 
@@ -438,6 +447,257 @@
     });
   }
 
+
+  // ---------- voice (Web Speech API) ----------
+  // The selection + wording live in speech.js (pure, node-testable); this is
+  // the queue and the speechSynthesis glue. Designed around iPad Safari:
+  // speech only starts inside a user gesture, the voice list arrives late (or
+  // never fires voiceschanged), onend can go missing, and speak() right after
+  // cancel() is dropped — each of which has a line below.
+  var Speech = window.DndSpeech || null;
+  var VOICE_RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
+  var VOICE_MAX_QUEUE = 20;
+  var V = {
+    supported: false,
+    synth: null,
+    settings: { enabled: false, rate: 'normal', muteMechanics: false },
+    unlocked: false,       // a user gesture has started speech on this page
+    sinceSeq: Infinity,    // speak only events with seq > this
+    caughtUp: false,       // history replay rendered; until then sinceSeq stays Infinity
+    queue: [],             // [{ ev, phrase, key }] in seq order
+    current: null,         // { item, chunks, idx, node, timer, utt }
+    voices: [],
+    profiles: {},
+    heldUtt: null          // keeps the unlock utterance referenced until it ends
+  };
+
+  // Hidden pages stay disarmed: the SSE stream keeps flowing in the background,
+  // so a cancel on hide is not enough — the next event would speak again.
+  function pageHidden() { return typeof document !== 'undefined' && !!document.hidden; }
+  function voiceArmed() { return V.supported && V.settings.enabled && V.unlocked && !pageHidden(); }
+
+  function voiceLoadSettings() {
+    try {
+      var raw = localStorage.getItem('dndsim.voice');
+      var o = raw ? JSON.parse(raw) : null;
+      if (o && typeof o === 'object') {
+        V.settings.enabled = !!o.enabled;
+        V.settings.rate = VOICE_RATES[o.rate] ? o.rate : 'normal';
+        V.settings.muteMechanics = !!o.muteMechanics;
+      }
+    } catch (e) { /* private mode or junk */ }
+  }
+  function voiceSaveSettings() {
+    try { localStorage.setItem('dndsim.voice', JSON.stringify(V.settings)); } catch (e) { /* ignore */ }
+  }
+
+  function voiceRefreshVoices() {
+    var list = [];
+    try { list = V.synth.getVoices() || []; } catch (e) { list = []; }
+    V.voices = list;
+    V.profiles = {};
+  }
+  function voiceProfile(key) {
+    if (!V.voices.length) voiceRefreshVoices();    // Safari: no voiceschanged, voices just appear
+    if (!V.profiles[key]) {
+      var lang = document.documentElement.lang || navigator.language || 'en';
+      V.profiles[key] = Speech.voiceProfileFor(key, V.voices, lang);
+    }
+    return V.profiles[key];
+  }
+
+  // {id: true} for every party member: the snapshot's combatants with side
+  // 'party', plus the config's party ids when the snapshot carries them (before
+  // combat the combatant list can be empty).
+  function voiceParty() {
+    var cs = combatants(), out = {};
+    Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].side === 'party') out[id] = true; });
+    var g = S.game || {}, cfg = g.config || {};
+    if (cfg && Array.isArray(cfg.party)) cfg.party.forEach(function (m) { if (m && m.id) out[m.id] = true; });
+    return out;
+  }
+
+  function voiceNames() {
+    var cs = combatants(), out = {};
+    Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].name) out[id] = cs[id].name; });
+    return out;
+  }
+
+  function voiceOnEvent(ev) {
+    if (!voiceArmed() || !ev || !(ev.seq > V.sinceSeq)) return;
+    if (!Speech.shouldSpeak(ev, V.settings)) return;
+    var party = voiceParty();
+    var phrase = Speech.phraseFor(ev, voiceNames(), party);
+    if (!phrase) return;
+    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party) });
+    voiceTrimQueue();
+    voicePump();
+  }
+
+  // Keep speech from falling minutes behind: over the cap, shed the oldest
+  // mechanics first; if a burst of story lines alone overflows twice the cap
+  // (a reconnect replay), keep only the newest of those.
+  function voiceTrimQueue() {
+    var q = V.queue;
+    for (var i = 0; i < q.length && q.length > VOICE_MAX_QUEUE;) {
+      if (Speech.isMechanic(q[i].ev)) q.splice(i, 1); else i++;
+    }
+    if (q.length > VOICE_MAX_QUEUE * 2) q.splice(0, q.length - VOICE_MAX_QUEUE * 2);
+  }
+
+  function voicePump() {
+    if (V.current || !V.queue.length || !voiceArmed()) return;
+    var item = V.queue.shift();
+    var chunks = Speech.chunksFor(item.phrase);
+    if (!chunks.length) { voicePump(); return; }
+    var prof = voiceProfile(item.key);
+    var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
+    var node = transcriptEl().querySelector('[data-seq="' + item.ev.seq + '"]');
+    var cur = { item: item, chunks: chunks, idx: 0, node: node, timer: null, utt: null };
+    V.current = cur;
+    if (node) node.classList.add('speaking');
+    voiceSpeakChunk(cur, prof, rate);
+  }
+
+  function voiceSpeakChunk(cur, prof, rate) {
+    var text = cur.chunks[cur.idx];
+    var u = new SpeechSynthesisUtterance(text);
+    if (prof.voice) { u.voice = prof.voice; u.lang = prof.voice.lang || u.lang; }
+    u.pitch = prof.pitch || 1;
+    u.rate = rate;
+    cur.utt = u;   // hold the reference: an unreferenced utterance can be GC'd mid-speech and never fire onend
+    var done = function () {
+      if (V.current !== cur || cur.utt !== u) return;   // stale: skipped or cancelled
+      clearTimeout(cur.timer);
+      cur.idx++;
+      if (cur.idx < cur.chunks.length) { voiceSpeakChunk(cur, prof, rate); return; }
+      voiceFinishCurrent();
+      voicePump();
+    };
+    u.onend = done;
+    u.onerror = done;     // not-allowed / synthesis-failed / interrupted: move on rather than stall
+    // Watchdog: Safari sometimes never fires onend; Chrome loses it across tab switches.
+    cur.timer = setTimeout(done, Math.max(2000, (text.length * 90) / rate) + 2500);
+    try { if (V.synth.paused) V.synth.resume(); } catch (e) { /* ignore */ }
+    V.synth.speak(u);
+  }
+
+  function voiceFinishCurrent() {
+    var cur = V.current;
+    if (!cur) return;
+    clearTimeout(cur.timer);
+    if (cur.node) cur.node.classList.remove('speaking');
+    V.current = null;
+  }
+
+  function voiceCancelAll() {
+    V.queue = [];
+    voiceFinishCurrent();
+    if (V.supported) { try { V.synth.cancel(); } catch (e) { /* ignore */ } }
+  }
+
+  // Skip the line being read. iOS drops a speak() issued synchronously after
+  // cancel(), so the next line is pumped a beat later.
+  function voiceSkip() {
+    if (!V.supported) return;
+    voiceFinishCurrent();
+    try { V.synth.cancel(); } catch (e) { /* ignore */ }
+    setTimeout(voicePump, 80);
+  }
+
+  // Switching games: silence, and speak nothing until the history replay is done.
+  function voiceReset() { voiceCancelAll(); V.sinceSeq = Infinity; V.caughtUp = false; }
+  function voiceCaughtUp(seq) { V.caughtUp = true; V.sinceSeq = seq; }
+  // Move the "speak from here" mark to the latest seen event — but only once
+  // the history replay has been rendered; before that the Infinity guard
+  // stays, or enabling mid-load would read the whole transcript.
+  function voiceMarkNow() { if (V.caughtUp) V.sinceSeq = S.lastSeq; }
+
+  function voiceOnGameEnd(status) {
+    // 'finished' lets the epilogue finish; anything else is a halt.
+    if (status !== 'finished') voiceCancelAll();
+  }
+
+  // Must run inside a user gesture the first time (autoplay policy): the short
+  // confirmation is what unlocks speech for the rest of the page.
+  function voiceEnable() {
+    V.settings.enabled = true;
+    voiceSaveSettings();
+    if (!V.unlocked) {
+      V.unlocked = true;
+      voiceRefreshVoices();
+      var u = new SpeechSynthesisUtterance('Voice on.');
+      var p = voiceProfile('dm');
+      if (p.voice) { u.voice = p.voice; u.lang = p.voice.lang || u.lang; }
+      V.heldUtt = u;
+      u.onend = u.onerror = function () { V.heldUtt = null; };
+      try { V.synth.speak(u); } catch (e) { /* ignore */ }
+    }
+    voiceMarkNow();           // only what arrives from now on; never the replayed transcript
+    voiceRenderControls();
+  }
+
+  function voiceDisable() {
+    V.settings.enabled = false;
+    voiceSaveSettings();
+    voiceCancelAll();
+    voiceRenderControls();
+  }
+
+  function voiceRenderControls() {
+    $('voice-on').checked = V.settings.enabled;
+    $('voice-rate').value = V.settings.rate;
+    $('voice-mute-mech').checked = V.settings.muteMechanics;
+    var locked = V.settings.enabled && !V.unlocked;
+    $('voice').classList.toggle('locked', locked);
+    $('voice-hint').hidden = !locked;
+    $('voice-skip').disabled = !voiceArmed();
+  }
+
+  function voiceInit() {
+    var synth = window.speechSynthesis;
+    if (!synth || typeof window.SpeechSynthesisUtterance !== 'function' || !Speech) {
+      console.info('dnd-sim: speechSynthesis unavailable; spoken narration hidden');
+      return;
+    }
+    V.supported = true;
+    V.synth = synth;
+    voiceLoadSettings();
+    $('voice').hidden = false;
+    voiceRefreshVoices();
+    if (typeof synth.addEventListener === 'function') synth.addEventListener('voiceschanged', voiceRefreshVoices);
+    else synth.onvoiceschanged = voiceRefreshVoices;
+
+    $('voice-on').addEventListener('change', function () {
+      if (this.checked) voiceEnable(); else voiceDisable();
+    });
+    $('voice-rate').addEventListener('change', function () {
+      V.settings.rate = VOICE_RATES[this.value] ? this.value : 'normal';
+      voiceSaveSettings();
+    });
+    $('voice-mute-mech').addEventListener('change', function () {
+      V.settings.muteMechanics = this.checked;
+      voiceSaveSettings();
+      if (this.checked) V.queue = V.queue.filter(function (q) { return !Speech.isMechanic(q.ev); });
+    });
+    $('voice-skip').addEventListener('click', voiceSkip);
+
+    // Voice was on last time. It cannot start without a gesture, so the toggle
+    // shows "tap to start" and the first tap anywhere on the page unlocks it.
+    if (V.settings.enabled) {
+      var unlockOnce = function (e) {
+        if (e && e.target && e.target.id === 'voice-on') return;   // the toggle decides for itself
+        document.removeEventListener('click', unlockOnce, true);
+        document.removeEventListener('touchend', unlockOnce, true);
+        if (V.settings.enabled && !V.unlocked) voiceEnable();
+      };
+      document.addEventListener('click', unlockOnce, true);
+      document.addEventListener('touchend', unlockOnce, true);
+    }
+    window.addEventListener('pagehide', voiceCancelAll);
+    voiceRenderControls();
+  }
+
   // ---------- stream ----------
   function setConn(text, cls) {
     var n = $('conn');
@@ -472,6 +732,7 @@
       try { d = JSON.parse(e.data); } catch (err) { /* ignore */ }
       S.status = d.status || S.status;
       closeStream();
+      voiceOnGameEnd(S.status);
       setConn('ended (' + S.status + ')', 'conn-off');
       appendNode(el('div', 'end-banner', 'session ' + S.status));
       refreshSnapshot();
@@ -495,6 +756,7 @@
 
   function control(action) {
     if (!S.gameId) return;
+    if (action === 'stop') voiceCancelAll();
     api('/api/games/' + encodeURIComponent(S.gameId) + '/' + action, { method: 'POST', body: {} })
       .then(function (r) { S.status = r.status || S.status; renderAll(); })
       .catch(function (e) { alert(action + ' failed: ' + e.message); });
@@ -506,6 +768,7 @@
     S.gameId = id;
     S.activeId = null;
     resetTranscript();
+    voiceReset();
     S.snapshot = null;
     try { localStorage.setItem('dndsim.game', id); } catch (e) { /* private mode */ }
     if ($('game-select').value !== id) $('game-select').value = id;
@@ -513,6 +776,7 @@
     api('/api/games/' + encodeURIComponent(id) + '/events?after=-1')
       .then(function (events) {
         (events || []).forEach(renderEvent);
+        voiceCaughtUp(S.lastSeq);
         return refreshSnapshot();
       })
       .then(function () {
@@ -642,11 +906,15 @@
     });
     window.addEventListener('resize', function () { drawGrid(); });
     document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { voiceCancelAll(); }
+      else { voiceMarkNow(); }  // back: speak only what arrives from now on
       if (!document.hidden && S.gameId && !TERMINAL[S.status]) {
         if (!S.es || S.es.readyState === 2) connect(S.gameId);
         refreshSnapshot();
       }
     });
+
+    voiceInit();
 
     api('/api/health').then(function (h) {
       if (h && h.mock) {
