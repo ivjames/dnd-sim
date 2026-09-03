@@ -145,8 +145,9 @@ def _lookup(table: dict, model: str):
     # matching exists for dated Anthropic ids (`claude-haiku-4-5-20251001` →
     # `claude-haiku-4-5`), and on a host key it would let `DeepSeek-V3` answer
     # for `DeepSeek-V3.1`, a model with no verified rate.
-    if model in table:
-        return table[model]
+    key = f"{name}:{wire}"  # normalised: lower-cased provider, stripped id, case kept after ':'
+    if key in table:
+        return table[key]
     prov = provider_named(name)
     # Only when the bare id would route to this very provider: `anthropic:gpt-5.4-nano`
     # names a provider that will reject the id, so it must not borrow OpenAI's rate.

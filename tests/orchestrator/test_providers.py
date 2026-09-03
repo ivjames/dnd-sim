@@ -995,3 +995,20 @@ def test_bare_undated_id_still_borrows_its_dated_row():
     from llm.cost import price_for
 
     assert price_for("claude-haiku-4-5") == price_for("claude-haiku-4-5-20251001")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["DeepInfra:Qwen/Qwen3-32B", "deepinfra: Qwen/Qwen3-32B ", " DEEPINFRA :Qwen/Qwen3-32B"],
+)
+def test_host_price_lookup_uses_the_normalised_key(spelling):
+    from llm.cost import has_price, price_for
+
+    assert has_price(spelling)
+    assert price_for(spelling) == price_for("deepinfra:Qwen/Qwen3-32B")
+
+
+def test_host_price_lookup_keeps_case_after_the_colon():
+    from llm.cost import has_price
+
+    assert not has_price("deepinfra:qwen/qwen3-32b")
