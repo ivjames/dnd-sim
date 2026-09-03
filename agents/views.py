@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .common import event_text
+
 __all__ = ["player_view", "dm_view", "render_actions", "hp_band", "party_summary"]
 
 MAX_RECENT_EVENTS = 12
@@ -126,12 +128,12 @@ def _event_lines(recent: Iterable[Any], limit: int = MAX_RECENT_EVENTS) -> list[
     lines: list[str] = []
     for ev in recent or []:
         kind = getattr(ev, "kind", "") or (ev.get("kind") if isinstance(ev, dict) else "")
-        text = getattr(ev, "text", "") or (ev.get("text") if isinstance(ev, dict) else "")
+        text = event_text(ev)
         if not text:
             continue
         if kind in _SKIP_KINDS:
             continue
-        lines.append(str(text).strip())
+        lines.append(text)
     return lines[-limit:]
 
 

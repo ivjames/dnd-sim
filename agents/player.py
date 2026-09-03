@@ -14,12 +14,14 @@ from .common import (
     extract_json,
     render,
     rules_digest,
+    speech_fields,
 )
 from .views import render_actions
 
 __all__ = ["PlayerAgent", "AgentOutputError"]
 
-SPEECH_WORDS = 40
+SPEECH_WORDS = 20
+SCENE_SPEECH_WORDS = 25
 REASONING_WORDS = 25
 MAX_TOKENS_ACTION = 200
 MAX_TOKENS_SPEECH = 160
@@ -104,18 +106,27 @@ class PlayerAgent:
 
     # -- combat ------------------------------------------------------------
 
-    def choose_action(self, view: str, templates: list) -> Any:
-        """Pick one legal action. One retry on bad output, then AgentOutputError."""
+    def choose_action(self, view: str, templates: list, *, speak: bool = True) -> Any:
+        """Pick one legal action. One retry on bad output, then AgentOutputError.
+
+        `speak=False` tells the character it has already had its line this turn;
+        the reply then carries no speech at all.
+        """
         if not templates:
             raise AgentOutputError("no legal actions offered")
         by_id = {getattr(t, "id", None) or t.get("id"): t for t in templates}
-        user = render("player_action.txt", view=view, actions=render_actions(templates))
+        user = render(
+            "player_action.txt",
+            view=view,
+            actions=render_actions(templates),
+            **speech_fields(speak, SPEECH_WORDS),
+        )
         error: str | None = None
         for attempt in range(2):
             prompt = user if error is None else f"{user}\n\nYOUR LAST REPLY WAS REJECTED: {error}\nTry again. JSON only."
             text = self._call(prompt, MAX_TOKENS_ACTION)
             try:
-                return self._parse_action(text, by_id)
+                return self._parse_action(text, by_id, speak=speak)
             except AgentOutputError as exc:
                 error = str(exc)
                 if attempt == 1:
@@ -124,7 +135,7 @@ class PlayerAgent:
                     ) from exc
         raise AgentOutputError("unreachable")  # pragma: no cover
 
-    def _parse_action(self, text: str, by_id: dict) -> Any:
+    def _parse_action(self, text: str, by_id: dict, *, speak: bool = True) -> Any:
         obj = extract_json(text)
         aid = obj.get("action") or obj.get("action_id") or obj.get("id")
         if not isinstance(aid, str):
@@ -151,7 +162,7 @@ class PlayerAgent:
             actor=self.actor_id,
             template_id=aid,
             params=params,
-            speech=clamp_words(obj.get("speech"), SPEECH_WORDS),
+            speech=clamp_words(obj.get("speech"), SPEECH_WORDS) if speak else None,
         )
 
     # -- non-combat --------------------------------------------------------
@@ -166,15 +177,26 @@ class PlayerAgent:
             return clamp_words(text, 60) or ""
         return clamp_words(obj.get("speech") or obj.get("text"), 60) or ""
 
-    def choose_scene_action(self, view: str, options: list[str]) -> dict:
-        """{"choice": idx, "speech": str} — index is always in range."""
+    def choose_scene_action(
+        self, view: str, options: list[str], said: list[str] | None = None
+    ) -> dict:
+        """{"choice": idx, "speech": str} — index is always in range.
+
+        `said` is what the party has already argued this beat, so a character
+        who agrees can vote without restating the point in its own words.
+        """
         rendered = "\n".join(f"{i}. {o}" for i, o in enumerate(options))
-        user = render("player_scene_choice.txt", view=view, options=rendered)
+        user = render(
+            "player_scene_choice.txt",
+            view=view,
+            options=rendered,
+            said="\n".join(f"- {line}" for line in said or []) or "(nobody has spoken yet)",
+        )
         text = self._call(user, MAX_TOKENS_SPEECH)
         try:
             obj = extract_json(text)
         except AgentOutputError:
-            return {"choice": 0, "speech": clamp_words(text, SPEECH_WORDS) or ""}
+            return {"choice": 0, "speech": clamp_words(text, SCENE_SPEECH_WORDS) or ""}
         try:
             choice = int(obj.get("choice", 0))
         except (TypeError, ValueError):
@@ -183,5 +205,5 @@ class PlayerAgent:
             choice = 0
         return {
             "choice": choice,
-            "speech": clamp_words(obj.get("speech"), SPEECH_WORDS) or "",
+            "speech": clamp_words(obj.get("speech"), SCENE_SPEECH_WORDS) or "",
         }

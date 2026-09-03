@@ -79,6 +79,74 @@ def test_narration_follows_the_mechanics(cfg):
     assert any(e.kind == "narration" for e in hist[first_attack:])
 
 
+# --- dialogue --------------------------------------------------------------
+
+
+def test_one_spoken_line_per_turn(cfg):
+    """A turn is several actions; it is still one character speaking once."""
+    game, bus = make_game(cfg)
+    game.run()
+    per_turn: dict[str, int] = {}
+    actor = None
+    for ev in bus.history():
+        if ev.kind == "turn_start":
+            actor = ev.actor
+            per_turn.setdefault(actor, 0)
+        elif ev.kind == "turn_end":
+            actor = None
+        elif ev.kind == "dialogue" and actor is not None:
+            per_turn[actor] += 1
+            assert per_turn[actor] <= 1, f"{actor} spoke twice in one turn"
+    assert any(e.kind == "dialogue" for e in bus.history())
+
+
+def test_dialogue_carries_the_speaker_out_of_band(cfg):
+    game, bus = make_game(cfg)
+    game.run()
+    lines = [e for e in bus.history() if e.kind == "dialogue"]
+    assert lines
+    for ev in lines:
+        speaker = ev.data.get("speaker")
+        assert speaker, "dialogue must name its speaker in data"
+        # ... and must not repeat it inside the text, or the UI prints it twice
+        assert not ev.text.startswith(f"{speaker}:")
+
+
+def test_a_speaker_does_not_repeat_itself(cfg):
+    game, bus = make_game(cfg)
+    game.run()
+    seen: dict[str, set] = {}
+    for ev in bus.history():
+        if ev.kind != "dialogue":
+            continue
+        said = seen.setdefault(ev.actor, set())
+        assert ev.text not in said, f"{ev.actor} said {ev.text!r} twice"
+        said.add(ev.text)
+
+
+def test_say_drops_near_repeats_and_echoes(cfg):
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append((actor, text))
+
+    assert game._say("pc_1", "Ysolde", "Sir Zombie, your desecration ends here! By my oath, I commit you back to earth!")
+    # the same speaker, rephrased: dropped
+    assert not game._say("pc_1", "Ysolde", "Sir Zombie, your desecration ends NOW. By my oath, I commit you to proper rest!")
+    # another character parroting it back: dropped
+    assert not game._say("pc_2", "Crick", "Sir Zombie, your desecration ends here! By my oath, I commit you back to earth!")
+    # something new: kept
+    assert game._say("pc_2", "Crick", "Tracks in the gravel — somebody walked out of here carrying the reliquary.")
+    assert not game._say("pc_2", "Crick", "   ")
+    assert [a for a, _ in said] == ["pc_1", "pc_2"]
+
+
+def test_say_drops_an_identical_bark_from_another_monster(cfg):
+    game, _ = make_game(cfg)
+    game._emit_new = lambda *a, **k: None
+    assert game._say("mon_1", "Skeleton 1", "Click.")
+    assert not game._say("mon_2", "Skeleton 2", "click... click...")
+
+
 # --- determinism -----------------------------------------------------------
 
 

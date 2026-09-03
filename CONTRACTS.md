@@ -642,3 +642,50 @@ places it derives something the record does not literally carry:
    §1.5 example) and `data.{hit,crit,mode,reasons,ac,damage}`; `save` events
    carry `data.target`. Reactions (opportunity attacks, auto-cast Shield,
    Uncanny Dodge) are emitted *after* the attack event they answer.
+
+### 2026-09-03 — agents/ + orchestrator/ — one line per turn, not one per action
+
+The first live transcript read as a monologue: a single Fighter turn (four
+thrown handaxes under Action Surge, then a move) printed seven dialogue lines,
+each a rewording of the one before, and skeletons repeated "click…" every time
+they were asked to act. Nothing was wrong mechanically — `_run_turn` asks the
+agent for up to `MAX_ACTIONS_PER_TURN` actions and every `Action.speech` was
+emitted — but a turn is a beat at the table, not a speech per die roll.
+
+1. **`PlayerAgent.choose_action(view, templates, *, speak=True)`** and
+   **`DMAgent.monster_action(view, templates, monster_id, monster_name=None, *,
+   speak=True)`**. `speak=False` renders the action prompt with `"speech": null`
+   in its RESPONSE_SHAPE and drops any speech the model returns anyway. The
+   orchestrator passes `speak=False` for every action after the actor's line has
+   landed, so the extra calls in a turn are also a little cheaper.
+   `agents.common.speech_fields(speak, words)` builds the two placeholders
+   (`{speech_shape}`, `{speech_rule}`) that `player_action.txt` and
+   `dm_monster_action.txt` now take.
+
+2. **`PlayerAgent.choose_scene_action(view, options, said=None)`** — `said` is
+   the lines the party has already spoken this exploration beat, rendered into
+   `player_scene_choice.txt`. Each character was being prompted in isolation
+   with the same option list, so all four argued for the same option in their
+   own words; now a character who has nothing to add votes and stays quiet.
+
+3. **`Game._say(actor_id, name, speech) -> bool`** is the only path to a
+   `dialogue` event. It drops a line whose content-word overlap (Jaccard over
+   words of 4+ letters) with a recent line is ≥ `SELF_REPEAT` (0.5) for the same
+   speaker or ≥ `ECHO_REPEAT` (0.7) for a different one, over the last
+   `DIALOGUE_MEMORY` (8) lines. The thresholds are judgment, not measurement;
+   they are module constants in `orchestrator/game.py` so they can be tuned.
+
+4. **Speech word caps** dropped from 40 to 20 in combat (`SPEECH_WORDS` in both
+   agents) and to 25 for scene choices (`player.SCENE_SPEECH_WORDS`), and the
+   prompts now say that silence is the normal case.
+
+5. **`dialogue` event shape.** `text` is now the bare spoken line and the
+   speaker's name lives in `data["speaker"]`; the orchestrator used to emit
+   `"Name: line"` while `web/static/app.js` separately prefixed the name from
+   `ev.actor`, so the UI printed it twice. `agents.common.event_text(ev)` puts
+   the name back for prompt context, and both `_event_lines` helpers use it.
+
+6. **`MockLLMClient`** honours `"speech": null` in the prompt's shape, as a live
+   model would. Its canned speech pool is 8 lines, so in a mock game the
+   repetition guard suppresses nearly every line after the first eight — an
+   artifact of the fixture, not of a live game.

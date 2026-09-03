@@ -3,7 +3,11 @@
 The party must pick what to do next:
 {options}
 
+ALREADY SAID AT THE TABLE
+{said}
+
 RESPONSE_SHAPE: scene_choice
 Reply with JSON only:
-{{"choice": <0-based index of one option above>, "speech": "<in-character line, 40 words max>"}}
+{{"choice": <0-based index of one option above>, "speech": "<in-character line, 25 words max, or empty>"}}
 Choose in character. State intent only — no dice, no outcomes.
+Speak only if you add something the table has not heard: a different plan, a caveat, a question. If someone has already argued for your choice, say nothing — set "speech" to "" and let your vote stand. Never restate an option back to the table.
