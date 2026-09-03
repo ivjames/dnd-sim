@@ -731,6 +731,11 @@ emitted — but a turn is a beat at the table, not a speech per die roll.
    speaker or ≥ `ECHO_REPEAT` (0.7) for a different one, over the last
    `DIALOGUE_MEMORY` (8) lines. The thresholds are judgment, not measurement;
    they are module constants in `orchestrator/game.py` so they can be tuned.
+   Negation is the exception to the word filter: "open the door" and "do not
+   open the door" reduce to the same content words and mean opposite things, so
+   `_line_key` returns a negation flag beside the word set and a line that
+   negates is never a repeat of one that does not. A character reversing itself
+   or contradicting the party is a contribution, however alike the wording.
 
 4. **Speech word caps** dropped from 40 to 20 in combat (`SPEECH_WORDS` in both
    agents) and to 25 for scene choices (`player.SCENE_SPEECH_WORDS`), and the

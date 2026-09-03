@@ -103,7 +103,7 @@ class Game:
         self._resume.set()
         self._stop = threading.Event()
         self._notes: list[str] = []
-        self._spoken: list[tuple[str, frozenset]] = []  # (actor, words) for the guard
+        self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
         self._thread: threading.Thread | None = None
         self.dm: DMAgent | None = None
         self.players: dict[str, PlayerAgent] = {}
@@ -234,17 +234,20 @@ class Game:
         Characters left to themselves restate their last line every time they
         are asked, so a line close enough to a recent one — the same speaker
         rephrasing itself, or another character parroting it back — is dropped
-        rather than printed. Returns whether anything was emitted.
+        rather than printed — unless it contradicts that line, which is a new
+        contribution however alike the wording. Returns whether it was emitted.
         """
         text = " ".join(str(speech or "").split())
         if not text:
             return False
-        words = _content_words(text)
-        for prev_actor, prev_words in self._spoken:
+        words, negated = _line_key(text)
+        for prev_actor, prev_words, prev_negated in self._spoken:
+            if negated != prev_negated:
+                continue  # one of the two contradicts the other; not a repeat
             limit = SELF_REPEAT if prev_actor == actor_id else ECHO_REPEAT
             if _overlap(words, prev_words) >= limit:
                 return False
-        self._spoken.append((actor_id, words))
+        self._spoken.append((actor_id, words, negated))
         del self._spoken[:-DIALOGUE_MEMORY]
         self._emit_new("dialogue", text, actor=actor_id, data={"speaker": name})
         return True
@@ -783,16 +786,30 @@ class Game:
         }
 
 
-def _content_words(text: str) -> frozenset:
-    """The words a repetition is judged on: long ones, case- and punctuation-blind.
+_NEGATIONS = frozenset(
+    {
+        "no", "not", "nor", "never", "none", "neither", "dont", "cant", "wont",
+        "isnt", "arent", "wasnt", "didnt", "wouldnt", "couldnt", "shouldnt",
+    }
+)
+
+
+def _line_key(text: str) -> tuple[frozenset, bool]:
+    """What a repetition is judged on: content words, and whether the line negates.
 
     Short words carry the grammar rather than the point, so dropping them keeps
     "Sir Zombie, your desecration ends here" and "Sir Zombie, your desecration
-    ends NOW" the same line. If nothing survives (a bark like "Click."), fall
-    back to every word so identical barks still compare equal.
+    ends NOW" the same line. Negations are the exception that has to survive:
+    "open the door" and "do not open the door" reduce to the same words and mean
+    opposite things, so the flag is compared before the overlap is. Apostrophes
+    go first, so "don't" reduces to "dont" rather than to two fragments. If
+    nothing survives the length filter (a bark like "Click."), fall back to
+    every word, so identical barks still compare equal.
     """
-    words = [w for w in re.split(r"[^0-9a-z]+", text.lower()) if w]
-    return frozenset([w for w in words if len(w) >= 4] or words)
+    flat = text.lower().replace("'", "").replace("\u2019", "")
+    words = [w for w in re.split(r"[^0-9a-z]+", flat) if w]
+    negated = any(w in _NEGATIONS for w in words)
+    return frozenset([w for w in words if len(w) >= 4] or words), negated
 
 
 def _overlap(a: frozenset, b: frozenset) -> float:

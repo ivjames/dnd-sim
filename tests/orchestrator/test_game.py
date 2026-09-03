@@ -140,6 +140,19 @@ def test_say_drops_near_repeats_and_echoes(cfg):
     assert [a for a, _ in said] == ["pc_1", "pc_2"]
 
 
+def test_say_keeps_a_line_that_contradicts_the_one_before_it(cfg):
+    """"Not the seal" is the opposite of "the seal", not a repeat of it."""
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append(text)
+
+    assert game._say("pc_1", "Ysolde", "Open the door.")
+    assert game._say("pc_1", "Ysolde", "Do not open the door.")     # same speaker, reversing
+    assert game._say("pc_2", "Crick", "Don't open the door!")       # and disagreeing
+    assert not game._say("pc_2", "Crick", "Open the door.")         # but this is the echo
+    assert len(said) == 3
+
+
 def test_say_drops_an_identical_bark_from_another_monster(cfg):
     game, _ = make_game(cfg)
     game._emit_new = lambda *a, **k: None
