@@ -22,6 +22,8 @@ __all__ = [
     "DM_MODEL",
     "PLAYER_MODEL",
     "SUMMARY_MODEL",
+    "MODEL_RULES",
+    "request_params_for",
 ]
 
 
@@ -61,6 +63,62 @@ class LLMClient(Protocol):
 DM_MODEL = os.environ.get("DND_DM_MODEL", "claude-sonnet-5")
 PLAYER_MODEL = os.environ.get("DND_PLAYER_MODEL", "claude-haiku-4-5-20251001")
 SUMMARY_MODEL = os.environ.get("DND_SUMMARY_MODEL", PLAYER_MODEL)
+
+
+# --- per-model request parameters (CONTRACTS §2, amendment 2026-09-03) ----
+#
+# Which sampling/thinking fields a model accepts is a property of the model
+# family, and getting it wrong is a hard 400, not a degraded answer. The rule
+# lives here — in the client, once — so the agents keep passing `temperature`
+# and a model swap via DND_*_MODEL is one row in this table.
+#
+# Each row: (model-id prefix, forward sampling params?, `thinking` to send or
+# None to omit the field). First prefix match wins; no match → _DEFAULT_RULE.
+#
+#   sampling=False  the API rejects temperature/top_p/top_k (400) — drop them.
+#   thinking=disabled  these models run ADAPTIVE thinking when the field is
+#                   absent, and thinking tokens count against `max_tokens`.
+#                   Our per-call caps are 200–600 tokens of JSON/narration, so
+#                   an unasked-for think would eat the whole budget and return
+#                   a truncated (or empty) reply. Disabling keeps the caps —
+#                   and the frugality requirement — meaningful.
+#   thinking=None   Haiku 4.5 / Sonnet 4.6 and older: thinking is off unless
+#                   explicitly enabled; sending {"type": "disabled"} to Haiku
+#                   4.5 is an error, so the field is simply left out.
+#
+# claude-fable-*: thinking is always on and BOTH "disabled" and budget_tokens
+# are rejected, so the only valid request omits the field — which means the
+# tight max_tokens caps here would not survive a Fable run. Nobody uses Fable
+# in this project (ten times the Sonnet price); the row exists so a stray
+# DND_DM_MODEL=claude-fable-5 fails on max_tokens, not on a 400.
+MODEL_RULES: tuple[tuple[str, bool, dict | None], ...] = (
+    ("claude-fable", False, None),
+    ("claude-sonnet-5", False, {"type": "disabled"}),
+    ("claude-opus-5", False, {"type": "disabled"}),
+    ("claude-opus-4-7", False, {"type": "disabled"}),
+    ("claude-opus-4-8", False, {"type": "disabled"}),
+)
+_DEFAULT_RULE: tuple[bool, dict | None] = (True, None)
+
+
+def request_params_for(model: str, *, temperature: float | None) -> dict[str, Any]:
+    """Extra `messages.create` kwargs for `model`: sampling and `thinking`.
+
+    Returns only the keys that should be on the wire — a missing key is the
+    point (an absent `thinking` on Haiku, an absent `temperature` on Sonnet 5),
+    so callers splat the result rather than reading fixed fields from it.
+    """
+    sampling, thinking = _DEFAULT_RULE
+    for prefix, allow_sampling, thinking_field in MODEL_RULES:
+        if model.startswith(prefix):
+            sampling, thinking = allow_sampling, thinking_field
+            break
+    params: dict[str, Any] = {}
+    if sampling and temperature is not None:
+        params["temperature"] = temperature
+    if thinking is not None:
+        params["thinking"] = dict(thinking)
+    return params
 
 
 JSON_ONLY_SUFFIX = (
@@ -159,6 +217,7 @@ class AnthropicClient:
             blocks = blocks[:-1] + [
                 {**blocks[-1], "text": blocks[-1].get("text", "") + JSON_ONLY_SUFFIX}
             ]
+        params = request_params_for(model, temperature=temperature)
         last: Exception | None = None
         for attempt in range(self.MAX_ATTEMPTS):
             try:
@@ -167,7 +226,7 @@ class AnthropicClient:
                     system=blocks,
                     messages=messages,
                     max_tokens=max_tokens,
-                    temperature=temperature,
+                    **params,
                 )
             except Exception as exc:  # noqa: BLE001 - SDK exception hierarchy varies
                 last = exc

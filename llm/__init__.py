@@ -2,6 +2,7 @@
 
 from .client import (
     DM_MODEL,
+    MODEL_RULES,
     PLAYER_MODEL,
     SUMMARY_MODEL,
     AnthropicClient,
@@ -9,6 +10,7 @@ from .client import (
     LLMError,
     LLMResponse,
     MockLLMClient,
+    request_params_for,
 )
 from .cost import PRICES, Ledger
 
@@ -23,4 +25,6 @@ __all__ = [
     "DM_MODEL",
     "PLAYER_MODEL",
     "SUMMARY_MODEL",
+    "MODEL_RULES",
+    "request_params_for",
 ]

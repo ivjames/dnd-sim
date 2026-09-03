@@ -5,7 +5,14 @@ import json
 import pytest
 
 from agents.common import AgentOutputError, extract_json
-from llm.client import AnthropicClient, LLMError, LLMResponse, MockLLMClient
+from llm.client import (
+    MODEL_RULES,
+    AnthropicClient,
+    LLMError,
+    LLMResponse,
+    MockLLMClient,
+    request_params_for,
+)
 from llm.cost import PRICES, Ledger
 
 SHAPES = [
@@ -190,3 +197,81 @@ def test_anthropic_does_not_retry_client_errors():
     with pytest.raises(LLMError):
         _client(sdk).complete(model="claude-sonnet-5", system="s", messages=[], max_tokens=10)
     assert len(sdk.calls) == 1
+
+
+# --- per-model request parameters ----------------------------------------
+
+
+def _kwargs(model, temperature=0.8):
+    sdk = _FakeSDK()
+    _client(sdk).complete(
+        model=model,
+        system="stable rules",
+        messages=[{"role": "user", "content": "go"}],
+        max_tokens=50,
+        temperature=temperature,
+    )
+    return sdk.calls[0]
+
+
+def test_sonnet_5_gets_no_sampling_params_and_thinking_disabled():
+    kw = _kwargs("claude-sonnet-5")
+    assert "temperature" not in kw
+    assert "top_p" not in kw and "top_k" not in kw
+    assert kw["thinking"] == {"type": "disabled"}
+    # max_tokens is still the tight per-call cap; nothing else is added
+    assert kw["max_tokens"] == 50
+    assert set(kw) == {"model", "system", "messages", "max_tokens", "thinking"}
+    # cache_control placement is unchanged by the rule
+    assert kw["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_haiku_4_5_keeps_temperature_and_sends_no_thinking_field():
+    kw = _kwargs("claude-haiku-4-5-20251001", temperature=0.3)
+    assert kw["temperature"] == 0.3
+    assert "thinking" not in kw
+    assert set(kw) == {"model", "system", "messages", "max_tokens", "temperature"}
+    assert kw["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.parametrize(
+    "model, expect",
+    [
+        ("claude-sonnet-5", {"thinking": {"type": "disabled"}}),
+        ("claude-opus-5", {"thinking": {"type": "disabled"}}),
+        ("claude-opus-4-7", {"thinking": {"type": "disabled"}}),
+        ("claude-opus-4-8", {"thinking": {"type": "disabled"}}),
+        # Fable: thinking always on, "disabled" rejected -> omit the field too
+        ("claude-fable-5", {}),
+        ("claude-fable-5-1", {}),
+        # everything else forwards temperature and leaves thinking out
+        ("claude-haiku-4-5-20251001", {"temperature": 0.8}),
+        ("claude-haiku-4-5", {"temperature": 0.8}),
+        ("claude-sonnet-4-6", {"temperature": 0.8}),
+        ("claude-opus-4-6", {"temperature": 0.8}),
+        ("some-future-model", {"temperature": 0.8}),
+    ],
+)
+def test_request_params_table(model, expect):
+    assert request_params_for(model, temperature=0.8) == expect
+
+
+def test_request_params_returns_a_fresh_thinking_dict():
+    a = request_params_for("claude-sonnet-5", temperature=0.8)
+    a["thinking"]["type"] = "mutated"
+    assert request_params_for("claude-sonnet-5", temperature=0.8)["thinking"] == {"type": "disabled"}
+
+
+def test_model_rules_prefixes_are_unambiguous():
+    # every rule must be reachable: no earlier prefix may shadow a later one
+    prefixes = [p for p, _s, _t in MODEL_RULES]
+    for i, later in enumerate(prefixes):
+        for earlier in prefixes[:i]:
+            assert not later.startswith(earlier), f"{earlier!r} shadows {later!r}"
+
+
+def test_mock_client_ignores_the_model_rule():
+    # the mock is model-agnostic: same seed, same output whichever model is named
+    a = _call(MockLLMClient(seed=4), f"{ACTION_BLOCK}\nRESPONSE_SHAPE: player_action", model="claude-sonnet-5")
+    b = _call(MockLLMClient(seed=4), f"{ACTION_BLOCK}\nRESPONSE_SHAPE: player_action", model="claude-fable-5")
+    assert a.text == b.text

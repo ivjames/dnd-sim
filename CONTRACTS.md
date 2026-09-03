@@ -375,6 +375,47 @@ Two smaller web-side conventions, recorded so nobody is surprised:
     status `budget_exceeded`; a final `cost` event with the full ledger is emitted
     on every exit path.
 
+### 2026-09-03 — llm/ — per-model request parameters (live-mode fix)
+
+1. **`request_params_for(model, *, temperature) -> dict`** and the table
+   **`MODEL_RULES`** in `llm/client.py` decide, per model-id prefix, which
+   sampling and `thinking` fields go on the wire. `AnthropicClient.complete`
+   splats the result into `messages.create`; the `LLMClient.complete` signature
+   in §2 is unchanged, so the agents keep passing `temperature` (DM 0.8, players
+   0.8, summarizer 0.3) and the client decides. `MockLLMClient` ignores the rule.
+   A model swap via `DND_*_MODEL` is one row in the table.
+
+   | model id prefix | sampling (`temperature`/`top_p`/`top_k`) | `thinking` field |
+   |---|---|---|
+   | `claude-sonnet-5`, `claude-opus-5`, `claude-opus-4-7`, `claude-opus-4-8` | dropped | `{"type": "disabled"}` |
+   | `claude-fable` | dropped | omitted (`disabled` is rejected there) |
+   | anything else (`claude-haiku-4-5-*`, `claude-sonnet-4-6`, …) | forwarded as before | omitted |
+
+   So with the defaults the DM (`claude-sonnet-5`) sends
+   `model, system, messages, max_tokens, thinking={"type": "disabled"}` and the
+   players/summarizer (`claude-haiku-4-5-20251001`) send
+   `model, system, messages, max_tokens, temperature`.
+
+   Rationale (Claude API reference, cached 2026-06-24): on Sonnet 5 / Opus 5 /
+   Opus 4.7–4.8 / Fable the sampling parameters are removed and return HTTP 400
+   — every DM call was failing outright. Separately, Sonnet 5 runs *adaptive*
+   thinking when the field is absent, thinking tokens are billed as output and
+   `max_tokens` caps thinking + reply together; with this project's 200–600
+   token per-call caps an unasked-for think would consume the budget and hand
+   back truncated JSON. `{"type": "disabled"}` keeps the caps and the frugality
+   requirement meaningful. Haiku 4.5 is the opposite: thinking is off unless
+   enabled, `disabled` is not accepted, and sampling still is — so nothing
+   changes for it. `budget_tokens` is never sent (400 on Sonnet 5).
+
+2. **Caching note, not changed now.** The minimum cacheable prefix is 4,096
+   tokens on Haiku 4.5 and 1,024 on Sonnet 5; shorter prefixes silently do not
+   cache. The player system block (role rules + SRD digest + sheet) is roughly
+   1.7k tokens and the summarizer's about 150, so the `cache_control` marker on
+   Haiku calls is inert today — those calls pay full input price every turn.
+   The DM block clears Sonnet 5's 1,024 floor and does cache. Left as-is:
+   padding prompts to reach the floor would cost more than it saves at current
+   game lengths; it is a future cost lever if player calls dominate spend.
+
 ### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
 
 The SRD tables in `engine/data/` are consumed exactly as shipped (49 spells, 29
