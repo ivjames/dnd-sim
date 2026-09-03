@@ -786,10 +786,15 @@ class Game:
         }
 
 
+# Apostrophes are stripped before this is consulted, so the contracted forms
+# appear here as "dont", "cant" and so on. "cannot" is the one that has to be
+# spelled out separately: it is a single word, not a contraction.
 _NEGATIONS = frozenset(
     {
-        "no", "not", "nor", "never", "none", "neither", "dont", "cant", "wont",
-        "isnt", "arent", "wasnt", "didnt", "wouldnt", "couldnt", "shouldnt",
+        "no", "not", "nor", "never", "none", "neither", "nothing", "nobody",
+        "nowhere", "cannot", "cant", "dont", "doesnt", "didnt", "wont",
+        "wouldnt", "shouldnt", "couldnt", "isnt", "arent", "wasnt", "werent",
+        "havent", "hasnt", "hadnt", "mustnt", "shant", "neednt", "aint",
     }
 )
 

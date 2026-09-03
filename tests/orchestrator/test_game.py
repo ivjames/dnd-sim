@@ -8,7 +8,8 @@ import pytest
 from llm.client import LLMResponse, MockLLMClient
 from orchestrator.bus import EventBus
 from orchestrator.config import GameConfig
-from orchestrator.game import Game
+from orchestrator import game as game_mod
+from orchestrator.game import SELF_REPEAT, Game
 
 from . import fake_engine as eng
 
@@ -151,6 +152,35 @@ def test_say_keeps_a_line_that_contradicts_the_one_before_it(cfg):
     assert game._say("pc_2", "Crick", "Don't open the door!")       # and disagreeing
     assert not game._say("pc_2", "Crick", "Open the door.")         # but this is the echo
     assert len(said) == 3
+
+
+@pytest.mark.parametrize(
+    "negative",
+    [
+        "We do not open the door.",
+        "We don't open the door.",
+        "We don\u2019t open the door.",          # a curly apostrophe, as a model writes it
+        "We cannot open the door.",
+        "We can't open the door.",
+        "We never open the door.",
+        "We won't open the door.",
+        "We shouldn't open the door.",
+        "Nobody opens the door.",
+        "No — we open the door another way.",
+    ],
+)
+def test_negation_survives_the_word_filter(negative):
+    """Every one of these means the opposite of "We open the door.\""""
+    assert not game_mod._line_key("We open the door.")[1]
+    assert game_mod._line_key(negative)[1], f"{negative!r} did not register as a negation"
+
+
+@pytest.mark.parametrize("negative", ["We do not open the door.", "We cannot open the door."])
+def test_the_words_alone_would_not_have_saved_a_negation(negative):
+    """Which is why _say compares the flag before it compares the overlap."""
+    positive, _ = game_mod._line_key("We open the door.")
+    words, _ = game_mod._line_key(negative)
+    assert game_mod._overlap(words, positive) >= SELF_REPEAT
 
 
 def test_say_drops_an_identical_bark_from_another_monster(cfg):
