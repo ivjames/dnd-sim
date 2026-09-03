@@ -68,6 +68,26 @@ PRICES: dict[str, tuple[float, float]] = {
     # the budget stop errs on the side of stopping.
     "deepseek-v4-flash": (0.44, 1.32),
     "deepseek-v4-pro": (1.32, 3.96),
+    # hosts — keyed by the seat id as written, `provider:<host's model id>`
+    # (explicit form only; these rows have no prefixes). Case matters: the
+    # part after the colon is the host's id verbatim.
+    # siliconflow (international platform, api.siliconflow.com) —
+    # https://www.siliconflow.com/models . The usage object on this host has
+    # no cache-hit field, so cached input is billed as input here (errs toward
+    # stopping) and there is no CACHE_READ_PRICES row. Llama-3.3-70B-Instruct
+    # is not listed on the international platform: no row.
+    "siliconflow:deepseek-ai/DeepSeek-V3.2": (0.27, 0.42),
+    "siliconflow:deepseek-ai/DeepSeek-V3": (0.25, 1.0),
+    "siliconflow:Qwen/Qwen3-32B": (0.14, 0.57),
+    "siliconflow:Qwen/Qwen3-14B": (0.07, 0.28),
+    # deepinfra — https://deepinfra.com/pricing (standard tier; the model
+    # pages deepinfra.com/deepseek-ai/DeepSeek-V3.2, deepinfra.com/Qwen/Qwen3-32B
+    # and deepinfra.com/meta-llama/Llama-3.3-70B-Instruct-Turbo say the same).
+    # The non-Turbo meta-llama/Llama-3.3-70B-Instruct page is a 404 today, so
+    # only the -Turbo id is priced.
+    "deepinfra:deepseek-ai/DeepSeek-V3.2": (0.26, 0.38),
+    "deepinfra:Qwen/Qwen3-32B": (0.08, 0.28),
+    "deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo": (0.10, 0.32),
 }
 
 CACHE_READ_MULT = 0.1
@@ -89,10 +109,13 @@ CACHE_READ_PRICES: dict[str, float] = {
     # deepseek — cache-hit input, peak
     "deepseek-v4-flash": 0.014,
     "deepseek-v4-pro": 0.044,
+    # deepinfra — https://deepinfra.com/pricing "$0.26 / $0.13 cached"; only
+    # ever applied if the host reports prompt_tokens_details.cached_tokens
+    "deepinfra:deepseek-ai/DeepSeek-V3.2": 0.13,
 }
 
 
-def _lookup(table: dict, model: str):
+def _lookup_raw(table: dict, model: str):
     """Exact key, else the longest prefix key ending on an id boundary."""
     if model in table:
         return table[model]
@@ -106,6 +129,33 @@ def _lookup(table: dict, model: str):
     return table[best] if best is not None else None
 
 
+def _lookup(table: dict, model: str):
+    """`_lookup_raw`, then — for the explicit `provider:model` form on a
+    provider that its bare id would route to anyway (`openai:gpt-5.4-nano`,
+    `deepseek:deepseek-v4-flash`) — the bare id's row. Host-qualified keys
+    (`deepinfra:...`, `siliconflow:...`) never fall back: the same model id
+    costs different money on different hosts, so those rows are keyed in full.
+    """
+    from .providers import provider_for, provider_named, split_model  # noqa: PLC0415
+
+    name, wire = split_model(model)
+    if name is None or wire == model:
+        return _lookup_raw(table, model)
+    # The explicit form matches a row exactly or not at all: boundary-prefix
+    # matching exists for dated Anthropic ids (`claude-haiku-4-5-20251001` →
+    # `claude-haiku-4-5`), and on a host key it would let `DeepSeek-V3` answer
+    # for `DeepSeek-V3.1`, a model with no verified rate.
+    key = f"{name}:{wire}"  # normalised: lower-cased provider, stripped id, case kept after ':'
+    if key in table:
+        return table[key]
+    prov = provider_named(name)
+    # Only when the bare id would route to this very provider: `anthropic:gpt-5.4-nano`
+    # names a provider that will reject the id, so it must not borrow OpenAI's rate.
+    if prov is None or not prov.prefixes or provider_for(wire) is not prov:
+        return None
+    return _lookup_raw(table, wire)
+
+
 def has_price(model: str) -> bool:
     """True when `model` hits a PRICES row (exactly or by boundary prefix)."""
     return _lookup(PRICES, model or "") is not None
@@ -115,10 +165,16 @@ def price_for(model: str) -> tuple[float, float]:
     hit = _lookup(PRICES, model)
     if hit is not None:
         return hit
-    # legacy leniency: a dated key answering for its undated model id
-    for known, price in PRICES.items():
-        if known.startswith(model):
-            return price
+    # legacy leniency: a dated key answering for its undated model id — bare
+    # ids only. An explicit provider:model that _lookup did not price has no
+    # verified rate, and a longer host key that merely starts with it (the
+    # Turbo variant of a Llama id) must not lend it one.
+    from .providers import split_model  # noqa: PLC0415
+
+    if split_model(model)[0] is None:
+        for known, price in PRICES.items():
+            if known.startswith(model):
+                return price
     return _DEFAULT_PRICE
 
 

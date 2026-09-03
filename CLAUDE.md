@@ -53,14 +53,18 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
   . ./.env; set +a`, only if the file exists) before it execs python — so
   pm2-managed and hand runs read the same file. Keys: `PORT`, `HOST`, the
   platform API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-  `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY` — any subset; only the
+  `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, and for the two
+  inference hosts `SILICONFLOW_API_KEY` and `DEEPINFRA_API_KEY`, whose seats
+  are written `siliconflow:<id>` / `deepinfra:<id>` — any subset; only the
   Anthropic one is warned about, since the default DM needs it, and a seat
-  whose platform has no key fails at game creation naming the variable),
+  whose platform has no key fails at game creation naming the variable;
+  `CARTESIA_API_KEY` on the droplet is text-to-speech and is not one of these),
   `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides (full table in
   README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
   no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600) and adopts
-  every known key it lacks into it from `/etc/environment` (`GOOGLE_API_KEY`
-  there is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
+  every known key it lacks into it from `/etc/environment`, then from
+  `/var/www/ffc/server/.env` (first file holding a key wins; the list is
+  `DNDSIM_KEY_SOURCE`; `GOOGLE_API_KEY` is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
   `bin/dndsim`, overridable with `DNDSIM_KEYS`, and the same list is what
   the pm2 launch unsets. `dndsim keys` prints which known keys `.env` and
   the store hold (names only) and exits 1 without `ANTHROPIC_API_KEY`. State
