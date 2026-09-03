@@ -81,6 +81,8 @@ Tests:
 | `MISTRAL_API_KEY` | — | Needed only if a seat names a `mistral-*` / `ministral-*` / `magistral-*` / `codestral-*` model (`https://api.mistral.ai/v1`). |
 | `GEMINI_API_KEY` | — | Needed only if a seat names a `gemini-*` model (Google's OpenAI-compatible endpoint, `https://generativelanguage.googleapis.com/v1beta/openai`). |
 | `DEEPSEEK_API_KEY` | — | Needed only if a seat names a `deepseek-*` model (`https://api.deepseek.com`). |
+| `SILICONFLOW_API_KEY` | — | Needed only if a seat names a `siliconflow:<id>` model (SiliconFlow's **international** platform, `https://api.siliconflow.com/v1`; a key minted on the China console `cloud.siliconflow.cn` belongs to `api.siliconflow.cn` and will not authenticate here). |
+| `DEEPINFRA_API_KEY` | — | Needed only if a seat names a `deepinfra:<id>` model (`https://api.deepinfra.com/v1/openai`). |
 | `DND_ALLOW_UNPRICED` | unset | `1` → let a live game start with a model that has no row in `llm/cost.py` `PRICES` (it is then charged at the default $2/$10 rate). Off by default: the budget stop is blind for an unpriced model, so game creation refuses. |
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
 | `DND_SIM_DB` | `./data/dndsim.sqlite3` | SQLite transcript store. |
@@ -88,10 +90,13 @@ Tests:
 | `DND_DM_MODEL` | `claude-sonnet-5` | DM model. |
 | `DND_PLAYER_MODEL` | `claude-haiku-4-5-20251001` | Player model. |
 | `DND_SUMMARY_MODEL` | = player model | Rolling-summary model. |
+| `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
 
 Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
 may name a model on any platform above — the platform is chosen from the
-model id's prefix. Keys are read only for platforms actually seated.
+model id's prefix, or named outright with the `provider:model` form
+(`deepinfra:Qwen/Qwen3-32B`), which is the only way to reach the two hosts.
+Keys are read only for platforms actually seated.
 
 ## Seating other platforms
 
@@ -122,8 +127,40 @@ vars). A party member may carry its own `"model"`, which overrides
 }
 ```
 
+Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
+other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,
+`Qwen/Qwen3-32B`, `meta-llama/Llama-3.3-70B-Instruct-Turbo`) that say
+nothing about which host is meant — and a bare `deepseek-` prefix already
+means DeepSeek's own API. Those seats use the explicit form
+**`provider:model`**: the part before the colon is a row name from
+`PROVIDERS`, the part after is the host's model id verbatim (case matters),
+and only that part goes on the wire. It works for every row and overrides
+prefix routing (`deepseek:deepseek-v4-flash` is the same seat as
+`deepseek-v4-flash`), but it is required for the hosts, which have no
+prefixes: a namespaced id without one fails at game creation with a message
+that names the form and the hosts that could serve it. One example per host:
+
+```json
+{"id": "pc_2", "name": "Vessa Quill", "race": "Halfling (Lightfoot)", "klass": "Rogue", "level": 3,
+ "model": "siliconflow:Qwen/Qwen3-32B"},
+{"id": "pc_3", "name": "Sister Marigold Penn", "race": "Human", "klass": "Cleric", "level": 3,
+ "model": "deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo"}
+```
+
+The full `provider:model` string is the seat id everywhere — preflight
+messages, the snapshot's `models`, the ledger row and the `PRICES` key (so the
+same model is priced at each host's own rate). Priced today: on SiliconFlow
+`deepseek-ai/DeepSeek-V3.2`, `deepseek-ai/DeepSeek-V3`, `Qwen/Qwen3-32B`,
+`Qwen/Qwen3-14B`; on DeepInfra `deepseek-ai/DeepSeek-V3.2`, `Qwen/Qwen3-32B`,
+`meta-llama/Llama-3.3-70B-Instruct-Turbo`. SiliconFlow's Qwen3 and
+DeepSeek-V3.x seats send `enable_thinking: false` (thinking is on by default
+there) and its JSON mode is left off the DeepSeek V3/R1 ids, which its docs
+exclude; DeepInfra seats send plain sampling fields, since its documented
+`reasoning_effort` control does not list these models.
+
 In live mode, game creation checks every seat up front and refuses with one
-message naming what is wrong: a model no row routes, a platform whose key is
+message naming what is wrong: a model no row routes (a namespaced id with no
+`provider:` is told which form to use), a platform whose key is
 not set (the message names the variable), or a model with no price row (see
 `DND_ALLOW_UNPRICED`). The ledger keeps one row per seat, priced at that
 seat's model, so the budget stop works across platforms. Mock mode ignores all
@@ -138,7 +175,6 @@ get their effort turned down per `llm/providers.py` `COMPAT_RULES` so hidden
 reasoning does not eat the tight per-call token caps. Prices in `llm/cost.py`
 were read from each platform's pricing page on 2026-09-03; re-check them when
 seating a model for real money.
-| `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
 
 ## HTTP API
 

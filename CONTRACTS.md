@@ -434,6 +434,8 @@ which object sits behind it in live mode and how a model id reaches a seat.
    | mistral | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | `mistral-`, `ministral-`, `magistral-`, `codestral-`, `open-mistral`, `open-mixtral`, `pixtral-` | openai_compat | yes | `max_tokens` |
    | gemini | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-` | openai_compat | **no** (unconfirmed on the compat layer; left off) | `max_tokens` |
    | deepseek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` (the docs post to `/chat/completions` with no `/v1`) | `deepseek-` | openai_compat | yes (needs "json" in the prompt — the suffix has it) | `max_tokens` |
+   | siliconflow | `SILICONFLOW_API_KEY` | `https://api.siliconflow.com/v1` (the international platform; `.cn` is a separate platform with its own keys) | *(none — host, `siliconflow:<id>` only)* | openai_compat | yes, except the DeepSeek R1/V3 ids (`json_mode_except`) | `max_tokens` |
+   | deepinfra | `DEEPINFRA_API_KEY` | `https://api.deepinfra.com/v1/openai` | *(none — host, `deepinfra:<id>` only)* | openai_compat | yes | `max_tokens` |
 
 2. **`OpenAICompatClient(provider, key)`** (`llm/compat.py`, httpx) serves
    every `openai_compat` row: `POST <base_url>/chat/completions`, `Bearer`
@@ -528,6 +530,61 @@ which object sits behind it in live mode and how a model id reaches a seat.
    never 400, so it is dropped. `requirements.txt` now names
    `httpx>=0.27,<1.0` explicitly (it was already installed as anthropic's
    dependency).
+
+9. **Explicit `provider:model` form and the two hosts** (same day, later).
+   SiliconFlow and DeepInfra are *hosts*: they serve other people's models
+   under namespaced ids (`deepseek-ai/DeepSeek-V3.2`, `Qwen/Qwen3-32B`) that
+   do not identify the host, and `deepseek-` already routes to DeepSeek's own
+   API. So their rows carry **no prefixes** (`HOSTS` = the prefix-less rows)
+   and a seat reaches them only through the explicit form
+   **`<provider name>:<model id>`**, which `split_model` parses and which
+   overrides prefix routing for every row (`openai:gpt-5.4-nano` is legal and
+   identical to `gpt-5.4-nano`). The rule, everywhere a model id is read:
+   - `provider_for`: explicit name → that row (an unknown name → None, never
+     a prefix fallback on the remainder); bare id → prefix as before.
+   - `RouterClient`: an unknown provider name is an `LLMError` naming it and
+     the row names; a bare **namespaced** id (contains `/`) is an `LLMError`
+     saying to use the `provider:model` form and listing `<host>:<id>` for
+     each host; the old unknown-prefix message now also mentions the form.
+     Preflight surfaces both per seat. The full seat id is what
+     `GameConfig.seat_models()`, `snapshot()["models"]`, the ledger row and
+     the preflight messages carry.
+   - **Wire model** = the part after the colon. The compat adapter strips it
+     itself (`build_body`'s `model`) and stamps the *full* id back onto the
+     `LLMResponse` (a bare id still keeps the server's model string); the
+     router hands the native Anthropic SDK the bare id and re-stamps the full
+     one, so `Ledger` always keys on the seat as configured.
+   - **Prices** (`PRICES`, `CACHE_READ_PRICES`) are keyed by the full
+     `provider:model` string, case-sensitive after the colon, so one model is
+     priced at each host's own rate and the bare host id has no row (an
+     unprefixed `Qwen/Qwen3-32B` cannot reach preflight's price check anyway).
+     Rows read 2026-09-03 — SiliconFlow (`siliconflow.com/models`):
+     `deepseek-ai/DeepSeek-V3.2` $0.27/$0.42, `deepseek-ai/DeepSeek-V3`
+     $0.25/$1.00, `Qwen/Qwen3-32B` $0.14/$0.57, `Qwen/Qwen3-14B` $0.07/$0.28;
+     DeepInfra (`deepinfra.com/pricing`): `deepseek-ai/DeepSeek-V3.2`
+     $0.26/$0.38 (cached input $0.13 → `CACHE_READ_PRICES`), `Qwen/Qwen3-32B`
+     $0.08/$0.28, `meta-llama/Llama-3.3-70B-Instruct-Turbo` $0.10/$0.32.
+     **Not priced, so not seatable without `DND_ALLOW_UNPRICED`:** Llama 3.3
+     70B on SiliconFlow (not listed on the international platform) and the
+     non-Turbo `meta-llama/Llama-3.3-70B-Instruct` on DeepInfra (its page is
+     a 404).
+   - **Request shape per host.** SiliconFlow: `max_tokens`, `temperature`,
+     `response_format json_object` except on the DeepSeek R1/V3 ids (its
+     json-mode page excludes them — `Provider.json_mode_except`, checked per
+     wire model by `accepts_json_mode`), and `enable_thinking: false` on the
+     Qwen3 series and DeepSeek-V3.1/V3.2 (the reference says it defaults to
+     true there). Its usage object has no cache-hit field, so cache reads are
+     never counted on that host. DeepInfra: `max_tokens`, `temperature`,
+     `response_format json_object`; its `reasoning_effort` (none|low|medium|
+     high) is documented for the DeepSeek-V4 family and a few others, not for
+     DeepSeek-V3.2 or Qwen3, so nothing thinking-related is sent to those.
+     `COMPAT_RULES` may be keyed on the full seat id (`siliconflow:qwen/qwen3-`)
+     and is matched full-id first; the bare wire id is consulted only when
+     the explicit provider is the one its prefix routes to anyway — so
+     DeepSeek's `thinking` field never reaches `deepinfra:deepseek-ai/…`.
+   - `bin/dndsim` knows `SILICONFLOW_API_KEY` and `DEEPINFRA_API_KEY` (adopted
+     from `/etc/environment`, unset for pm2's launch). `CARTESIA_API_KEY`,
+     also in that store, is text-to-speech and is not a provider.
 
 ### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
 

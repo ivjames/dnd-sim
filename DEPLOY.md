@@ -25,7 +25,10 @@ the root shell's copies — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
-The one hand step: make sure the keys are in `/etc/environment`. The known
+The one hand step: make sure the keys are in `/etc/environment`. `dndsim
+deploy` also consults `/var/www/ffc/server/.env`, second, because that is
+where this box's platform keys were found on 2026-09-03; the first file that
+holds a key wins, and `DNDSIM_KEY_SOURCE` (below) changes the list. The known
 names, one per LLM platform the app can seat at the table:
 
 | key | platform |
@@ -36,8 +39,11 @@ names, one per LLM platform the app can seat at the table:
 | `XAI_API_KEY` | xAI (Grok) |
 | `MISTRAL_API_KEY` | Mistral |
 | `DEEPSEEK_API_KEY` | DeepSeek |
+| `SILICONFLOW_API_KEY` | SiliconFlow (international platform, `api.siliconflow.com`) — a host; seats are `siliconflow:<model id>` |
+| `DEEPINFRA_API_KEY` | DeepInfra — a host; seats are `deepinfra:<model id>` |
 
-Any subset is fine. A seat configured for a platform whose key is missing
+(`CARTESIA_API_KEY`, also in the store, is text-to-speech, not an LLM platform,
+and is deliberately not a known key.) Any subset is fine. A seat configured for a platform whose key is missing
 fails at game creation with a message naming the variable — that is the app's
 behaviour, not the CLI's — and the other seats are unaffected. To adopt a key
 for a platform not in this list, set `DNDSIM_KEYS` (space-separated names) when
@@ -45,7 +51,8 @@ running `dndsim deploy`; no code change is needed.
 
 ```bash
 grep -q '^ANTHROPIC_API_KEY=' /etc/environment || echo 'ANTHROPIC_API_KEY=sk-ant-...' >> /etc/environment
-# and likewise OPENAI_API_KEY=..., GEMINI_API_KEY=..., XAI_API_KEY=..., MISTRAL_API_KEY=..., DEEPSEEK_API_KEY=...
+# and likewise OPENAI_API_KEY=..., GEMINI_API_KEY=..., XAI_API_KEY=..., MISTRAL_API_KEY=..., DEEPSEEK_API_KEY=...,
+# SILICONFLOW_API_KEY=..., DEEPINFRA_API_KEY=...
 ```
 
 Then:
@@ -85,8 +92,9 @@ In order, each step a no-op when already done:
 5. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
    `pm2 restart` after — both under `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY
    -u GEMINI_API_KEY -u XAI_API_KEY -u MISTRAL_API_KEY -u DEEPSEEK_API_KEY
-   -u GITHUB_TOKEN` (the unset list is built from the same known-key list as
-   step 3, so a key added there is unset here too). Then `pm2 save`, but
+   -u SILICONFLOW_API_KEY -u DEEPINFRA_API_KEY -u GITHUB_TOKEN` (the unset
+   list is built from the same known-key list as step 3, so a key added
+   there is unset here too). Then `pm2 save`, but
    **only if the process reports `online`** (a save while it is down would
    persist a dump that omits it).
 6. Probes `http://127.0.0.1:8071/api/health` and the public URL, prints the
@@ -147,6 +155,8 @@ override the process environment pm2 provides.
 | `XAI_API_KEY` | xAI (Grok) — optional; adopted the same way |
 | `MISTRAL_API_KEY` | Mistral — optional; adopted the same way |
 | `DEEPSEEK_API_KEY` | DeepSeek — optional; adopted the same way |
+| `SILICONFLOW_API_KEY` | SiliconFlow (international, `api.siliconflow.com`) — optional; adopted the same way; seats use `siliconflow:<id>` |
+| `DEEPINFRA_API_KEY` | DeepInfra — optional; adopted the same way; seats use `deepinfra:<id>` |
 | `DND_SIM_MOCK` | unset in production; `1` → `MockLLMClient`, zero API calls |
 | `DND_SIM_DB` | `/var/www/dndsim/data/dndsim.sqlite3` — SQLite transcript store |
 | `DND_SIM_EXAMPLES` | `./examples` — where `/api/presets` reads scenarios from |
@@ -200,7 +210,10 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 ## Overrides
 
 `DNDSIM_FQDN` (default `dndsim.lab980.com`), `DNDSIM_BRANCH` (`main`),
-`DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (`/etc/environment`),
+`DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (colon-separated list of files the
+keys are adopted from, first hit wins; default
+`/etc/environment:/var/www/ffc/server/.env` — set it to just
+`/etc/environment` to stop the second file being consulted),
 `DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
-to adopt, report and unset for pm2; default is the six known keys above —
+to adopt, report and unset for pm2; default is the eight known keys above —
 setting it replaces the list, so include `ANTHROPIC_API_KEY`).

@@ -15,7 +15,7 @@ import pytest
 from llm.client import JSON_ONLY_SUFFIX, LLMError, LLMResponse, MockLLMClient
 from llm.compat import OpenAICompatClient
 from llm.cost import PRICES, Ledger, cache_read_price_for, has_price, price_for
-from llm.providers import PROVIDERS, compat_params_for, provider_for
+from llm.providers import HOSTS, PROVIDERS, compat_params_for, provider_for, split_model, wire_model
 from llm.router import RouterClient
 from orchestrator.bus import EventBus
 from orchestrator.config import GameConfig
@@ -26,14 +26,18 @@ from . import fake_engine as eng
 COMPAT = [p for p in PROVIDERS if p.dialect == "openai_compat"]
 BY_NAME = {p.name: p for p in PROVIDERS}
 
-# one representative, priced, prefix-routed model per compat provider
+# one representative, priced model per compat provider: prefix-routed for the
+# platforms, the explicit `provider:model` form for the two hosts
 SAMPLE_MODEL = {
     "openai": "gpt-5.4-nano",
     "xai": "grok-4.3",
     "mistral": "mistral-small-latest",
     "gemini": "gemini-2.5-flash",
     "deepseek": "deepseek-v4-flash",
+    "siliconflow": "siliconflow:Qwen/Qwen3-32B",
+    "deepinfra": "deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo",
 }
+PREFIX_ROUTED = {k: v for k, v in SAMPLE_MODEL.items() if ":" not in v}
 
 SYSTEM = [{"type": "text", "text": "You are Thorin.", "cache_control": {"type": "ephemeral"}}]
 USER = [{"role": "user", "content": "[a1] Attack\n[a2] End turn\nRESPONSE_SHAPE: player_action"}]
@@ -112,6 +116,77 @@ def test_provider_for_unknown_prefix_is_none():
     assert provider_for("") is None
 
 
+# --- explicit provider:model form and the two hosts --------------------------
+
+
+def test_the_hosts_are_siliconflow_and_deepinfra_with_no_prefixes():
+    assert [h.name for h in HOSTS] == ["siliconflow", "deepinfra"]
+    sf, di = BY_NAME["siliconflow"], BY_NAME["deepinfra"]
+    assert sf.prefixes == () and di.prefixes == ()
+    assert sf.key_env == "SILICONFLOW_API_KEY" and di.key_env == "DEEPINFRA_API_KEY"
+    assert sf.base_url == "https://api.siliconflow.com/v1"  # international, not .cn
+    assert di.base_url == "https://api.deepinfra.com/v1/openai"
+    assert sf.max_tokens_field == di.max_tokens_field == "max_tokens"
+    assert sf.json_mode and di.json_mode
+    # SiliconFlow's json-mode page excludes the DeepSeek R1/V3 ids
+    assert not sf.accepts_json_mode("deepseek-ai/DeepSeek-V3.2")
+    assert not sf.accepts_json_mode("deepseek-ai/DeepSeek-R1")
+    assert sf.accepts_json_mode("Qwen/Qwen3-32B")
+    assert di.accepts_json_mode("deepseek-ai/DeepSeek-V3.2")
+
+
+@pytest.mark.parametrize(
+    "model, expect",
+    [
+        ("deepinfra:Qwen/Qwen3-32B", ("deepinfra", "Qwen/Qwen3-32B")),
+        ("siliconflow:deepseek-ai/DeepSeek-V3.2", ("siliconflow", "deepseek-ai/DeepSeek-V3.2")),
+        ("DeepInfra: Qwen/Qwen3-32B ", ("deepinfra", "Qwen/Qwen3-32B")),
+        ("deepseek:deepseek-v4-flash", ("deepseek", "deepseek-v4-flash")),
+        ("anthropic:claude-sonnet-5", ("anthropic", "claude-sonnet-5")),
+        ("nope:gpt-5", ("nope", "gpt-5")),  # parsed; provider_for says None
+        ("Qwen/Qwen3-32B", (None, "Qwen/Qwen3-32B")),
+        ("gpt-5.4-nano", (None, "gpt-5.4-nano")),
+        ("", (None, "")),
+        ("deepinfra:", (None, "deepinfra:")),
+    ],
+)
+def test_split_model_parses_the_explicit_form(model, expect):
+    assert split_model(model) == expect
+    assert wire_model(model) == expect[1]
+
+
+@pytest.mark.parametrize(
+    "model, name",
+    [
+        ("siliconflow:Qwen/Qwen3-32B", "siliconflow"),
+        ("deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepinfra"),
+        # explicit wins over the prefix: deepseek-ai/... on a host is NOT DeepSeek's API
+        ("siliconflow:deepseek-ai/DeepSeek-V3.2", "siliconflow"),
+        ("deepinfra:deepseek-ai/DeepSeek-V3.2", "deepinfra"),
+        # and the explicit form works for every prefix-routed row too
+        ("deepseek:deepseek-v4-flash", "deepseek"),
+        ("openai:gpt-5.4-nano", "openai"),
+        ("anthropic:claude-sonnet-5", "anthropic"),
+    ],
+)
+def test_provider_for_explicit_form(model, name):
+    assert provider_for(model).name == name
+
+
+def test_provider_for_namespaced_or_unknown_provider_is_none():
+    assert provider_for("Qwen/Qwen3-32B") is None  # no host claims a prefix
+    assert provider_for("meta-llama/Llama-3.3-70B-Instruct-Turbo") is None
+    assert provider_for("deepseek-ai/DeepSeek-V3.2") is None  # NOT DeepSeek's API by prefix
+    assert provider_for("nope:gpt-5") is None  # never falls back to the prefix
+
+
+@pytest.mark.parametrize("model, name", [(m, n) for n, m in PREFIX_ROUTED.items()] + [("claude-sonnet-5", "anthropic")])
+def test_existing_prefix_routing_is_unchanged(model, name):
+    assert split_model(model) == (None, model)
+    assert wire_model(model) == model
+    assert provider_for(model).name == name
+
+
 # --- request shape per provider -------------------------------------------
 
 
@@ -126,7 +201,7 @@ def test_request_shape_for_a_player_call(provider):
     assert str(req.url) == provider.base_url + "/chat/completions"
     assert req.headers["authorization"] == "Bearer sk-test-secret"
     body = json.loads(req.content)
-    assert body["model"] == model
+    assert body["model"] == wire_model(model)  # never the `provider:` prefix
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][0]["content"].startswith("You are Thorin.")
     assert body["messages"][0]["content"].endswith(JSON_ONLY_SUFFIX)
@@ -141,6 +216,69 @@ def test_request_shape_for_a_player_call(provider):
         assert "response_format" not in body
     assert resp.text == '{"action": "a1"}'
     assert resp.stop_reason == "stop"
+
+
+@pytest.mark.parametrize(
+    "model, extra, json_mode",
+    [
+        ("siliconflow:Qwen/Qwen3-32B", {"enable_thinking": False}, True),
+        ("siliconflow:deepseek-ai/DeepSeek-V3.2", {"enable_thinking": False}, False),
+        ("deepinfra:deepseek-ai/DeepSeek-V3.2", {}, True),
+        ("deepinfra:Qwen/Qwen3-32B", {}, True),
+        ("deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo", {}, True),
+    ],
+)
+def test_request_body_per_host(model, extra, json_mode):
+    """The exact body a player call posts to each host, prefix stripped."""
+    provider = BY_NAME[split_model(model)[0]]
+    server = Server((200, _ok(wire_model(model))))
+    resp = _client(provider, server).complete(
+        model=model, system=SYSTEM, messages=USER, max_tokens=200, temperature=0.8, json_only=True
+    )
+    req = server.requests[0]
+    assert str(req.url) == provider.base_url + "/chat/completions"
+    assert req.headers["authorization"] == "Bearer sk-test-secret"
+    body = json.loads(req.content)
+    expected = {
+        "model": wire_model(model),
+        "messages": [
+            {"role": "system", "content": "You are Thorin." + JSON_ONLY_SUFFIX},
+            {"role": "user", "content": USER[0]["content"]},
+        ],
+        "max_tokens": 200,
+        "temperature": 0.8,
+        **extra,
+    }
+    if json_mode:
+        expected["response_format"] = {"type": "json_object"}
+    assert body == expected
+    assert ":" not in body["model"]
+    for stray in ("thinking", "reasoning_effort", "max_completion_tokens"):
+        assert stray not in body
+    # the response keeps the full seat id, which is the price-row key
+    assert resp.model == model
+    assert has_price(resp.model)
+
+
+def test_compat_response_keeps_the_explicit_id_but_the_servers_bare_one():
+    p = BY_NAME["deepinfra"]
+    server = Server((200, _ok("deepseek-ai/DeepSeek-V3.2-0102")), (200, _ok("gpt-5.4-nano-2026")))
+    c = _client(p, server)
+    a = c.complete(model="deepinfra:deepseek-ai/DeepSeek-V3.2", system="s", messages=USER, max_tokens=5)
+    assert a.model == "deepinfra:deepseek-ai/DeepSeek-V3.2"
+    b = c.complete(model="gpt-5.4-nano", system="s", messages=USER, max_tokens=5)
+    assert b.model == "gpt-5.4-nano-2026"  # bare ids keep the server's string, as before
+
+
+def test_missing_host_keys_are_named():
+    for name, var in (("siliconflow", "SILICONFLOW_API_KEY"), ("deepinfra", "DEEPINFRA_API_KEY")):
+        with pytest.raises(LLMError) as ei:
+            OpenAICompatClient(BY_NAME[name], "")
+        assert var in str(ei.value)
+        r = RouterClient(env={k: "k" for k in ALL_KEYS if k != var})
+        with pytest.raises(LLMError) as ei:
+            r.complete(model=SAMPLE_MODEL[name], system="s", messages=USER, max_tokens=5)
+        assert var in str(ei.value) and name in str(ei.value)
 
 
 def test_json_response_format_only_when_asked():
@@ -180,6 +318,29 @@ def test_json_response_format_only_when_asked():
     ],
 )
 def test_compat_params_table(model, expect):
+    assert compat_params_for(model, temperature=0.8) == expect
+
+
+@pytest.mark.parametrize(
+    "model, expect",
+    [
+        # siliconflow: enable_thinking defaults to true on Qwen3 and DeepSeek-V3.1/V3.2
+        ("siliconflow:Qwen/Qwen3-32B", {"temperature": 0.8, "enable_thinking": False}),
+        ("siliconflow:Qwen/Qwen3-14B", {"temperature": 0.8, "enable_thinking": False}),
+        ("siliconflow:deepseek-ai/DeepSeek-V3.2", {"temperature": 0.8, "enable_thinking": False}),
+        ("siliconflow:deepseek-ai/DeepSeek-V3", {"temperature": 0.8}),
+        ("siliconflow:Qwen/Qwen3.6-27B", {"temperature": 0.8}),  # not on the enable_thinking list
+        # deepinfra: no documented thinking control for these ids -> plain sampling
+        ("deepinfra:Qwen/Qwen3-32B", {"temperature": 0.8}),
+        ("deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo", {"temperature": 0.8}),
+        # DeepSeek's own `thinking` field must not leak onto a host serving deepseek-ai/...
+        ("deepinfra:deepseek-ai/DeepSeek-V3.2", {"temperature": 0.8}),
+        # ...but the explicit form of a prefix-routed row keeps that row's rule
+        ("deepseek:deepseek-v4-flash", {"temperature": 0.8, "thinking": {"type": "disabled"}}),
+        ("openai:gpt-5.4-nano", {"reasoning_effort": "none"}),
+    ],
+)
+def test_compat_params_for_the_explicit_form(model, expect):
     assert compat_params_for(model, temperature=0.8) == expect
 
 
@@ -316,6 +477,54 @@ def test_router_unknown_prefix_names_the_known_ones():
     with pytest.raises(LLMError) as ei:
         _router().complete(model="llama-3", system="s", messages=USER, max_tokens=5)
     assert "llama-3" in str(ei.value) and "grok-" in str(ei.value)
+    assert "provider:model" in str(ei.value)
+
+
+def test_router_routes_the_explicit_form_and_strips_it_only_for_the_sdk():
+    a, sf, di, ds = Recorder("anthropic"), Recorder("siliconflow"), Recorder("deepinfra"), Recorder("deepseek")
+    r = _router(anthropic=a, siliconflow=sf, deepinfra=di, deepseek=ds)
+    out = {}
+    for m in (
+        "anthropic:claude-sonnet-5",
+        "siliconflow:deepseek-ai/DeepSeek-V3.2",  # NOT DeepSeek's API
+        "deepinfra:Qwen/Qwen3-32B",
+        "deepseek:deepseek-v4-flash",
+        "deepseek-v4-flash",
+    ):
+        out[m] = r.complete(model=m, system="s", messages=USER, max_tokens=5)
+    assert a.models == ["claude-sonnet-5"]  # the native SDK never sees the prefix
+    assert sf.models == ["siliconflow:deepseek-ai/DeepSeek-V3.2"]  # compat clients strip it themselves
+    assert di.models == ["deepinfra:Qwen/Qwen3-32B"]
+    assert ds.models == ["deepseek:deepseek-v4-flash", "deepseek-v4-flash"]
+    # every response carries the seat id as configured, so the ledger keys on it
+    for m, resp in out.items():
+        assert resp.model == m
+
+
+def test_router_unknown_provider_name_is_named_not_prefix_routed():
+    with pytest.raises(LLMError) as ei:
+        _router().complete(model="nope:gpt-5.4-nano", system="s", messages=USER, max_tokens=5)
+    msg = str(ei.value)
+    assert "unknown provider 'nope'" in msg and "deepinfra" in msg and "openai" in msg
+
+
+def test_router_builds_host_clients_with_their_own_keys():
+    built = []
+
+    def factory(provider, key):
+        built.append((provider.name, key))
+        return Recorder(provider.name)
+
+    r = RouterClient(env={"SILICONFLOW_API_KEY": "sk-sf", "DEEPINFRA_API_KEY": "sk-di"}, factory=factory)
+    r.complete(model="deepinfra:Qwen/Qwen3-32B", system="s", messages=USER, max_tokens=5)
+    r.complete(model="siliconflow:Qwen/Qwen3-32B", system="s", messages=USER, max_tokens=5)
+    r.complete(model="deepinfra:deepseek-ai/DeepSeek-V3.2", system="s", messages=USER, max_tokens=5)
+    assert built == [("deepinfra", "sk-di"), ("siliconflow", "sk-sf")]
+    for name in ("siliconflow", "deepinfra"):
+        from llm.router import _default_factory
+
+        c = _default_factory(BY_NAME[name], "k")
+        assert isinstance(c, OpenAICompatClient) and c.provider.name == name
 
 
 def test_router_missing_key_names_the_env_var():
@@ -378,6 +587,56 @@ def test_preflight_unpriced_model_fails_unless_allowed():
     RouterClient(env=env).preflight({"player:pc_3": "grok-99-experimental"}, allow_unpriced=True)
 
 
+def test_all_keys_includes_both_host_vars():
+    assert {"SILICONFLOW_API_KEY", "DEEPINFRA_API_KEY"} <= set(ALL_KEYS)
+
+
+def test_preflight_passes_host_seats_with_keys_and_prices():
+    RouterClient(env=ALL_KEYS).preflight(
+        {
+            "dm": "claude-sonnet-5",
+            "player:pc_1": "siliconflow:Qwen/Qwen3-32B",
+            "player:pc_2": "deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "player:pc_3": "deepinfra:deepseek-ai/DeepSeek-V3.2",
+            "player:pc_4": "siliconflow:deepseek-ai/DeepSeek-V3",
+        }
+    )
+
+
+def test_preflight_namespaced_id_without_a_provider_says_which_form_and_hosts():
+    with pytest.raises(LLMError) as ei:
+        RouterClient(env=ALL_KEYS).preflight({"player:pc_1": "Qwen/Qwen3-32B"})
+    msg = str(ei.value)
+    assert "player:pc_1" in msg and "'Qwen/Qwen3-32B'" in msg
+    assert "provider:model" in msg
+    assert "siliconflow:Qwen/Qwen3-32B" in msg and "deepinfra:Qwen/Qwen3-32B" in msg
+    assert "hosts: siliconflow, deepinfra" in msg
+    # a bare deepseek-ai/... id must not silently become DeepSeek's own API
+    with pytest.raises(LLMError) as ei:
+        RouterClient(env=ALL_KEYS).preflight({"player:pc_2": "deepseek-ai/DeepSeek-V3.2"})
+    assert "deepinfra:deepseek-ai/DeepSeek-V3.2" in str(ei.value)
+
+
+def test_preflight_missing_host_keys_names_both_vars_at_once():
+    env = {k: "k" for k in ALL_KEYS if k not in ("SILICONFLOW_API_KEY", "DEEPINFRA_API_KEY")}
+    with pytest.raises(LLMError) as ei:
+        RouterClient(env=env).preflight(
+            {"player:pc_1": "siliconflow:Qwen/Qwen3-32B", "player:pc_2": "deepinfra:Qwen/Qwen3-32B"}
+        )
+    msg = str(ei.value)
+    assert "player:pc_1" in msg and "SILICONFLOW_API_KEY" in msg
+    assert "player:pc_2" in msg and "DEEPINFRA_API_KEY" in msg
+
+
+def test_preflight_unpriced_host_model_is_refused_by_its_full_key():
+    with pytest.raises(LLMError) as ei:
+        RouterClient(env=ALL_KEYS).preflight({"player:pc_1": "deepinfra:meta-llama/Llama-3.3-70B-Instruct"})
+    assert "no price row" in str(ei.value) and "deepinfra:meta-llama/Llama-3.3-70B-Instruct" in str(ei.value)
+    # case matters: the part after the colon is the host's id verbatim
+    with pytest.raises(LLMError):
+        RouterClient(env=ALL_KEYS).preflight({"player:pc_1": "deepinfra:qwen/qwen3-32b"})
+
+
 def test_preflight_reports_every_problem_at_once():
     with pytest.raises(LLMError) as ei:
         RouterClient(env={}).preflight({"dm": "claude-sonnet-5", "player:pc_1": "llama-3"})
@@ -401,6 +660,43 @@ def test_cache_read_price_uses_provider_rate_when_it_is_not_a_tenth():
     assert cache_read_price_for("grok-4.6") == 0.5
     assert cache_read_price_for("gpt-5.4-nano") == pytest.approx(PRICES["gpt-5.4-nano"][0] * 0.1)
     assert cache_read_price_for("claude-sonnet-5") == pytest.approx(0.2)
+
+
+def test_price_lookup_by_the_full_provider_model_key():
+    assert has_price("deepinfra:Qwen/Qwen3-32B") and has_price("siliconflow:Qwen/Qwen3-32B")
+    assert price_for("deepinfra:Qwen/Qwen3-32B") == (0.08, 0.28)
+    assert price_for("siliconflow:Qwen/Qwen3-32B") == (0.14, 0.57)
+    assert price_for("deepinfra:deepseek-ai/DeepSeek-V3.2") == (0.26, 0.38)
+    assert price_for("siliconflow:deepseek-ai/DeepSeek-V3.2") == (0.27, 0.42)
+    assert price_for("deepinfra:meta-llama/Llama-3.3-70B-Instruct-Turbo") == (0.10, 0.32)
+    # the bare host id is not a key: it is the seat id that is priced
+    assert not has_price("Qwen/Qwen3-32B") and not has_price("deepseek-ai/DeepSeek-V3.2")
+    # the host key never bleeds into DeepSeek's own rows or vice versa
+    assert price_for("deepinfra:deepseek-ai/DeepSeek-V3.2") != price_for("deepseek-v4-flash")
+    # a dated/suffixed host id still prices by the boundary-prefix rule
+    # A dated or suffixed host variant has no verified rate of its own and must
+    # NOT inherit the base row (Codex round 3): host keys match exactly.
+    assert not has_price("deepinfra:Qwen/Qwen3-32B-2026")
+    # V3.2 is its own row, longer than the V3 row it also prefix-matches
+    assert price_for("siliconflow:deepseek-ai/DeepSeek-V3") == (0.25, 1.0)
+
+
+def test_cache_read_price_for_hosts():
+    assert cache_read_price_for("deepinfra:deepseek-ai/DeepSeek-V3.2") == 0.13
+    # siliconflow reports no cache-hit usage; its rate is the default 0.1x
+    assert cache_read_price_for("siliconflow:deepseek-ai/DeepSeek-V3.2") == pytest.approx(0.027)
+
+
+def test_ledger_prices_a_host_seat_by_its_full_key():
+    p = BY_NAME["deepinfra"]
+    usage = {"prompt_tokens": 100, "completion_tokens": 20, "prompt_tokens_details": {"cached_tokens": 30}}
+    server = Server((200, _ok("deepseek-ai/DeepSeek-V3.2", usage=usage)))
+    resp = _client(p, server).complete(
+        model="deepinfra:deepseek-ai/DeepSeek-V3.2", system="s", messages=USER, max_tokens=50
+    )
+    assert (resp.input_tokens, resp.cache_read_tokens, resp.output_tokens) == (70, 30, 20)
+    usd = Ledger().add("player:pc_1", resp)
+    assert usd == pytest.approx((70 * 0.26 + 20 * 0.38 + 30 * 0.13) / 1e6)
 
 
 def test_every_sample_model_and_every_default_is_priced():
@@ -461,6 +757,22 @@ def test_per_seat_model_reaches_the_player_agent_and_snapshot(cfg):
     assert game.ledger.by_role["player:pc_2"]["calls"] > 0
 
 
+def test_host_seat_reaches_the_snapshot_and_ledger_in_full_form(cfg):
+    model = "deepinfra:Qwen/Qwen3-32B"
+    c2 = _cfg_with_seat(cfg, model=model)
+    assert c2.seat_models()["player:pc_2"] == model
+    client = SeatRecorder(cfg.seed)
+    game = Game(c2, client, EventBus(), engine=eng)
+    game.run()
+    assert game.status == "finished"
+    assert game.players["pc_2"].model == model
+    assert model in client.models
+    snap = game.snapshot()
+    assert snap["models"]["players"]["pc_2"] == model  # the seat id as configured, prefix and all
+    row = game.ledger.by_role["player:pc_2"]
+    assert row["calls"] > 0 and row["usd"] > 0
+
+
 def test_seat_override_does_not_change_the_mock_transcript(cfg):
     """Same seed, same play — only the `cost` lines move, because pc_2 is now
     priced at grok-4.3's rate rather than Haiku's (the ledger doing its job)."""
@@ -519,6 +831,28 @@ def test_factory_live_mode_fails_fast_on_missing_key(monkeypatch):
     assert "MISTRAL_API_KEY" in str(ei.value) and "DND_SIM_MOCK=1" in str(ei.value)
 
 
+def test_factory_live_mode_names_the_host_key_and_the_form(monkeypatch):
+    from web.factory import default_game_factory
+
+    for var, val in ALL_KEYS.items():
+        monkeypatch.setenv(var, val)
+    monkeypatch.delenv("DND_SIM_MOCK", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY")
+    raw = _live_config()
+    raw["party"][0]["model"] = "siliconflow:Qwen/Qwen3-32B"
+    raw["party"][1]["model"] = "Qwen/Qwen3-32B"
+    with pytest.raises(RuntimeError) as ei:
+        default_game_factory(raw, lambda _e: None)
+    msg = str(ei.value)
+    assert "player:pc_1" in msg and "SILICONFLOW_API_KEY" in msg
+    assert "player:pc_2" in msg and "provider:model" in msg and "deepinfra:Qwen/Qwen3-32B" in msg
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "k")
+    raw["party"][1]["model"] = "deepinfra:Qwen/Qwen3-32B"
+    game, _bus = default_game_factory(raw, lambda _e: None)  # builds; never runs
+    assert isinstance(game.client, RouterClient)
+    assert game.cfg.seat_models()["player:pc_2"] == "deepinfra:Qwen/Qwen3-32B"
+
+
 def test_factory_mock_mode_ignores_keys_and_prices(monkeypatch):
     from web.factory import default_game_factory
 
@@ -573,3 +907,121 @@ def test_cli_mock_run_is_byte_identical_across_runs_and_seat_overrides(tmp_path,
     # a seat override changes only the ledger lines (pc_3 priced as deepseek)
     assert sans_cost(a) == sans_cost(c)
     assert len(a.splitlines()) == len(c.splitlines())
+
+
+# -- explicit provider:model on a prefix-routed provider prices as the bare id --
+
+
+@pytest.mark.parametrize(
+    "explicit,bare",
+    [
+        ("openai:gpt-5.4-nano", "gpt-5.4-nano"),
+        ("deepseek:deepseek-v4-flash", "deepseek-v4-flash"),
+        ("anthropic:claude-sonnet-5", "claude-sonnet-5"),
+    ],
+)
+def test_explicit_form_on_prefix_provider_prices_like_bare_id(explicit, bare):
+    from llm.cost import cache_read_price_for, has_price, price_for
+
+    assert has_price(bare)
+    assert has_price(explicit)
+    assert price_for(explicit) == price_for(bare)
+    assert cache_read_price_for(explicit) == cache_read_price_for(bare)
+
+
+def test_host_qualified_keys_do_not_fall_back_to_bare_rows():
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    # Priced only under its host key: the bare id must not answer for it.
+    assert has_price("deepinfra:deepseek-ai/DeepSeek-V3.2")
+    assert not has_price("deepseek-ai/DeepSeek-V3.2")
+    # A host id with no row stays unpriced even though DeepSeek's own API
+    # prices a similarly named model.
+    assert not has_price("deepinfra:deepseek-v4-flash")
+    assert price_for("deepinfra:deepseek-v4-flash") == _DEFAULT_PRICE
+
+
+def test_unknown_provider_prefix_never_prices():
+    from llm.cost import has_price
+
+    assert not has_price("nosuch:gpt-5.4-nano")
+
+
+@pytest.mark.parametrize(
+    "mismatched",
+    ["anthropic:gpt-5.4-nano", "openai:deepseek-v4-flash", "deepseek:claude-sonnet-5"],
+)
+def test_explicit_provider_that_does_not_route_the_bare_id_is_unpriced(mismatched):
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    assert not has_price(mismatched)
+    assert price_for(mismatched) == _DEFAULT_PRICE
+
+
+@pytest.mark.parametrize(
+    "unpriced_variant",
+    [
+        "siliconflow:deepseek-ai/DeepSeek-V3.1",
+        "siliconflow:deepseek-ai/DeepSeek-V3-0324",
+        "deepinfra:deepseek-ai/DeepSeek-V3.2-Exp",
+        "deepinfra:Qwen/Qwen3-32B-Instruct",
+    ],
+)
+def test_host_qualified_keys_match_exactly_never_by_prefix(unpriced_variant):
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    assert not has_price(unpriced_variant)
+    assert price_for(unpriced_variant) == _DEFAULT_PRICE
+
+
+def test_explicit_prefix_provider_still_honours_dated_ids():
+    from llm.cost import has_price, price_for
+
+    # Dated Anthropic ids keep boundary matching through the bare-id fallback.
+    assert has_price("anthropic:claude-haiku-4-5-20251001")
+    assert price_for("anthropic:claude-haiku-4-5-20251001") == price_for("claude-haiku-4-5-20251001")
+
+
+def test_unpriced_host_id_that_prefixes_a_priced_one_gets_the_default_rate():
+    from llm.cost import _DEFAULT_PRICE, cache_read_price_for, has_price, price_for
+
+    m = "deepinfra:meta-llama/Llama-3.3-70B-Instruct"  # only the -Turbo id has a row
+    assert not has_price(m)
+    assert price_for(m) == _DEFAULT_PRICE
+    assert cache_read_price_for(m) == _DEFAULT_PRICE[0] * 0.1
+
+
+def test_bare_undated_id_still_borrows_its_dated_row():
+    from llm.cost import price_for
+
+    assert price_for("claude-haiku-4-5") == price_for("claude-haiku-4-5-20251001")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["DeepInfra:Qwen/Qwen3-32B", "deepinfra: Qwen/Qwen3-32B ", " DEEPINFRA :Qwen/Qwen3-32B"],
+)
+def test_host_price_lookup_uses_the_normalised_key(spelling):
+    from llm.cost import has_price, price_for
+
+    assert has_price(spelling)
+    assert price_for(spelling) == price_for("deepinfra:Qwen/Qwen3-32B")
+
+
+def test_host_price_lookup_keeps_case_after_the_colon():
+    from llm.cost import has_price
+
+    assert not has_price("deepinfra:qwen/qwen3-32b")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["siliconflow: Qwen/Qwen3-32B", "siliconflow :Qwen/Qwen3-32B", "SiliconFlow:Qwen/Qwen3-32B "],
+)
+def test_compat_rules_match_the_normalised_host_spelling(spelling):
+    from llm.providers import compat_params_for
+
+    assert compat_params_for(spelling, temperature=0.8) == compat_params_for(
+        "siliconflow:Qwen/Qwen3-32B", temperature=0.8
+    )
+    assert compat_params_for(spelling, temperature=0.8)["enable_thinking"] is False
