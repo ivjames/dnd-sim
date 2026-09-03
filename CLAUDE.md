@@ -13,19 +13,18 @@ overwritten by it; **this** file is the site's own, and everything below is
 about this site rather than about the platform. For the box itself, read the
 `ivjames/lab980.com` repo's `CLAUDE.md`.
 
-## Open decisions
+## Decisions
 
-This repo's own runbook (`deploy/INSTALL.md`, `ecosystem.config.js`) and the
-lab980 conventions disagreed on three points. Two were decided 2026-09-03 —
-the checkout dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this
-box) and the port is **8071** (first free in the 8060+ range on the droplet) —
-and the files now agree. The third, **where the API key lives**
-(`/etc/environment` vs a local `.env`), is not resolved here; `DEPLOY.md`
-"Open decisions (conflicts with lab980 conventions)" lays out both sides.
-Until it is decided,
-`deploy/INSTALL.md` is the authored runbook and `DEPLOY.md`'s bring-up block
-is the conventions-shaped alternative. Don't quietly pick a side in a code
-change; make it a decision.
+This repo's own runbook and the lab980 conventions used to disagree on three
+points. All three are decided (2026-09-03) and the files agree: the checkout
+dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this box), the port
+is **8071** (first free in the 8060+ range on the droplet), and the key lives
+in **`/etc/environment`** — the known-key store on this box — from where
+`dndsim deploy` copies it once into **`/var/www/dndsim/.env`**, which
+`run.sh` sources on every start. pm2 is launched with the key unset so its
+dump never carries it. There is no hand runbook: `deploy/INSTALL.md` is a
+pointer, `DEPLOY.md` is the doc, and `bin/dndsim` does the work. Don't
+reopen these in a code change; if one has to change, make it a decision.
 
 ## Shape
 
@@ -47,28 +46,49 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
   carry `proxy_buffering off`, `proxy_cache off`, hour-long
   `proxy_read_timeout`/`proxy_send_timeout`, and `gzip off` (the reference block
   is `deploy/nginx-dndsim.conf`), or the browser sees nothing until the game
-  ends. This survives whichever vhost path open decision picks.
-- Config is process environment: `PORT`, `HOST`, `ANTHROPIC_API_KEY`,
-  `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides (full table in
-  README and `DEPLOY.md`). Nothing reads a `.env` file (open decision 3).
-  State is SQLite at `data/dndsim.sqlite3`; `data/` and `.env` are gitignored
-  and survive a deploy's hard reset.
-- vhost: `/etc/nginx/sites-available/dndsim.lab980.com` if `provision-site`
-  writes it; `deploy/nginx-dndsim.conf` is the hand-written HTTP-first version.
+  ends. `provision-site`'s generic vhost says the opposite, so `dndsim
+  setup` rewrites the proxied location with a marker-tagged block and
+  repairs it on every run; `dndsim status` says whether it is present.
+- Config is process environment, loaded from `./.env` by `run.sh` (`set -a;
+  . ./.env; set +a`, only if the file exists) before it execs python — so
+  pm2-managed and hand runs read the same file. Keys: `PORT`, `HOST`,
+  `ANTHROPIC_API_KEY`, `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL`
+  overrides (full table in README and `DEPLOY.md`). The app itself reads
+  `os.environ` only; there is no `python-dotenv`. `dndsim deploy` writes
+  `.env` (mode 600) and adopts the key into it from `/etc/environment`. State
+  is SQLite at `data/dndsim.sqlite3`; `data/`, `.env` and `.venv/` are
+  gitignored and survive a deploy's hard reset.
+- vhost: `/etc/nginx/sites-available/dndsim.lab980.com`, written by
+  `provision-site` (via `dndsim setup`) or, without it, from
+  `deploy/nginx-dndsim.conf`. `dndsim setup` keeps the marker-tagged SSE
+  block in it either way.
 
 ## Deploying
 
-On the droplet, as root:
+On the droplet, as root. First time, with `ANTHROPIC_API_KEY` already in
+`/etc/environment`:
 
 ```bash
-dndsim deploy      # fetch + reset to origin/main, pip install, pm2 restart dnd-sim, probe /api/health
-dndsim status      # HEAD, pm2 state, local + public /api/health probe, cert days
+git clone https://github.com/ivjames/dnd-sim /var/www/dndsim \
+  && ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim \
+  && dndsim deploy
+```
+
+Every time after:
+
+```bash
+dndsim deploy      # reset to origin/main, venv + pip, .env (adopt key), vhost via
+                   # setup if missing, pm2 start/restart (key unset), save if online, probe
+dndsim setup       # once, idempotent: provision-site (or HTTP-only fallback vhost),
+                   # SSE block in the vhost, pm2-root check; --dry-run shows the diff
+dndsim status      # HEAD, pm2, .env/key presence, upstream family, vhost + SSE block,
+                   # local + public /api/health, cert days
 dndsim logs        # tail this app's pm2 logs
 ```
 
 A restart kills any in-flight game (the app marks it `stopped` on boot; the
-transcript stays readable) — deploy between games if one matters. Full
-runbook, including first-time bring-up and the env keys: `DEPLOY.md`.
+transcript stays readable) — deploy between games if one matters. What each
+step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
 
 ## Things worth knowing
 

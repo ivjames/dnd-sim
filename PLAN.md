@@ -32,7 +32,7 @@ web  →  orchestrator  →  agents  →  llm
 - `agents/` — prompt construction and output parsing for DM and Players. Knows engine types; never mutates state.
 - `orchestrator/` — game loop (scenes, turns), memory/summaries, event bus, controls.
 - `web/` — Flask, SSE, SQLite, static UI.
-- `deploy/` — PM2 ecosystem, nginx vhost (HTTP-only; certbot after DNS), install notes.
+- `deploy/` — fallback nginx vhost (HTTP-only; `dndsim setup` uses it when `provision-site` is absent) and a pointer to DEPLOY.md.
 
 `CONTRACTS.md` is the binding interface spec. Builders work in parallel against it. If a builder must change a contract, they record the change at the bottom of `CONTRACTS.md` under "Amendments" with rationale.
 
@@ -46,7 +46,7 @@ web  →  orchestrator  →  agents  →  llm
 ## Run modes
 - `python -m orchestrator.cli --config examples/goblin_ambush.json --mock --seed 42` — headless, mock LLM, prints events. This is the integration test.
 - `python -m orchestrator.cli --config ... --live` — real API.
-- `python -m web.app` — Flask, reads `ANTHROPIC_API_KEY` from env (`/etc/environment` on lab980). Mock mode via `DND_SIM_MOCK=1`.
+- `python -m web.app` — Flask, reads `ANTHROPIC_API_KEY` from env (on lab980: `.env` in the app dir, sourced by `run.sh`; `dndsim deploy` adopts it there from `/etc/environment`). Mock mode via `DND_SIM_MOCK=1`.
 
 ## Build plan (Opus builders, parallel)
 | Task | Owner | Files |
@@ -59,6 +59,6 @@ web  →  orchestrator  →  agents  →  llm
 Builders must not edit files outside their ownership. Cross-layer needs go through CONTRACTS.md types; if the other side isn't built yet, code against the contract and stub in tests.
 
 ## Deploy (lab980 protocol)
-1. `git clone` to `/var/www/dndsim` (every site on the box lives under `/var/www/<stub>`), `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
-2. `pm2 start ecosystem.config.js` (process `dnd-sim`, port 8071, `ANTHROPIC_API_KEY` from `/etc/environment`).
-3. nginx: HTTP-only vhost for `dndsim.lab980.com` → `127.0.0.1:8071`, SSE-safe (`proxy_buffering off`, long `proxy_read_timeout`). Point DNS. Then `certbot --nginx -d dndsim.lab980.com`. Never ship SSL blocks before certbot has run.
+Decided 2026-09-03: checkout `/var/www/dndsim`, port 8071, key in `/etc/environment` adopted into `/var/www/dndsim/.env` by the CLI. No hand runbook — on the droplet, as root:
+1. `git clone https://github.com/ivjames/dnd-sim /var/www/dndsim && ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim`
+2. `dndsim deploy` — venv + pip, `.env` (seeds PORT/HOST/DND_SIM_DB, copies `ANTHROPIC_API_KEY` from `/etc/environment`), vhost via `dndsim setup` (`provision-site dndsim ivjames/dnd-sim --port 8071`, DNS + certbot; or the HTTP-only `deploy/nginx-dndsim.conf` fallback), the SSE block (`proxy_buffering off`, hour-long `proxy_read_timeout`, `gzip off`) kept in the vhost, pm2 process `dnd-sim` started under `env -u ANTHROPIC_API_KEY` (run.sh sources `.env`), probe. Same command for every deploy after. Details: `DEPLOY.md`.

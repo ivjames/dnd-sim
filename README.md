@@ -33,7 +33,7 @@ web  →  orchestrator  →  agents  →  llm
 | `agents/` | Prompt construction and output parsing for DM and players. |
 | `orchestrator/` | Game loop, scenes, turns, memory, event bus, controls. |
 | `web/` | Flask app, SQLite transcripts, SSE stream, static spectator UI. |
-| `deploy/` | nginx vhost + install notes. |
+| `deploy/` | Fallback nginx vhost (used by `dndsim setup`); install notes point at DEPLOY.md. |
 
 Everything the UI and the LLM layer see from a resolved turn is an `Event`
 (`seq, round, kind, actor, text, data`). Events are appended to SQLite and
@@ -75,7 +75,7 @@ Tests:
 |---|---|---|
 | `PORT` | `8071` | Listen port. |
 | `HOST` | `127.0.0.1` | Bind address. Keep it loopback; nginx fronts it. |
-| `ANTHROPIC_API_KEY` | — | Required for live mode. On lab980 it lives in `/etc/environment`. |
+| `ANTHROPIC_API_KEY` | — | Required for live mode. On lab980, `dndsim deploy` copies it from `/etc/environment` into `.env`, which `run.sh` sources. |
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
 | `DND_SIM_DB` | `./data/dndsim.sqlite3` | SQLite transcript store. |
 | `DND_SIM_EXAMPLES` | `./examples` | Where `/api/presets` reads scenarios from. |
@@ -113,10 +113,11 @@ prompt-cached, and summaries are written by the cheap model.
 
 ## Deployment
 
-See [deploy/INSTALL.md](deploy/INSTALL.md). Short version: PM2 process `dnd-sim`
-on 127.0.0.1:8071, nginx vhost proxying `dndsim.lab980.com` with
-`proxy_buffering off` (SSE dies without it), HTTP first, `certbot --nginx` only
-after DNS resolves.
+See [DEPLOY.md](DEPLOY.md). Short version: on the lab980 droplet, `git clone`
+to `/var/www/dndsim`, symlink `bin/dndsim` onto PATH, and `dndsim deploy` does
+the rest — venv, `.env` (key adopted from `/etc/environment`), vhost with the
+SSE block (`proxy_buffering off`; the stream dies without it), pm2 process
+`dnd-sim` on 127.0.0.1:8071 — idempotently, every time.
 
 ## Attribution and licence
 

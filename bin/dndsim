@@ -3,24 +3,40 @@
 #
 # A proxied app site: nginx fronts a pm2-managed Python/Flask process on
 # 127.0.0.1:8071. The pm2 process is `dnd-sim` (ecosystem.config.js — not the
-# stub), which runs ./run.sh, which execs .venv/bin/python -m web.app. No
-# Node, no npm, no build step: the install is pip into .venv. Bring-up is
-# `provision-site` (lab980's CLAUDE.md) or deploy/INSTALL.md — DEPLOY.md's
-# "Open decisions" says which; this script owns everything after that:
+# stub), which runs ./run.sh, which sources ./.env and execs
+# .venv/bin/python -m web.app. No Node, no npm, no build step: the install is
+# pip into .venv. There is no hand runbook: this script carries the whole
+# bring-up and every deploy, idempotently.
 #
-#   dndsim deploy    git fetch/reset -> pip install -r requirements.txt -> pm2 restart -> probe
+#   dndsim deploy    sync to origin/main, venv + pip, .env (adopt the key),
+#                    vhost if missing (-> setup), pm2 start/restart, probe
+#   dndsim setup     box-outward half, once: provision-site (DNS, vhost, TLS)
+#                    or the HTTP-only vhost fallback; SSE block in the vhost;
+#                    pm2 boot-hook check. Idempotent; deploy calls it as needed.
 #   dndsim restart   pm2 restart + probe, no code change
 #   dndsim logs      tail the pm2 logs for this app
-#   dndsim status    HEAD, pm2 state, local + public /api/health probe, cert days
+#   dndsim status    HEAD, pm2 state, .env/key presence, upstream family,
+#                    vhost + SSE block, local + public /api/health, cert days
+#
+# Where the key lives (decided 2026-09-03): ANTHROPIC_API_KEY is kept in
+# /etc/environment, the known-key store on this box. The app reads it from
+# ./.env, which run.sh sources. `deploy` copies it across once — parses the
+# /etc/environment line, appends ANTHROPIC_API_KEY=... to .env (mode 600),
+# never prints it, never puts it in any argv — and launches pm2 under
+# `env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN`, so pm2's dump.pm2 never carries
+# the root shell's copy. The process gets it from run.sh, not from pm2.
 #
 # Env overrides:
-#   DNDSIM_FQDN     default dndsim.lab980.com
-#   DNDSIM_BRANCH   default main
-#   DNDSIM_PORT     default 8071
+#   DNDSIM_FQDN         default dndsim.lab980.com
+#   DNDSIM_BRANCH       default main
+#   DNDSIM_PORT         default 8071
+#   DNDSIM_KEY_SOURCE   default /etc/environment  (where the key is adopted from)
+#   DNDSIM_ENV_FILE     default <app dir>/.env    (where it is adopted to)
 #
 # The app dir is wherever this script's checkout lives (/var/www/dndsim) —
 # derived from the script's own path, so the /usr/local/bin symlink resolves
-# back here.
+# back here. Sourcing this file (bash tests) defines the functions and stops
+# before the dispatch.
 set -euo pipefail
 
 SELF="$(readlink -f "$0")"
@@ -28,9 +44,18 @@ ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
 PORT="${DNDSIM_PORT:-8071}"
+KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
+ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
+REPO="ivjames/dnd-sim"
 APP="dnd-sim"                 # pm2 process name, from ecosystem.config.js
+ECOSYSTEM="ecosystem.config.js"
 PY=".venv/bin/python"         # relative to $ROOT; run.sh picks the same one
 HEALTH="/api/health"          # {"ok":true,"mock":bool,"games_running":n}
+NGINX_AVAIL="${NGINX_AVAIL:-/etc/nginx/sites-available}"
+NGINX_ENABLED="${NGINX_ENABLED:-/etc/nginx/sites-enabled}"
+BACKUP_ROOT="${BACKUP_ROOT:-/var/backups}"
+SSE_BEGIN="# dndsim-sse begin (managed by dndsim setup; do not edit between markers)"
+SSE_END="# dndsim-sse end"
 
 c_blue=$'\033[1;34m'; c_yellow=$'\033[1;33m'; c_red=$'\033[1;31m'; c_off=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
@@ -42,18 +67,116 @@ usage() {
 dndsim — operate dndsim.lab980.com (Python/Flask app behind nginx, pm2 process dnd-sim).
 
 Usage:
-  dndsim deploy [--no-install]   fetch + reset to origin/main, pip install, pm2 restart, probe
-  dndsim restart                 pm2 restart + probe
+  dndsim deploy [--no-install]   sync to origin/main, venv + pip, .env (adopts
+                                 ANTHROPIC_API_KEY from /etc/environment), vhost
+                                 if missing (runs setup), pm2 start/restart, probe
+  dndsim setup [--dry-run]       once per box, idempotent: DNS + vhost + TLS via
+                                 provision-site (or the HTTP-only vhost fallback),
+                                 SSE block in the vhost, pm2 boot-hook check
+  dndsim restart                 pm2 restart + probe (re-reads .env)
   dndsim logs [-n N]             tail pm2 logs
-  dndsim status                  HEAD + pm2 + local/public /api/health probe + cert
+  dndsim status                  HEAD, pm2, .env/key presence, upstream family,
+                                 vhost + SSE block, local/public /api/health, cert
 
-Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071).
+First time on the droplet (as root), the whole bring-up is:
+  git clone https://github.com/ivjames/dnd-sim /var/www/dndsim
+  ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim
+  dndsim deploy
+
+The one hand step is having ANTHROPIC_API_KEY in /etc/environment beforehand.
+
+Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
+     DNDSIM_KEY_SOURCE (default /etc/environment), DNDSIM_ENV_FILE (default ./.env).
 USAGE
 }
 
+need_root() { [ "$(id -u)" -eq 0 ] || die "run as root."; }
+
+# ---------------------------------------------------------------------------
+# .env handling. The key is read from KEY_SOURCE and written to ENV_FILE with
+# shell builtins only (read/printf), so it never appears in any process's
+# argv — /proc/<pid>/cmdline is world-readable, environ is not. Nothing here
+# logs a value. `env_file_get` is the one parser; tests source this file and
+# point it at temp files via DNDSIM_KEY_SOURCE / DNDSIM_ENV_FILE.
+# ---------------------------------------------------------------------------
+env_file_get() {  # $1=file $2=KEY -> value on stdout ('' if absent). Never echo the result.
+  local file="$1" key="$2" line val found=0
+  [ -r "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"                 # ltrim
+    case "$line" in ''|'#'*) continue;; esac
+    case "$line" in
+      export[[:space:]]*) line="${line#export}"; line="${line#"${line%%[![:space:]]*}"}";;
+    esac
+    case "$line" in "$key="*) ;; *) continue;; esac
+    val="${line#*=}"
+    case "$val" in
+      \"*\") val="${val#\"}"; val="${val%\"}";;              # "quoted"
+      \'*\') val="${val#\'}"; val="${val%\'}";;              # 'quoted'
+      *)     val="${val%"${val##*[![:space:]]}"}";;          # bare: rtrim
+    esac
+    found=1                                                  # last one wins, like a shell
+  done < "$file"
+  [ "$found" -eq 1 ] && printf '%s' "$val"
+  return 0
+}
+
+env_file_has() { [ -n "$(env_file_get "$1" "$2")" ]; }      # present AND non-empty
+
+env_file_append() {  # $1=file $2=KEY $3=value — appends KEY=value; single-quotes anything shell-special
+  local file="$1" key="$2" val="$3"
+  if [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ]; then printf '\n' >> "$file"; fi
+  case "$val" in
+    *[!A-Za-z0-9_./:@+=-]*) val="'${val//\'/\'\\\'\'}'";;
+  esac
+  printf '%s=%s\n' "$key" "$val" >> "$file"
+}
+
+env_file_seed() {  # $1=file $2=KEY $3=default — write only if absent/empty
+  if ! env_file_has "$1" "$2"; then env_file_append "$1" "$2" "$3"; log "$1: seeded $2=$3"; fi
+}
+
+ensure_env() {
+  local envf="$ENV_FILE"
+  if [ "$envf" = "$ROOT/.env" ]; then
+    git -C "$ROOT" check-ignore -q .env || die ".env is not gitignored in $ROOT — refusing to write a key into a tracked path."
+  fi
+  [ -e "$envf" ] || : > "$envf"
+  chmod 600 "$envf"
+  env_file_seed "$envf" PORT "$PORT"
+  env_file_seed "$envf" HOST "127.0.0.1"
+  env_file_seed "$envf" DND_SIM_DB "$ROOT/data/dndsim.sqlite3"
+  if env_file_has "$envf" ANTHROPIC_API_KEY; then
+    log "$envf: ANTHROPIC_API_KEY present"
+  else
+    local key
+    key="$(env_file_get "$KEY_SOURCE" ANTHROPIC_API_KEY)"
+    if [ -n "$key" ]; then
+      env_file_append "$envf" ANTHROPIC_API_KEY "$key"
+      unset key
+      log "$envf: adopted ANTHROPIC_API_KEY from $KEY_SOURCE"
+    else
+      warn "no ANTHROPIC_API_KEY in $envf or $KEY_SOURCE — live games will fail (mock mode still works)."
+      warn "put it in $KEY_SOURCE (ANTHROPIC_API_KEY=sk-ant-...) and re-run: dndsim deploy"
+    fi
+  fi
+  chmod 600 "$envf"
+}
+
+# ---------------------------------------------------------------------------
+# pm2. Every start/restart goes through pm2_clean: pm2 snapshots the launching
+# shell's environment into ~/.pm2/dump.pm2, and a root login shell on this box
+# has ANTHROPIC_API_KEY from /etc/environment. The app gets the key from
+# run.sh sourcing .env instead, so pm2 never needs to see it.
+# ---------------------------------------------------------------------------
+pm2_clean() { env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN pm2 "$@"; }
+
 # pm2's own exit codes are not reliable for "is it registered", so ask jlist.
 pm2_state() {
-  pm2 jlist 2>/dev/null \
+  local jl
+  jl="$(pm2 jlist 2>/dev/null || true)"      # no pm2 / daemon down -> '' -> "not registered"
+  printf '%s' "$jl" \
     | python3 -c "import json,sys
 try: procs=json.load(sys.stdin)
 except Exception: procs=[]
@@ -65,6 +188,20 @@ print('%s  mode=%s  restarts=%s  uptime-since=%s' % (
     || printf 'unknown (pm2 not readable)\n'
 }
 
+save_if_online() {
+  # pm2 save overwrites the dump with whatever is running right now, so a save
+  # while this app is down persists a dump that omits it and the next reboot
+  # comes back short. Save only when it is online; otherwise say so and leave
+  # the previous dump alone.
+  case "$(pm2_state)" in
+    online*) pm2 save;;
+    *) warn "$APP is not online — skipping pm2 save so the dump keeps its last good state";;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
 probe() {
   # Local first, then public: a healthy app behind a broken vhost and a dead
   # app behind a fine vhost look identical from the outside, and telling them
@@ -79,20 +216,190 @@ probe() {
   case "${lbody:-}" in *'"mock":true'*) warn "the app is running in MOCK mode (DND_SIM_MOCK=1) — no real LLM calls";; esac
 }
 
-save_if_online() {
-  # pm2 save overwrites the dump with whatever is running right now, so a save
-  # while this app is down persists a dump that omits it and the next reboot
-  # comes back short. Save only when it is online; otherwise say so and leave
-  # the previous dump alone.
-  case "$(pm2_state)" in
-    online*) pm2 save;;
-    *) warn "$APP is not online — skipping pm2 save so the dump keeps its last good state";;
-  esac
+upstream_family() {
+  # Which loopback family answers on the port, and which one the vhost
+  # proxies to. casino's lesson: a process bound to [::1] behind a vhost that
+  # says `localhost` works by accident, and `127.0.0.1` breaks it. This app
+  # binds HOST=127.0.0.1; the vhost should say the same.
+  local v4=no v6=no target="" vhost
+  curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$PORT$HEALTH" && v4=yes
+  curl -s -o /dev/null --max-time 3 "http://[::1]:$PORT$HEALTH" && v6=yes
+  if vhost="$(vhost_path)"; then
+    target="$(grep -hoE '^[[:space:]]*proxy_pass[[:space:]]+[^;]+' "$vhost" | head -1 | awk '{print $2}')"
+  fi
+  printf '127.0.0.1:%s=%s  [::1]:%s=%s  vhost proxy_pass -> %s\n' "$PORT" "$v4" "$PORT" "$v6" "${target:-none}"
+  case "$target" in *localhost*) warn "vhost proxies to 'localhost' — pin it to 127.0.0.1:$PORT (family is otherwise resolver-dependent)";; esac
+}
+
+# ---------------------------------------------------------------------------
+# nginx vhost + the SSE block.
+#
+# provision-site writes a generic proxy vhost: `Connection "upgrade"`,
+# `proxy_read_timeout 60s`, buffering on. For this app that means nginx holds
+# the spectator stream until the game ends. nginx rejects a second
+# proxy_read_timeout / proxy_http_version in the same location and does not
+# replace a repeated proxy_set_header, so the fix cannot be a plain append:
+# ensure_sse rewrites every proxied location — drops the directives it
+# manages, inserts one marker-tagged block after proxy_pass — and is a no-op
+# when the file already reads that way. certbot copies the location into
+# the :443 block, so both blocks are handled the same way.
+# ---------------------------------------------------------------------------
+vhost_path() {  # -> path on stdout, exit 1 if none
+  local link
+  if [ -e "$NGINX_AVAIL/$FQDN" ]; then readlink -f "$NGINX_AVAIL/$FQDN"; return 0; fi
+  for link in "$NGINX_ENABLED"/*; do
+    [ -e "$link" ] || continue
+    if grep -qE "^[[:space:]]*server_name[^;]*[[:space:]]$FQDN([[:space:];]|$)" "$link"; then
+      readlink -f "$link"; return 0
+    fi
+  done
+  return 1
+}
+
+sse_transform() {  # $1=vhost file -> rewritten content on stdout
+  python3 - "$1" "$SSE_BEGIN" "$SSE_END" <<'PY'
+import re, sys
+path, mark_begin, mark_end = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(path, encoding="utf-8").read().split("\n")
+
+# 1. drop any earlier managed block(s)
+kept, skip = [], False
+for ln in lines:
+    if ln.strip() == mark_begin: skip = True; continue
+    if ln.strip() == mark_end:   skip = False; continue
+    if not skip: kept.append(ln)
+lines = kept
+
+MANAGED = re.compile(r"^\s*(proxy_http_version|proxy_buffering|proxy_cache|proxy_read_timeout|"
+                     r"proxy_send_timeout|chunked_transfer_encoding|gzip)\s")
+MANAGED_HDR = re.compile(r"^\s*proxy_set_header\s+Connection\s", re.I)
+BLOCK = [mark_begin,
+         'proxy_http_version 1.1;',
+         'proxy_set_header Connection "";',
+         'proxy_buffering off;',
+         'proxy_cache off;',
+         'proxy_read_timeout 3600s;',
+         'proxy_send_timeout 3600s;',
+         'chunked_transfer_encoding on;',
+         'gzip off;',
+         mark_end]
+
+def fix_location(block):
+    """block = lines of one `location ... { ... }` that contains proxy_pass."""
+    out = []
+    for ln in block:
+        if MANAGED.match(ln) or MANAGED_HDR.match(ln):
+            continue
+        out.append(ln)
+        if re.match(r"^\s*proxy_pass\s", ln):
+            indent = re.match(r"^\s*", ln).group(0)
+            out.extend(indent + b for b in BLOCK)
+    return out
+
+# 2. walk location blocks (brace-per-line style, as certbot/provision-site write)
+out, i = [], 0
+while i < len(lines):
+    ln = lines[i]
+    if re.match(r"^\s*location\b.*\{\s*$", ln):
+        depth, block = 0, []
+        while i < len(lines):
+            block.append(lines[i])
+            depth += lines[i].count("{") - lines[i].count("}")
+            i += 1
+            if depth <= 0: break
+        if any(re.match(r"^\s*proxy_pass\s", b) for b in block):
+            block = fix_location(block)
+        out.extend(block)
+        continue
+    out.append(ln); i += 1
+sys.stdout.write("\n".join(out))
+PY
+}
+
+ensure_sse() {  # $1 = --dry-run|"" ; requires a vhost
+  local dry="${1:-}" vhost tmp stamp backup_dir
+  vhost="$(vhost_path)" || die "no vhost for $FQDN under $NGINX_AVAIL / $NGINX_ENABLED — run: dndsim setup"
+  tmp="$(mktemp)"
+  sse_transform "$vhost" > "$tmp"
+  if cmp -s "$vhost" "$tmp"; then
+    log "vhost $vhost: SSE block present, nothing to change"
+    rm -f "$tmp"; return 0
+  fi
+  if [ "$dry" = "--dry-run" ]; then
+    log "vhost $vhost: SSE block would change as follows"
+    diff -u --label "$vhost (current)" --label "$vhost (new)" "$vhost" "$tmp" || true
+    rm -f "$tmp"; return 0
+  fi
+  need_root
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup_dir="$BACKUP_ROOT/dndsim-sse-$stamp"
+  mkdir -p "$backup_dir$(dirname "$vhost")"
+  cp -p "$vhost" "$backup_dir$vhost"
+  log "vhost $vhost: inserting SSE block (backup: $backup_dir$vhost)"
+  cat "$tmp" > "$vhost"; rm -f "$tmp"
+  if ! nginx -t; then
+    warn "nginx -t FAILED — rolling back."
+    cat "$backup_dir$vhost" > "$vhost"
+    nginx -t || warn "nginx -t still failing after rollback — inspect manually!"
+    die "aborted; original vhost restored from $backup_dir."
+  fi
+  systemctl reload nginx
+  log "nginx reloaded with the SSE block in place"
+}
+
+install_fallback_vhost() {  # no provision-site on PATH: HTTP-only vhost from deploy/nginx-dndsim.conf
+  local src="$ROOT/deploy/nginx-dndsim.conf" conf="$NGINX_AVAIL/$FQDN"
+  [ -f "$src" ] || die "$src missing — cannot install the fallback vhost."
+  need_root
+  log "provision-site not on PATH — installing HTTP-only vhost $conf from deploy/nginx-dndsim.conf"
+  sed -e "s/dndsim\.lab980\.com/$FQDN/g" -e "s/127\.0\.0\.1:8071/127.0.0.1:$PORT/g" "$src" > "$conf"
+  ln -sf "$conf" "$NGINX_ENABLED/$FQDN"
+  if ! nginx -t; then rm -f "$conf" "$NGINX_ENABLED/$FQDN"; die "nginx -t rejected the fallback vhost; removed it."; fi
+  systemctl reload nginx
+  warn "HTTP only. Point DNS at this box, then:  certbot --nginx -d $FQDN --redirect"
+  warn "and, from the lab980 repo:  fix-security-headers --fix   (the fallback vhost has no headers include)"
+}
+
+cmd_setup() {
+  local dry=""
+  [ "${1:-}" = "--dry-run" ] && dry="--dry-run"
+  cd "$ROOT"
+  if vhost_path >/dev/null; then
+    log "vhost for $FQDN exists: $(vhost_path)"
+  elif [ "$dry" = "--dry-run" ]; then
+    if command -v provision-site >/dev/null; then
+      log "dry run: would run  provision-site dndsim $REPO --port $PORT --dir $ROOT  (DNS + vhost + TLS)"
+    else
+      log "dry run: provision-site not on PATH; would install deploy/nginx-dndsim.conf as $NGINX_AVAIL/$FQDN (HTTP only)"
+    fi
+    return 0
+  elif command -v provision-site >/dev/null; then
+    need_root
+    # provision-site: --port is NOT optional (it would allocate the next free
+    # port from 8060 and proxy to it, not 8071); --dir keeps it on this
+    # checkout, which it detects as an existing clone and does not touch. It
+    # seeds .env with PORT if there isn't one (ensure_env in deploy adds the
+    # rest), creates data/, writes the vhost with the shared headers include,
+    # waits for DNS and runs certbot. It stops before build/run on purpose.
+    log "running provision-site dndsim $REPO --port $PORT --dir $ROOT"
+    provision-site dndsim "$REPO" --port "$PORT" --dir "$ROOT"
+  else
+    install_fallback_vhost
+  fi
+  ensure_sse "$dry"
+  if systemctl is-enabled pm2-root >/dev/null 2>&1; then
+    log "pm2-root boot hook: enabled"
+  else
+    warn "pm2-root is not enabled — pm2 save alone does not survive a reboot. Once per droplet:"
+    warn "  pm2 startup systemd -u root --hp /root   (then run the line it prints)"
+  fi
 }
 
 cmd_deploy() {
   local DO_INSTALL=1
   [ "${1:-}" = "--no-install" ] && DO_INSTALL=0
+  need_root
+  command -v pm2 >/dev/null || die "pm2 not found on PATH."
   cd "$ROOT"
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$ROOT is not a git clone."
   local before after
@@ -115,24 +422,35 @@ cmd_deploy() {
   fi
   mkdir -p data
   chmod +x run.sh 2>/dev/null || true
+  ensure_env
 
+  if ! vhost_path >/dev/null; then
+    log "no vhost for $FQDN yet — running dndsim setup first"
+    if ! cmd_setup; then
+      warn "setup did not complete; deploying the app anyway. Fix the cause and re-run: dndsim setup"
+    fi
+  fi
+
+  # A (re)start kills any in-flight game; the app marks it stopped on boot
+  # and the transcript stays readable. That is expected. The ecosystem file
+  # is the registration's source of truth, so it is re-read on every deploy.
   case "$(pm2_state)" in
     "not registered")
-      warn "pm2 process $APP is not registered — first-time start is 'pm2 start ecosystem.config.js' from the app dir (see DEPLOY.md); not doing that here"
+      log "pm2 start $ECOSYSTEM ($APP, first registration)"
+      pm2_clean start "$ECOSYSTEM" --only "$APP"
       ;;
     *)
-      # A restart kills any in-flight game; the app marks it stopped on boot
-      # and the transcript stays readable. That is expected.
       log "pm2 restart $APP  (any in-flight game ends here)"
-      pm2 restart "$APP" --update-env
-      save_if_online
+      pm2_clean restart "$ECOSYSTEM" --only "$APP"
       ;;
   esac
   sleep 2
+  save_if_online
   probe
+  log "deployed: $(git rev-parse --short HEAD)  $(git log -1 --format=%s)"
 }
 
-cmd_restart() { log "pm2 restart $APP"; pm2 restart "$APP" --update-env; sleep 2; probe; }
+cmd_restart() { need_root; cd "$ROOT"; log "pm2 restart $APP"; pm2_clean restart "$ECOSYSTEM" --only "$APP"; sleep 2; probe; }
 cmd_logs()    { pm2 logs "$APP" "$@"; }
 
 cmd_status() {
@@ -142,6 +460,24 @@ cmd_status() {
   if [ -x "$PY" ]; then printf 'python:    %s (%s)\n' "$("$PY" --version 2>&1)" "$PY"
   else printf 'python:    no .venv — run: dndsim deploy\n'; fi
   printf 'pm2:       %s\n' "$(pm2_state)"
+  local kstat="absent" sstat="absent"
+  if [ -e "$ENV_FILE" ]; then
+    env_file_has "$ENV_FILE" ANTHROPIC_API_KEY && kstat="present"
+    printf 'env:       %s  ANTHROPIC_API_KEY=%s  PORT=%s\n' "$ENV_FILE" "$kstat" "$(env_file_get "$ENV_FILE" PORT)"
+  else
+    printf 'env:       %s missing — run: dndsim deploy\n' "$ENV_FILE"
+  fi
+  if [ -r "$KEY_SOURCE" ]; then env_file_has "$KEY_SOURCE" ANTHROPIC_API_KEY && sstat="present"
+  else sstat="unreadable"; fi
+  printf 'key store: %s  ANTHROPIC_API_KEY=%s\n' "$KEY_SOURCE" "$sstat"
+  printf 'upstream:  %s\n' "$(upstream_family 2>&1)"
+  local vhost
+  if vhost="$(vhost_path)"; then
+    if grep -qF "$SSE_BEGIN" "$vhost"; then printf 'vhost:     %s  SSE block: present\n' "$vhost"
+    else printf 'vhost:     %s  SSE block: ABSENT — run: dndsim setup\n' "$vhost"; fi
+  else
+    printf 'vhost:     none for %s — run: dndsim setup\n' "$FQDN"
+  fi
   probe
   local pem="/etc/letsencrypt/live/$FQDN/cert.pem"
   if [ -r "$pem" ]; then
@@ -149,13 +485,19 @@ cmd_status() {
     end="$(openssl x509 -enddate -noout -in "$pem" | cut -d= -f2)"
     days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
     printf 'cert:      %s days remaining (expires %s)\n' "$days" "$end"
-  else
+  elif [ "$(id -u)" -ne 0 ]; then
     printf 'cert:      (run as root to read expiry)\n'
+  else
+    printf 'cert:      none at %s — run: dndsim setup\n' "$pem"
   fi
 }
 
+# Sourced for tests: functions are defined, stop before dispatching.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
 case "${1:-}" in
   deploy)  shift; cmd_deploy "$@";;
+  setup)   shift; cmd_setup "$@";;
   restart) shift; cmd_restart "$@";;
   logs)    shift; cmd_logs "$@";;
   status)  shift; cmd_status "$@";;
