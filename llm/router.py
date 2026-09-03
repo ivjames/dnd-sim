@@ -11,17 +11,25 @@ amendment 2026-09-03.
 every seat's model must route to a provider, that provider's key must be in
 the environment, and the model must have a price row (the budget stop is
 blind otherwise) unless `DND_ALLOW_UNPRICED=1`.
+
+A seat id may be the explicit `provider:model` form (`deepinfra:Qwen/Qwen3-32B`),
+which is the only way to reach a host row and overrides prefix routing for
+the rest. The router hands the compat adapter the full id (it strips the
+prefix itself and keeps the full id on the response for pricing) and the
+native Anthropic SDK the bare id, then stamps the full id back onto the
+response so the ledger sees the seat as configured.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from .client import AnthropicClient, LLMError, LLMResponse
 from .cost import has_price
-from .providers import PROVIDERS, Provider, provider_for
+from .providers import HOSTS, PROVIDERS, Provider, provider_for, provider_named, split_model
 
 __all__ = ["RouterClient", "allow_unpriced"]
 
@@ -59,13 +67,31 @@ class RouterClient:
 
     @staticmethod
     def provider_for(model: str) -> Provider:
+        name, wire = split_model(model)
+        hosts = ", ".join(h.name for h in HOSTS)
+        if name is not None:
+            p = provider_named(name)
+            if p is None:
+                names = ", ".join(prov.name for prov in PROVIDERS)
+                raise LLMError(
+                    f"unknown provider {name!r} in model {model!r}; the provider:model "
+                    f"form takes one of: {names}"
+                )
+            return p
         p = provider_for(model)
-        if p is None:
-            known = ", ".join(pre for prov in PROVIDERS for pre in prov.prefixes)
+        if p is not None:
+            return p
+        if "/" in wire:
+            examples = " or ".join(f"{h.name}:{wire}" for h in HOSTS)
             raise LLMError(
-                f"no provider routes model {model!r}; known model-id prefixes: {known}"
+                f"model {model!r} is a namespaced id that does not say which host serves "
+                f"it; use the provider:model form — {examples} (hosts: {hosts})"
             )
-        return p
+        known = ", ".join(pre for prov in PROVIDERS for pre in prov.prefixes)
+        raise LLMError(
+            f"no provider routes model {model!r}; known model-id prefixes: {known}; "
+            f"a model on a host needs the provider:model form (hosts: {hosts})"
+        )
 
     def key_for(self, provider: Provider) -> str:
         key = self._env.get(provider.key_env)
@@ -93,14 +119,22 @@ class RouterClient:
         temperature: float = 0.7,
         json_only: bool = False,
     ) -> LLMResponse:
-        return self.client_for(model).complete(
-            model=model,
+        p = self.provider_for(model)
+        name, wire = split_model(model)
+        # The native SDK knows nothing of the prefix; the compat adapter strips
+        # it itself and needs the full id to key the response for pricing.
+        send = wire if p.dialect == "anthropic" else model
+        resp = self.client_for(model).complete(
+            model=send,
             system=system,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
             json_only=json_only,
         )
+        if name is not None and resp.model != model:
+            resp = replace(resp, model=model)
+        return resp
 
     # -- fail-fast at game creation ----------------------------------------
 
