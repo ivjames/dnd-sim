@@ -14,9 +14,9 @@ sudo ss -lntp | grep 8071     # expect nothing (8070 is ffc's centeredge mock)
 ## 2. Clone and build
 
 ```sh
-sudo mkdir -p /opt/dnd-sim && sudo chown "$USER" /opt/dnd-sim
-git clone <repo> /opt/dnd-sim
-cd /opt/dnd-sim
+sudo mkdir -p /var/www/dndsim
+git clone <repo> /var/www/dndsim
+cd /var/www/dndsim
 python3 -m venv .venv
 .venv/bin/pip install -U pip
 .venv/bin/pip install -r requirements.txt
@@ -27,7 +27,7 @@ chmod +x run.sh
 ## 3. Smoke test before PM2
 
 ```sh
-cd /opt/dnd-sim
+cd /var/www/dndsim
 DND_SIM_MOCK=1 PORT=8071 ./run.sh &
 curl -s localhost:8071/api/health      # {"ok":true,"mock":true,"games_running":0}
 kill %1
@@ -52,7 +52,7 @@ pm2 restart dnd-sim --update-env
 ## 5. PM2
 
 ```sh
-cd /opt/dnd-sim
+cd /var/www/dndsim
 pm2 start ecosystem.config.js
 pm2 save
 pm2 logs dnd-sim --lines 50
@@ -106,7 +106,7 @@ nginx is still buffering.
 |---|---|
 | logs | `pm2 logs dnd-sim` |
 | restart | `pm2 restart dnd-sim --update-env` |
-| DB | `sqlite3 /opt/dnd-sim/data/dndsim.sqlite3 'select id,status,cost_usd,title from games;'` |
+| DB | `sqlite3 /var/www/dndsim/data/dndsim.sqlite3 'select id,status,cost_usd,title from games;'` |
 | wipe history | stop PM2, delete `data/dndsim.sqlite3*`, start |
 | tests | `.venv/bin/python -m pytest -q` |
 

@@ -1,6 +1,6 @@
 // PM2 process definition for dnd-sim (lab980 protocol).
 //
-//   cd /opt/dnd-sim && pm2 start ecosystem.config.js && pm2 save
+//   cd /var/www/dndsim && pm2 start ecosystem.config.js && pm2 save
 //
 // ANTHROPIC_API_KEY is NOT set here. It lives in /etc/environment on the host;
 // PM2 inherits it from the shell that starts it, so start PM2 from a login
@@ -10,7 +10,7 @@ module.exports = {
   apps: [
     {
       name: 'dnd-sim',
-      cwd: '/opt/dnd-sim',            // <-- absolute path to the checkout
+      cwd: '/var/www/dndsim',            // <-- absolute path to the checkout
       script: './run.sh',             // picks .venv/bin/python, execs `python -m web.app`
       interpreter: '/bin/sh',
       instances: 1,                   // MUST stay 1: games live in-process, SSE is stateful
@@ -23,7 +23,7 @@ module.exports = {
       env: {
         PORT: '8071',
         HOST: '127.0.0.1',
-        DND_SIM_DB: '/opt/dnd-sim/data/dndsim.sqlite3',
+        DND_SIM_DB: '/var/www/dndsim/data/dndsim.sqlite3',
         PYTHONUNBUFFERED: '1',
         // DND_SIM_MOCK: '1',         // uncomment to run without touching the API
         // DND_DM_MODEL / DND_PLAYER_MODEL / DND_SUMMARY_MODEL override the defaults

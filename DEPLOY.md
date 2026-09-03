@@ -14,22 +14,19 @@ not `dndsim`.
 
 This repo was authored with its own deploy runbook (`deploy/INSTALL.md`,
 `deploy/nginx-dndsim.conf`, `ecosystem.config.js`) before the lab980
-conventions were scaffolded in, and the two disagree on three points. Nothing
-here resolves them — none of those files have been edited — and **until each
-is decided, `deploy/INSTALL.md` is the authored runbook and the bring-up block
+conventions were scaffolded in, and the two disagreed on three points. Two
+are now decided and the files made to agree; one is still open. **Until it is
+decided, `deploy/INSTALL.md` is the authored runbook and the bring-up block
 below is the conventions-shaped alternative.** Decide, then make the loser
 match the winner in the same PR.
 
-1. **Checkout dir.** `deploy/INSTALL.md` clones to `/opt/dnd-sim`, and
-   `ecosystem.config.js` hardcodes it twice (`cwd` and `DND_SIM_DB`). lab980
-   says every site lives at `/var/www/<stub>` = **`/var/www/dndsim`**: that is
-   what `provision-site` creates, what `health-check` walks, and what
-   `.claude/sites.json` records (flagged unverified). Choosing `/var/www/dndsim`
-   means changing those two lines in `ecosystem.config.js` and the paths in
-   `deploy/INSTALL.md`. Choosing `/opt/dnd-sim` makes this the second site on
-   the box outside `/var/www` (after photos) and leaves `health-check` unable
-   to match its pm2 entry to a site dir. `bin/dndsim` derives its root from its
-   own path, so it works under either.
+1. **Checkout dir — decided: `/var/www/dndsim`** (2026-09-03). The repo was
+   authored against `/opt/dnd-sim`; the rule on this box is that the checkout
+   is always under `/var/www/<stub>` — it is what `provision-site` creates,
+   what `health-check` walks, and what `.claude/sites.json` records.
+   `deploy/INSTALL.md`, `ecosystem.config.js` (`cwd` and `DND_SIM_DB`) and
+   PLAN.md now all say `/var/www/dndsim`. `bin/dndsim` derives its root from
+   its own path, so it needed no change.
 
 2. **Port — decided: 8071** (2026-09-03). The repo was authored on 8045,
    "next after qa-engine's 8044", which is below lab980's **8060+** range.
@@ -70,9 +67,7 @@ before TLS is added, and re-check it after certbot has run.
 ## One-time bring-up (on the droplet, as root) — conventions-shaped
 
 Read "Open decisions" first. This block assumes `/var/www/dndsim`, port 8071
-and a local `.env`; the repo's `ecosystem.config.js` does not yet agree with
-the first of those, so `pm2 start ecosystem.config.js` from `/var/www/dndsim`
-will run the app from `/opt/dnd-sim` (and fail) until decision 1 lands.
+(both decided) and a local `.env` (decision 3, still open).
 
 ```bash
 provision-site dndsim ivjames/dnd-sim --port 8071

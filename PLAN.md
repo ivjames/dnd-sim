@@ -59,6 +59,6 @@ web  →  orchestrator  →  agents  →  llm
 Builders must not edit files outside their ownership. Cross-layer needs go through CONTRACTS.md types; if the other side isn't built yet, code against the contract and stub in tests.
 
 ## Deploy (lab980 protocol)
-1. `git clone` to `/opt/dnd-sim` (or wherever the other Python apps live — confirm), `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+1. `git clone` to `/var/www/dndsim` (every site on the box lives under `/var/www/<stub>`), `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 2. `pm2 start ecosystem.config.js` (process `dnd-sim`, port 8071, `ANTHROPIC_API_KEY` from `/etc/environment`).
 3. nginx: HTTP-only vhost for `dndsim.lab980.com` → `127.0.0.1:8071`, SSE-safe (`proxy_buffering off`, long `proxy_read_timeout`). Point DNS. Then `certbot --nginx -d dndsim.lab980.com`. Never ship SSL blocks before certbot has run.

@@ -18,10 +18,9 @@
 #   DNDSIM_BRANCH   default main
 #   DNDSIM_PORT     default 8071
 #
-# The app dir is wherever this script's checkout lives (/var/www/dndsim by
-# lab980 convention, /opt/dnd-sim per deploy/INSTALL.md — an open decision) —
+# The app dir is wherever this script's checkout lives (/var/www/dndsim) —
 # derived from the script's own path, so the /usr/local/bin symlink resolves
-# back here under either.
+# back here.
 set -euo pipefail
 
 SELF="$(readlink -f "$0")"

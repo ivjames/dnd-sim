@@ -16,12 +16,13 @@ about this site rather than about the platform. For the box itself, read the
 ## Open decisions
 
 This repo's own runbook (`deploy/INSTALL.md`, `ecosystem.config.js`) and the
-lab980 conventions disagree on the **checkout dir** (`/opt/dnd-sim` vs
-`/var/www/dndsim`) and **where the API key lives** (`/etc/environment` vs a
-local `.env`). Neither is resolved here — `DEPLOY.md` "Open decisions
-(conflicts with lab980 conventions)" lays out both sides of each. (The third
-one, the port, was decided 2026-09-03: **8071**, first free in the 8060+ range
-on the droplet.) Until the other two are decided,
+lab980 conventions disagreed on three points. Two were decided 2026-09-03 —
+the checkout dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this
+box) and the port is **8071** (first free in the 8060+ range on the droplet) —
+and the files now agree. The third, **where the API key lives**
+(`/etc/environment` vs a local `.env`), is not resolved here; `DEPLOY.md`
+"Open decisions (conflicts with lab980 conventions)" lays out both sides.
+Until it is decided,
 `deploy/INSTALL.md` is the authored runbook and `DEPLOY.md`'s bring-up block
 is the conventions-shaped alternative. Don't quietly pick a side in a code
 change; make it a decision.
@@ -34,8 +35,7 @@ build. The install is `python3 -m venv .venv && .venv/bin/pip install -r
 requirements.txt`, and `requirements.txt` is deliberately tiny (Flask,
 anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
 
-- Repo: `ivjames/dnd-sim` · droplet dir: `/var/www/dndsim` by convention (open
-  decision 1)
+- Repo: `ivjames/dnd-sim` · droplet dir: `/var/www/dndsim`
 - pm2 process: **`dnd-sim`** (from `ecosystem.config.js`; note it is not the
   stub `dndsim`) — runs `./run.sh`, which execs `.venv/bin/python -m web.app`.
   **fork mode**, `exec_mode: 'fork'` explicit, and `instances: 1` is a hard
