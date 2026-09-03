@@ -1,0 +1,39 @@
+[
+  {
+    "name": "Human", "size": "M", "speed": 30,
+    "ability_bonuses": {"STR": 1, "DEX": 1, "CON": 1, "INT": 1, "WIS": 1, "CHA": 1},
+    "skill_proficiencies": [], "features": [], "hp_per_level": 0,
+    "damage_resistances": [], "saving_throw_advantages": [],
+    "languages": ["Common", "one extra"]
+  },
+  {
+    "name": "Elf (High)", "size": "M", "speed": 30,
+    "ability_bonuses": {"DEX": 2, "INT": 1},
+    "skill_proficiencies": ["Perception"],
+    "features": ["darkvision", "fey_ancestry", "trance", "elf_weapon_training", "elf_cantrip"],
+    "hp_per_level": 0, "damage_resistances": [],
+    "saving_throw_advantages": ["charmed"],
+    "condition_immunities": ["magical_sleep"],
+    "weapon_proficiencies": ["Longsword", "Shortsword", "Shortbow", "Longbow"],
+    "languages": ["Common", "Elvish", "one extra"]
+  },
+  {
+    "name": "Dwarf (Hill)", "size": "M", "speed": 25,
+    "ability_bonuses": {"CON": 2, "WIS": 1},
+    "skill_proficiencies": [],
+    "features": ["darkvision", "dwarven_resilience", "dwarven_combat_training", "stonecunning", "dwarven_toughness"],
+    "hp_per_level": 1, "damage_resistances": ["poison"],
+    "saving_throw_advantages": ["poison"],
+    "weapon_proficiencies": ["Battleaxe", "Handaxe", "Light Hammer", "Warhammer"],
+    "languages": ["Common", "Dwarvish"]
+  },
+  {
+    "name": "Halfling (Lightfoot)", "size": "S", "speed": 25,
+    "ability_bonuses": {"DEX": 2, "CHA": 1},
+    "skill_proficiencies": [],
+    "features": ["lucky", "brave", "halfling_nimbleness", "naturally_stealthy"],
+    "hp_per_level": 0, "damage_resistances": [],
+    "saving_throw_advantages": ["frightened"],
+    "languages": ["Common", "Halfling"]
+  }
+]

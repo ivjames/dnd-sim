@@ -1,0 +1,12 @@
+[
+  {"name": "Potion of Healing", "kind": "consumable", "heal": "2d4+2", "use": "action", "desc": "Regain 2d4+2 hit points when drunk (or administered to an adjacent creature)."},
+  {"name": "Thieves' Tools", "kind": "tool", "desc": "Proficiency lets you disarm traps and open locks."},
+  {"name": "Holy Symbol", "kind": "focus", "desc": "Spellcasting focus for a cleric."},
+  {"name": "Spellbook", "kind": "focus", "desc": "A wizard's spellbook."},
+  {"name": "Healer's Kit", "kind": "tool", "uses": 10, "desc": "Use an action to stabilize a creature at 0 hit points without a Medicine check."},
+  {"name": "Torch", "kind": "gear", "desc": "Burns for 1 hour, bright light 20 ft."},
+  {"name": "Rope, Hempen (50 feet)", "kind": "gear", "desc": "50 ft of hempen rope."},
+  {"name": "Rations (1 day)", "kind": "gear", "desc": "Dry food for one day."},
+  {"name": "Arrows (20)", "kind": "ammunition", "desc": "Ammunition for bows."},
+  {"name": "Crossbow Bolts (20)", "kind": "ammunition", "desc": "Ammunition for crossbows."}
+]

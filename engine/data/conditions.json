@@ -1,0 +1,20 @@
+[
+  {"name": "blinded", "desc": "Can't see; automatically fails ability checks that require sight. Attack rolls against it have advantage; its attack rolls have disadvantage."},
+  {"name": "charmed", "desc": "Can't attack the charmer or target it with harmful abilities; the charmer has advantage on social checks against it."},
+  {"name": "deafened", "desc": "Can't hear; automatically fails ability checks that require hearing."},
+  {"name": "frightened", "desc": "Disadvantage on ability checks and attack rolls while the source of fear is in line of sight; can't willingly move closer to it."},
+  {"name": "grappled", "desc": "Speed becomes 0. Ends if the grappler is incapacitated or the grappled creature is moved out of reach."},
+  {"name": "incapacitated", "desc": "Can't take actions or reactions."},
+  {"name": "invisible", "desc": "Impossible to see without magic; heavily obscured for hiding. Attack rolls against it have disadvantage; its attack rolls have advantage."},
+  {"name": "paralyzed", "desc": "Incapacitated; can't move or speak; auto-fails STR and DEX saves; attacks against it have advantage and hit within 5 ft are critical hits."},
+  {"name": "petrified", "desc": "Transformed to stone; incapacitated; weight x10; resistance to all damage; immune to poison and disease; auto-fails STR and DEX saves; attacks against it have advantage."},
+  {"name": "poisoned", "desc": "Disadvantage on attack rolls and ability checks."},
+  {"name": "prone", "desc": "May only crawl; disadvantage on attack rolls; attacks against it have advantage within 5 ft and disadvantage beyond. Standing costs half speed."},
+  {"name": "restrained", "desc": "Speed 0; attacks against it have advantage; its attacks have disadvantage; disadvantage on DEX saves."},
+  {"name": "stunned", "desc": "Incapacitated; can't move; can speak only falteringly; auto-fails STR and DEX saves; attacks against it have advantage."},
+  {"name": "unconscious", "desc": "Incapacitated; can't move or speak; unaware; drops what it holds and falls prone; auto-fails STR and DEX saves; attacks against it have advantage and hits within 5 ft are critical hits."},
+  {"name": "exhaustion", "desc": "Levels 1-6: 1 disadvantage on ability checks; 2 speed halved; 3 disadvantage on attacks and saves; 4 HP maximum halved; 5 speed 0; 6 death."},
+  {"name": "turned", "desc": "(Turn Undead) Must spend turns moving away from the cleric; can't take reactions; can only Dash or try to escape; ends after 1 minute or on taking damage."},
+  {"name": "hidden", "desc": "(engine) Unseen by enemies after a successful Hide; attacks from hiding have advantage and attacks against it disadvantage. Revealed on attacking or casting."},
+  {"name": "faerie_fire", "desc": "(engine) Outlined in light: attack rolls against it have advantage and it cannot benefit from being invisible."}
+]

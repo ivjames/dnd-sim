@@ -1,0 +1,88 @@
+[
+  {
+    "name": "Fighter", "hit_die": 10,
+    "saving_throws": ["STR", "CON"],
+    "weapon_proficiencies": ["simple", "martial"],
+    "armor_proficiencies": ["light", "medium", "heavy", "shield"],
+    "default_skills": ["Athletics", "Perception"],
+    "default_equipment": {"armor": "Chain Mail", "shield": true, "weapons": ["Longsword", "Handaxe", "Light Crossbow"], "items": ["Potion of Healing"]},
+    "spellcasting_ability": null,
+    "levels": {
+      "1": {"features": ["fighting_style_defense", "second_wind"]},
+      "2": {"features": ["action_surge"]},
+      "3": {"features": ["martial_archetype_champion", "improved_critical"]},
+      "4": {"features": ["asi"]},
+      "5": {"features": ["extra_attack"]}
+    }
+  },
+  {
+    "name": "Rogue", "hit_die": 8,
+    "saving_throws": ["DEX", "INT"],
+    "weapon_proficiencies": ["simple", "Hand Crossbow", "Longsword", "Rapier", "Shortsword"],
+    "armor_proficiencies": ["light"],
+    "default_skills": ["Stealth", "Acrobatics", "Perception", "Sleight of Hand"],
+    "expertise_default": ["Stealth", "Sleight of Hand"],
+    "default_equipment": {"armor": "Leather", "shield": false, "weapons": ["Rapier", "Shortbow", "Dagger", "Dagger"], "items": ["Thieves' Tools", "Potion of Healing"]},
+    "spellcasting_ability": null,
+    "sneak_attack_dice": {"1": 1, "2": 1, "3": 2, "4": 2, "5": 3},
+    "levels": {
+      "1": {"features": ["expertise", "sneak_attack", "thieves_cant"]},
+      "2": {"features": ["cunning_action"]},
+      "3": {"features": ["roguish_archetype_thief", "fast_hands", "second_story_work"]},
+      "4": {"features": ["asi"]},
+      "5": {"features": ["uncanny_dodge"]}
+    }
+  },
+  {
+    "name": "Cleric", "hit_die": 8,
+    "saving_throws": ["WIS", "CHA"],
+    "weapon_proficiencies": ["simple"],
+    "armor_proficiencies": ["light", "medium", "heavy", "shield"],
+    "default_skills": ["Medicine", "Religion"],
+    "default_equipment": {"armor": "Scale Mail", "shield": true, "weapons": ["Mace", "Light Crossbow"], "items": ["Holy Symbol", "Potion of Healing"]},
+    "spellcasting_ability": "WIS",
+    "spell_slots": {
+      "1": {"1": 2}, "2": {"1": 3}, "3": {"1": 4, "2": 2}, "4": {"1": 4, "2": 3}, "5": {"1": 4, "2": 3, "3": 2}
+    },
+    "cantrips_known": {"1": 3, "2": 3, "3": 3, "4": 4, "5": 4},
+    "default_spells": {
+      "cantrips": ["Sacred Flame", "Guidance", "Spare the Dying", "Light"],
+      "1": ["Cure Wounds", "Bless", "Guiding Bolt", "Healing Word", "Shield of Faith", "Inflict Wounds"],
+      "2": ["Spiritual Weapon", "Hold Person", "Lesser Restoration", "Aid", "Blindness/Deafness"],
+      "3": ["Spirit Guardians", "Mass Healing Word", "Dispel Magic"]
+    },
+    "levels": {
+      "1": {"features": ["spellcasting", "divine_domain_life", "disciple_of_life"]},
+      "2": {"features": ["channel_divinity_turn_undead", "channel_divinity_preserve_life"]},
+      "3": {"features": []},
+      "4": {"features": ["asi"]},
+      "5": {"features": ["destroy_undead"]}
+    }
+  },
+  {
+    "name": "Wizard", "hit_die": 6,
+    "saving_throws": ["INT", "WIS"],
+    "weapon_proficiencies": ["Dagger", "Dart", "Sling", "Quarterstaff", "Light Crossbow"],
+    "armor_proficiencies": [],
+    "default_skills": ["Arcana", "Investigation"],
+    "default_equipment": {"armor": null, "shield": false, "weapons": ["Quarterstaff", "Dagger"], "items": ["Spellbook", "Potion of Healing"]},
+    "spellcasting_ability": "INT",
+    "spell_slots": {
+      "1": {"1": 2}, "2": {"1": 3}, "3": {"1": 4, "2": 2}, "4": {"1": 4, "2": 3}, "5": {"1": 4, "2": 3, "3": 2}
+    },
+    "cantrips_known": {"1": 3, "2": 3, "3": 3, "4": 4, "5": 4},
+    "default_spells": {
+      "cantrips": ["Fire Bolt", "Ray of Frost", "Shocking Grasp", "Poison Spray", "Acid Splash"],
+      "1": ["Magic Missile", "Shield", "Burning Hands", "Sleep", "Mage Armor", "Thunderwave", "False Life"],
+      "2": ["Scorching Ray", "Web", "Hold Person", "Misty Step", "Shatter", "Invisibility"],
+      "3": ["Fireball", "Lightning Bolt", "Fear", "Vampiric Touch"]
+    },
+    "levels": {
+      "1": {"features": ["spellcasting", "arcane_recovery"]},
+      "2": {"features": ["arcane_tradition_evocation", "sculpt_spells"]},
+      "3": {"features": []},
+      "4": {"features": ["asi"]},
+      "5": {"features": []}
+    }
+  }
+]

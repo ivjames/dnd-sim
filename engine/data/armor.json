@@ -1,0 +1,15 @@
+[
+  {"name": "Padded", "category": "light", "base_ac": 11, "dex_cap": null, "stealth_disadvantage": true, "str_req": 0},
+  {"name": "Leather", "category": "light", "base_ac": 11, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0},
+  {"name": "Studded Leather", "category": "light", "base_ac": 12, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0},
+  {"name": "Hide", "category": "medium", "base_ac": 12, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
+  {"name": "Chain Shirt", "category": "medium", "base_ac": 13, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
+  {"name": "Scale Mail", "category": "medium", "base_ac": 14, "dex_cap": 2, "stealth_disadvantage": true, "str_req": 0},
+  {"name": "Breastplate", "category": "medium", "base_ac": 14, "dex_cap": 2, "stealth_disadvantage": false, "str_req": 0},
+  {"name": "Half Plate", "category": "medium", "base_ac": 15, "dex_cap": 2, "stealth_disadvantage": true, "str_req": 0},
+  {"name": "Ring Mail", "category": "heavy", "base_ac": 14, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 0},
+  {"name": "Chain Mail", "category": "heavy", "base_ac": 16, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 13},
+  {"name": "Splint", "category": "heavy", "base_ac": 17, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 15},
+  {"name": "Plate", "category": "heavy", "base_ac": 18, "dex_cap": 0, "stealth_disadvantage": true, "str_req": 15},
+  {"name": "Shield", "category": "shield", "base_ac": 2, "dex_cap": null, "stealth_disadvantage": false, "str_req": 0}
+]
