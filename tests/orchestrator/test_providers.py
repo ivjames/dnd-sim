@@ -1012,3 +1012,16 @@ def test_host_price_lookup_keeps_case_after_the_colon():
     from llm.cost import has_price
 
     assert not has_price("deepinfra:qwen/qwen3-32b")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["siliconflow: Qwen/Qwen3-32B", "siliconflow :Qwen/Qwen3-32B", "SiliconFlow:Qwen/Qwen3-32B "],
+)
+def test_compat_rules_match_the_normalised_host_spelling(spelling):
+    from llm.providers import compat_params_for
+
+    assert compat_params_for(spelling, temperature=0.8) == compat_params_for(
+        "siliconflow:Qwen/Qwen3-32B", temperature=0.8
+    )
+    assert compat_params_for(spelling, temperature=0.8)["enable_thinking"] is False

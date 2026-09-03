@@ -348,7 +348,9 @@ def compat_params_for(model: str, *, temperature: float | None) -> dict[str, Any
     """Extra chat-completions body fields for `model` (fresh dicts, never shared)."""
     sampling, extra = _DEFAULT_COMPAT_RULE
     name, wire = split_model(model)
-    candidates = [(model or "").strip().lower()]
+    # Match on the normalised spelling (lower-cased provider, stripped id), the
+    # same key pricing uses, so `siliconflow: Qwen/Qwen3-32B` finds its rule.
+    candidates = [f"{name}:{wire}".lower() if name is not None else (model or "").strip().lower()]
     if name is not None:
         p = _BY_NAME.get(name)
         if p is not None and any(wire.lower().startswith(pre) for pre in p.prefixes):
