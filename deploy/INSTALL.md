@@ -2,7 +2,8 @@
 
 This file used to be the hand runbook. It is kept so old links resolve; the
 content moved to [`../DEPLOY.md`](../DEPLOY.md), and the runbook itself is now
-`bin/dndsim`. On the droplet, as root, with `ANTHROPIC_API_KEY` in
+`bin/dndsim`. On the droplet, as root, with `ANTHROPIC_API_KEY` (and any other
+platform keys — see `DEPLOY.md`) in
 `/etc/environment`:
 
 ```sh

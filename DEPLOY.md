@@ -16,19 +16,36 @@ Three things this repo and the lab980 conventions used to disagree on are
 decided: the checkout is **`/var/www/dndsim`** (always `/var/www/<stub>` on
 this box; the repo was authored against `/opt/dnd-sim`), the port is **8071**
 (first free in lab980's 8060+ range on the droplet; the repo was authored on
-8045), and the key: **`ANTHROPIC_API_KEY` stays in `/etc/environment`**, the
-known-key store on this box, and the app reads it from **`/var/www/dndsim/.env`**,
-which `dndsim deploy` writes once by copying the value across and `run.sh`
-sources on every start. pm2 never sees the key — `deploy` launches it under
-`env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN`, so `~/.pm2/dump.pm2` does not carry
-the root shell's copy — and the key is never on any argv or in any log line.
+8045), and the keys: **the platform API keys stay in `/etc/environment`**, the
+known-key store on this box, and the app reads them from **`/var/www/dndsim/.env`**,
+which `dndsim deploy` writes once by copying each value across and `run.sh`
+sources on every start. pm2 never sees a key — `deploy` launches it under
+`env -u <every known key> -u GITHUB_TOKEN`, so `~/.pm2/dump.pm2` does not carry
+the root shell's copies — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
-The one hand step: make sure the key is in `/etc/environment`.
+The one hand step: make sure the keys are in `/etc/environment`. The known
+names, one per LLM platform the app can seat at the table:
+
+| key | platform |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) — the default DM; the only one whose absence `deploy` warns about |
+| `OPENAI_API_KEY` | OpenAI |
+| `GEMINI_API_KEY` | Google Gemini (`GOOGLE_API_KEY` in the store is accepted as an alias and adopted under the `GEMINI_API_KEY` name) |
+| `XAI_API_KEY` | xAI (Grok) |
+| `MISTRAL_API_KEY` | Mistral |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+
+Any subset is fine. A seat configured for a platform whose key is missing
+fails at game creation with a message naming the variable — that is the app's
+behaviour, not the CLI's — and the other seats are unaffected. To adopt a key
+for a platform not in this list, set `DNDSIM_KEYS` (space-separated names) when
+running `dndsim deploy`; no code change is needed.
 
 ```bash
 grep -q '^ANTHROPIC_API_KEY=' /etc/environment || echo 'ANTHROPIC_API_KEY=sk-ant-...' >> /etc/environment
+# and likewise OPENAI_API_KEY=..., GEMINI_API_KEY=..., XAI_API_KEY=..., MISTRAL_API_KEY=..., DEEPSEEK_API_KEY=...
 ```
 
 Then:
@@ -56,15 +73,22 @@ In order, each step a no-op when already done:
    skips this step.
 3. `mkdir -p data`; writes `.env` (mode 600): seeds `PORT=8071`,
    `HOST=127.0.0.1`, `DND_SIM_DB=/var/www/dndsim/data/dndsim.sqlite3` if absent,
-   and if `.env` has no `ANTHROPIC_API_KEY`, parses it out of `/etc/environment`
-   and appends it. Existing values are never overwritten. Refuses if `.env`
-   is somehow not gitignored.
+   then for **each known key** that `.env` lacks (absent or empty) and
+   `/etc/environment` has, parses the value out and appends it — one log line
+   per adopted key, then one summary line of which known keys are present and
+   absent (names only, never values). Existing values are never overwritten,
+   so a second run adopts nothing. Only a missing `ANTHROPIC_API_KEY` is a
+   warning; the others are informational. Refuses if `.env` is somehow not
+   gitignored.
 4. If there is no vhost for `dndsim.lab980.com` yet, runs **`dndsim setup`**
    (below) first.
 5. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
-   `pm2 restart` after — both under `env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN`.
-   Then `pm2 save`, but **only if the process reports `online`** (a save while
-   it is down would persist a dump that omits it).
+   `pm2 restart` after — both under `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY
+   -u GEMINI_API_KEY -u XAI_API_KEY -u MISTRAL_API_KEY -u DEEPSEEK_API_KEY
+   -u GITHUB_TOKEN` (the unset list is built from the same known-key list as
+   step 3, so a key added there is unset here too). Then `pm2 save`, but
+   **only if the process reports `online`** (a save while it is down would
+   persist a dump that omits it).
 6. Probes `http://127.0.0.1:8071/api/health` and the public URL, prints the
    deployed commit, and warns if the health body says `"mock":true`.
 
@@ -108,14 +132,21 @@ answer half the requests from a process that knows nothing about the game.
 
 ## Environment (`.env`, sourced by `run.sh`)
 
-Only `ANTHROPIC_API_KEY` is required for live mode; everything else has a
-default. `.env` values override the process environment pm2 provides.
+Only `ANTHROPIC_API_KEY` is required for the default live game (its DM is
+Claude); the other platform keys are needed only by seats that use that
+platform, and any subset is fine. Everything else has a default. `.env` values
+override the process environment pm2 provides.
 
 | key | what it is |
 |---|---|
 | `PORT` | `8071` — must match the vhost's `proxy_pass` |
 | `HOST` | `127.0.0.1` — bind address; keep it loopback, nginx fronts it |
-| `ANTHROPIC_API_KEY` | required for live mode; adopted from `/etc/environment` by `dndsim deploy` |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) — the default DM; adopted from `/etc/environment` by `dndsim deploy`, warned about when missing |
+| `OPENAI_API_KEY` | OpenAI — optional; adopted the same way |
+| `GEMINI_API_KEY` | Google Gemini — optional; adopted the same way, also from a `GOOGLE_API_KEY` line in the store |
+| `XAI_API_KEY` | xAI (Grok) — optional; adopted the same way |
+| `MISTRAL_API_KEY` | Mistral — optional; adopted the same way |
+| `DEEPSEEK_API_KEY` | DeepSeek — optional; adopted the same way |
 | `DND_SIM_MOCK` | unset in production; `1` → `MockLLMClient`, zero API calls |
 | `DND_SIM_DB` | `/var/www/dndsim/data/dndsim.sqlite3` — SQLite transcript store |
 | `DND_SIM_EXAMPLES` | `./examples` — where `/api/presets` reads scenarios from |
@@ -124,15 +155,24 @@ default. `.env` values override the process environment pm2 provides.
 | `DND_SUMMARY_MODEL` | defaults to the player model — rolling-summary model |
 | `DND_SIM_LOGLEVEL` | `INFO` — server log level |
 
-To rotate the key: change it in `/etc/environment`, delete the
-`ANTHROPIC_API_KEY=` line from `.env`, `dndsim deploy` (or `dndsim restart`
-after editing `.env` directly — `run.sh` re-reads it on every start).
+A seat whose platform has no key in `.env` fails at game creation with a
+message naming the variable; the fix is to add that key to `/etc/environment`
+and `dndsim deploy` (or to `.env` directly and `dndsim restart`).
+
+To rotate a key: change it in `/etc/environment`, delete that key's line from
+`.env` (adoption never overwrites an existing value), `dndsim deploy` (or
+`dndsim restart` after editing `.env` directly — `run.sh` re-reads it on every
+start). `dndsim keys` shows, names only, which known keys `.env` and
+`/etc/environment` each hold, and exits 1 if `ANTHROPIC_API_KEY` is not in
+`.env`.
 
 ## Confirm what is live
 
 ```bash
-dndsim status              # HEAD, pm2, .env/key presence, upstream family,
+dndsim status              # HEAD, pm2, .env + per-key presence, upstream family,
                            # vhost + SSE block, local + public /api/health, cert
+dndsim keys                # per-key present/absent in .env and /etc/environment
+                           # (names only); exit 1 if ANTHROPIC_API_KEY is missing
 dndsim logs                # tail pm2 logs for this app
 health-check --site dndsim # the droplet-wide auditor (lab980 repo)
 ```
@@ -161,4 +201,6 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 
 `DNDSIM_FQDN` (default `dndsim.lab980.com`), `DNDSIM_BRANCH` (`main`),
 `DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (`/etc/environment`),
-`DNDSIM_ENV_FILE` (`<app dir>/.env`).
+`DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
+to adopt, report and unset for pm2; default is the six known keys above —
+setting it replaces the list, so include `ANTHROPIC_API_KEY`).

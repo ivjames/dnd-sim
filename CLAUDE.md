@@ -18,11 +18,11 @@ about this site rather than about the platform. For the box itself, read the
 This repo's own runbook and the lab980 conventions used to disagree on three
 points. All three are decided (2026-09-03) and the files agree: the checkout
 dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this box), the port
-is **8071** (first free in the 8060+ range on the droplet), and the key lives
-in **`/etc/environment`** — the known-key store on this box — from where
-`dndsim deploy` copies it once into **`/var/www/dndsim/.env`**, which
-`run.sh` sources on every start. pm2 is launched with the key unset so its
-dump never carries it. There is no hand runbook: `deploy/INSTALL.md` is a
+is **8071** (first free in the 8060+ range on the droplet), and the platform
+keys live in **`/etc/environment`** — the known-key store on this box — from
+where `dndsim deploy` copies each one once into **`/var/www/dndsim/.env`**,
+which `run.sh` sources on every start. pm2 is launched with every known key
+unset so its dump never carries one. There is no hand runbook: `deploy/INSTALL.md` is a
 pointer, `DEPLOY.md` is the doc, and `bin/dndsim` does the work. Don't
 reopen these in a code change; if one has to change, make it a decision.
 
@@ -51,11 +51,19 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
   repairs it on every run; `dndsim status` says whether it is present.
 - Config is process environment, loaded from `./.env` by `run.sh` (`set -a;
   . ./.env; set +a`, only if the file exists) before it execs python — so
-  pm2-managed and hand runs read the same file. Keys: `PORT`, `HOST`,
-  `ANTHROPIC_API_KEY`, `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL`
-  overrides (full table in README and `DEPLOY.md`). The app itself reads
-  `os.environ` only; there is no `python-dotenv`. `dndsim deploy` writes
-  `.env` (mode 600) and adopts the key into it from `/etc/environment`. State
+  pm2-managed and hand runs read the same file. Keys: `PORT`, `HOST`, the
+  platform API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+  `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY` — any subset; only the
+  Anthropic one is warned about, since the default DM needs it, and a seat
+  whose platform has no key fails at game creation naming the variable),
+  `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides (full table in
+  README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
+  no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600) and adopts
+  every known key it lacks into it from `/etc/environment` (`GOOGLE_API_KEY`
+  there is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
+  `bin/dndsim`, overridable with `DNDSIM_KEYS`, and the same list is what
+  the pm2 launch unsets. `dndsim keys` prints which known keys `.env` and
+  the store hold (names only) and exits 1 without `ANTHROPIC_API_KEY`. State
   is SQLite at `data/dndsim.sqlite3`; `data/`, `.env` and `.venv/` are
   gitignored and survive a deploy's hard reset.
 - vhost: `/etc/nginx/sites-available/dndsim.lab980.com`, written by
@@ -65,8 +73,8 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
 
 ## Deploying
 
-On the droplet, as root. First time, with `ANTHROPIC_API_KEY` already in
-`/etc/environment`:
+On the droplet, as root. First time, with `ANTHROPIC_API_KEY` (and whichever
+other platform keys you have) already in `/etc/environment`:
 
 ```bash
 git clone https://github.com/ivjames/dnd-sim /var/www/dndsim \
@@ -77,12 +85,14 @@ git clone https://github.com/ivjames/dnd-sim /var/www/dndsim \
 Every time after:
 
 ```bash
-dndsim deploy      # reset to origin/main, venv + pip, .env (adopt key), vhost via
-                   # setup if missing, pm2 start/restart (key unset), save if online, probe
+dndsim deploy      # reset to origin/main, venv + pip, .env (adopt keys), vhost via
+                   # setup if missing, pm2 start/restart (keys unset), save if online, probe
 dndsim setup       # once, idempotent: provision-site (or HTTP-only fallback vhost),
                    # SSE block in the vhost, pm2-root check; --dry-run shows the diff
-dndsim status      # HEAD, pm2, .env/key presence, upstream family, vhost + SSE block,
-                   # local + public /api/health, cert days
+dndsim status      # HEAD, pm2, .env + per-key presence, upstream family, vhost + SSE
+                   # block, local + public /api/health, cert days
+dndsim keys        # per-key present/absent in .env and /etc/environment (names only);
+                   # exit 1 if ANTHROPIC_API_KEY is missing from .env
 dndsim logs        # tail this app's pm2 logs
 ```
 

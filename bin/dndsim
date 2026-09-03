@@ -8,30 +8,41 @@
 # pip into .venv. There is no hand runbook: this script carries the whole
 # bring-up and every deploy, idempotently.
 #
-#   dndsim deploy    sync to origin/main, venv + pip, .env (adopt the key),
+#   dndsim deploy    sync to origin/main, venv + pip, .env (adopt the keys),
 #                    vhost if missing (-> setup), pm2 start/restart, probe
 #   dndsim setup     box-outward half, once: provision-site (DNS, vhost, TLS)
 #                    or the HTTP-only vhost fallback; SSE block in the vhost;
 #                    pm2 boot-hook check. Idempotent; deploy calls it as needed.
 #   dndsim restart   pm2 restart + probe, no code change
 #   dndsim logs      tail the pm2 logs for this app
-#   dndsim status    HEAD, pm2 state, .env/key presence, upstream family,
+#   dndsim status    HEAD, pm2 state, .env + per-key presence, upstream family,
 #                    vhost + SSE block, local + public /api/health, cert days
+#   dndsim keys      read-only: which known keys are present/absent in .env
+#                    and in the key store (names only); exit 1 if
+#                    ANTHROPIC_API_KEY is missing from .env
 #
-# Where the key lives (decided 2026-09-03): ANTHROPIC_API_KEY is kept in
-# /etc/environment, the known-key store on this box. The app reads it from
-# ./.env, which run.sh sources. `deploy` copies it across once — parses the
-# /etc/environment line, appends ANTHROPIC_API_KEY=... to .env (mode 600),
-# never prints it, never puts it in any argv — and launches pm2 under
-# `env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN`, so pm2's dump.pm2 never carries
-# the root shell's copy. The process gets it from run.sh, not from pm2.
+# Where the keys live (decided 2026-09-03): the platform API keys are kept in
+# /etc/environment, the known-key store on this box. The app reads them from
+# ./.env, which run.sh sources. `deploy` copies each one across once — parses
+# the /etc/environment line, appends KEY=... to .env (mode 600), never prints
+# a value, never puts one in any argv — and launches pm2 under
+# `env -u <every known key> -u GITHUB_TOKEN`, so pm2's dump.pm2 never carries
+# the root shell's copies. The process gets them from run.sh, not from pm2.
+#
+# The set of keys is KNOWN_KEYS below (one per LLM platform the app can seat
+# at the table). Any subset is fine: only ANTHROPIC_API_KEY is warned about
+# when missing, because the default DM needs it; a seat whose platform has
+# no key fails at game creation with a message naming the variable. A new
+# platform needs no code change here — DNDSIM_KEYS overrides the list.
 #
 # Env overrides:
 #   DNDSIM_FQDN         default dndsim.lab980.com
 #   DNDSIM_BRANCH       default main
 #   DNDSIM_PORT         default 8071
-#   DNDSIM_KEY_SOURCE   default /etc/environment  (where the key is adopted from)
-#   DNDSIM_ENV_FILE     default <app dir>/.env    (where it is adopted to)
+#   DNDSIM_KEY_SOURCE   default /etc/environment  (where the keys are adopted from)
+#   DNDSIM_ENV_FILE     default <app dir>/.env    (where they are adopted to)
+#   DNDSIM_KEYS         space-separated list of key names to adopt/unset
+#                       (default: the KNOWN_KEYS list below)
 #
 # The app dir is wherever this script's checkout lives (/var/www/dndsim) —
 # derived from the script's own path, so the /usr/local/bin symlink resolves
@@ -46,6 +57,13 @@ BRANCH="${DNDSIM_BRANCH:-main}"
 PORT="${DNDSIM_PORT:-8071}"
 KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
+# The platform API keys, one per LLM platform: adopted from KEY_SOURCE into
+# ENV_FILE by deploy, unset for pm2's launch, reported by status/keys. Names
+# only ever appear in output — never values. DNDSIM_KEYS (space-separated)
+# replaces the list, so a new platform needs no code change.
+DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY"
+read -r -a KNOWN_KEYS <<< "${DNDSIM_KEYS:-$DEFAULT_KNOWN_KEYS}"
+REQUIRED_KEY="ANTHROPIC_API_KEY"   # the default DM's platform; the only key whose absence is a warning
 REPO="ivjames/dnd-sim"
 APP="dnd-sim"                 # pm2 process name, from ecosystem.config.js
 ECOSYSTEM="ecosystem.config.js"
@@ -68,32 +86,42 @@ dndsim — operate dndsim.lab980.com (Python/Flask app behind nginx, pm2 process
 
 Usage:
   dndsim deploy [--no-install]   sync to origin/main, venv + pip, .env (adopts
-                                 ANTHROPIC_API_KEY from /etc/environment), vhost
-                                 if missing (runs setup), pm2 start/restart, probe
+                                 every known platform key from /etc/environment),
+                                 vhost if missing (runs setup), pm2 start/restart
+                                 with the keys unset, probe
   dndsim setup [--dry-run]       once per box, idempotent: DNS + vhost + TLS via
                                  provision-site (or the HTTP-only vhost fallback),
                                  SSE block in the vhost, pm2 boot-hook check
   dndsim restart                 pm2 restart + probe (re-reads .env)
   dndsim logs [-n N]             tail pm2 logs
-  dndsim status                  HEAD, pm2, .env/key presence, upstream family,
-                                 vhost + SSE block, local/public /api/health, cert
+  dndsim status                  HEAD, pm2, .env + per-key presence, upstream
+                                 family, vhost + SSE block, local/public
+                                 /api/health, cert
+  dndsim keys                    read-only: per-key present/absent in .env and in
+                                 the key store (names only, never values); exit 1
+                                 if ANTHROPIC_API_KEY is missing from .env
 
 First time on the droplet (as root), the whole bring-up is:
   git clone https://github.com/ivjames/dnd-sim /var/www/dndsim
   ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim
   dndsim deploy
 
-The one hand step is having ANTHROPIC_API_KEY in /etc/environment beforehand.
+The one hand step is having the platform keys in /etc/environment beforehand.
+Known keys (any subset is fine; ANTHROPIC_API_KEY is the one the default DM
+needs, and a seat whose platform has no key fails at game creation naming it):
+  ANTHROPIC_API_KEY  OPENAI_API_KEY  GEMINI_API_KEY (or GOOGLE_API_KEY, adopted
+  under the GEMINI name)  XAI_API_KEY  MISTRAL_API_KEY  DEEPSEEK_API_KEY
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
-     DNDSIM_KEY_SOURCE (default /etc/environment), DNDSIM_ENV_FILE (default ./.env).
+     DNDSIM_KEY_SOURCE (default /etc/environment), DNDSIM_ENV_FILE (default ./.env),
+     DNDSIM_KEYS (space-separated key names; replaces the known list above).
 USAGE
 }
 
 need_root() { [ "$(id -u)" -eq 0 ] || die "run as root."; }
 
 # ---------------------------------------------------------------------------
-# .env handling. The key is read from KEY_SOURCE and written to ENV_FILE with
+# .env handling. Each key is read from KEY_SOURCE and written to ENV_FILE with
 # shell builtins only (read/printf), so it never appears in any process's
 # argv — /proc/<pid>/cmdline is world-readable, environ is not. Nothing here
 # logs a value. `env_file_get` is the one parser; tests source this file and
@@ -137,6 +165,32 @@ env_file_seed() {  # $1=file $2=KEY $3=default — write only if absent/empty
   if ! env_file_has "$1" "$2"; then env_file_append "$1" "$2" "$3"; log "$1: seeded $2=$3"; fi
 }
 
+# Alias sources: a key the store may hold under a different name. Adoption
+# reads the alias only when the store lacks the canonical name, and writes the
+# value to .env under the canonical name — the app reads one name per platform.
+key_alias() {  # $1=KEY -> alias name on stdout ('' if none)
+  case "$1" in GEMINI_API_KEY) printf 'GOOGLE_API_KEY';; esac
+}
+
+source_key_name() {  # $1=KEY -> the name KEY_SOURCE actually holds it under ('' if neither)
+  local key="$1" alias
+  if env_file_has "$KEY_SOURCE" "$key"; then printf '%s' "$key"; return 0; fi
+  alias="$(key_alias "$key")"
+  if [ -n "$alias" ] && env_file_has "$KEY_SOURCE" "$alias"; then printf '%s' "$alias"; fi
+  return 0
+}
+
+key_matrix() {  # $1=file [$2=--aliases] -> "present: A B  absent: C" (names only); aliases noted as A(via B)
+  local file="$1" aliases="${2:-}" key src present="" absent=""
+  for key in "${KNOWN_KEYS[@]}"; do
+    if env_file_has "$file" "$key"; then present="$present $key"
+    elif [ "$aliases" = "--aliases" ] && src="$(source_key_name "$key")" && [ -n "$src" ] && [ "$src" != "$key" ]; then
+      present="$present $key(via $src)"
+    else absent="$absent $key"; fi
+  done
+  printf 'present:%s  absent:%s' "${present:- none}" "${absent:- none}"
+}
+
 ensure_env() {
   local envf="$ENV_FILE"
   if [ "$envf" = "$ROOT/.env" ]; then
@@ -147,19 +201,24 @@ ensure_env() {
   env_file_seed "$envf" PORT "$PORT"
   env_file_seed "$envf" HOST "127.0.0.1"
   env_file_seed "$envf" DND_SIM_DB "$ROOT/data/dndsim.sqlite3"
-  if env_file_has "$envf" ANTHROPIC_API_KEY; then
-    log "$envf: ANTHROPIC_API_KEY present"
-  else
-    local key
-    key="$(env_file_get "$KEY_SOURCE" ANTHROPIC_API_KEY)"
-    if [ -n "$key" ]; then
-      env_file_append "$envf" ANTHROPIC_API_KEY "$key"
-      unset key
-      log "$envf: adopted ANTHROPIC_API_KEY from $KEY_SOURCE"
-    else
-      warn "no ANTHROPIC_API_KEY in $envf or $KEY_SOURCE — live games will fail (mock mode still works)."
-      warn "put it in $KEY_SOURCE (ANTHROPIC_API_KEY=sk-ant-...) and re-run: dndsim deploy"
-    fi
+  # One pass over the known keys: adopt each one that .env lacks (absent or
+  # empty) and the store has, under its canonical name. Never overwrites an
+  # existing value; never prints one. A second run adopts nothing.
+  local key src val
+  for key in "${KNOWN_KEYS[@]}"; do
+    env_file_has "$envf" "$key" && continue
+    src="$(source_key_name "$key")"
+    [ -n "$src" ] || continue
+    val="$(env_file_get "$KEY_SOURCE" "$src")"
+    env_file_append "$envf" "$key" "$val"
+    unset val
+    if [ "$src" = "$key" ]; then log "$envf: adopted $key from $KEY_SOURCE"
+    else log "$envf: adopted $key from $KEY_SOURCE (held there as $src)"; fi
+  done
+  log "$envf: keys $(key_matrix "$envf")"
+  if ! env_file_has "$envf" "$REQUIRED_KEY"; then
+    warn "no $REQUIRED_KEY in $envf or $KEY_SOURCE — the default DM needs it; live games will fail (mock mode still works)."
+    warn "put it in $KEY_SOURCE ($REQUIRED_KEY=sk-ant-...) and re-run: dndsim deploy"
   fi
   chmod 600 "$envf"
 }
@@ -167,10 +226,17 @@ ensure_env() {
 # ---------------------------------------------------------------------------
 # pm2. Every start/restart goes through pm2_clean: pm2 snapshots the launching
 # shell's environment into ~/.pm2/dump.pm2, and a root login shell on this box
-# has ANTHROPIC_API_KEY from /etc/environment. The app gets the key from
-# run.sh sourcing .env instead, so pm2 never needs to see it.
+# has every platform key from /etc/environment. The app gets them from run.sh
+# sourcing .env instead, so pm2 never needs to see any of them. The unset list
+# is built from KNOWN_KEYS (plus GITHUB_TOKEN), so a key added to the list is
+# adopted and unset in the same change.
 # ---------------------------------------------------------------------------
-pm2_clean() { env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN pm2 "$@"; }
+pm2_unset_names() { printf '%s ' "${KNOWN_KEYS[@]}" GITHUB_TOKEN | sed 's/ $//'; }
+pm2_clean() {
+  local args=() k
+  for k in "${KNOWN_KEYS[@]}" GITHUB_TOKEN; do args+=(-u "$k"); done
+  env "${args[@]}" pm2 "$@"
+}
 
 # pm2's own exit codes are not reliable for "is it registered", so ask jlist.
 pm2_state() {
@@ -460,16 +526,15 @@ cmd_status() {
   if [ -x "$PY" ]; then printf 'python:    %s (%s)\n' "$("$PY" --version 2>&1)" "$PY"
   else printf 'python:    no .venv — run: dndsim deploy\n'; fi
   printf 'pm2:       %s\n' "$(pm2_state)"
-  local kstat="absent" sstat="absent"
   if [ -e "$ENV_FILE" ]; then
-    env_file_has "$ENV_FILE" ANTHROPIC_API_KEY && kstat="present"
-    printf 'env:       %s  ANTHROPIC_API_KEY=%s  PORT=%s\n' "$ENV_FILE" "$kstat" "$(env_file_get "$ENV_FILE" PORT)"
+    printf 'env:       %s  PORT=%s\n' "$ENV_FILE" "$(env_file_get "$ENV_FILE" PORT)"
+    printf 'keys:      %s\n' "$(key_matrix "$ENV_FILE")"
   else
     printf 'env:       %s missing — run: dndsim deploy\n' "$ENV_FILE"
+    printf 'keys:      (no .env)\n'
   fi
-  if [ -r "$KEY_SOURCE" ]; then env_file_has "$KEY_SOURCE" ANTHROPIC_API_KEY && sstat="present"
-  else sstat="unreadable"; fi
-  printf 'key store: %s  ANTHROPIC_API_KEY=%s\n' "$KEY_SOURCE" "$sstat"
+  if [ -r "$KEY_SOURCE" ]; then printf 'key store: %s  %s\n' "$KEY_SOURCE" "$(key_matrix "$KEY_SOURCE" --aliases)"
+  else printf 'key store: %s  unreadable\n' "$KEY_SOURCE"; fi
   printf 'upstream:  %s\n' "$(upstream_family 2>&1)"
   local vhost
   if vhost="$(vhost_path)"; then
@@ -492,6 +557,21 @@ cmd_status() {
   fi
 }
 
+cmd_keys() {
+  # Read-only, names only. The same matrix `status` prints, for both files,
+  # plus what pm2's launch unsets. Exit 1 when the default DM's key is not in
+  # .env, so a bring-up script can gate on it.
+  printf 'known keys: %s\n' "${KNOWN_KEYS[*]}"
+  if [ -e "$ENV_FILE" ]; then printf 'env:        %s  %s\n' "$ENV_FILE" "$(key_matrix "$ENV_FILE")"
+  else printf 'env:        %s missing — run: dndsim deploy\n' "$ENV_FILE"; fi
+  if [ -r "$KEY_SOURCE" ]; then printf 'key store:  %s  %s\n' "$KEY_SOURCE" "$(key_matrix "$KEY_SOURCE" --aliases)"
+  else printf 'key store:  %s  unreadable\n' "$KEY_SOURCE"; fi
+  printf 'pm2 unsets: %s\n' "$(pm2_unset_names)"
+  if env_file_has "$ENV_FILE" "$REQUIRED_KEY"; then return 0; fi
+  warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Put it in $KEY_SOURCE and run: dndsim deploy"
+  return 1
+}
+
 # Sourced for tests: functions are defined, stop before dispatching.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
@@ -501,6 +581,7 @@ case "${1:-}" in
   restart) shift; cmd_restart "$@";;
   logs)    shift; cmd_logs "$@";;
   status)  shift; cmd_status "$@";;
+  keys)    shift; cmd_keys "$@";;
   -h|--help|help|"") usage;;
   *) die "unknown command: $1 (see --help)";;
 esac

@@ -1,14 +1,19 @@
 // PM2 process definition for dnd-sim (lab980 protocol).
 //
 // Started and restarted by `dndsim deploy` (bin/dndsim) — never by hand:
-//   env -u ANTHROPIC_API_KEY -u GITHUB_TOKEN pm2 start ecosystem.config.js --only dnd-sim
+//   env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u XAI_API_KEY \
+//       -u MISTRAL_API_KEY -u DEEPSEEK_API_KEY -u GITHUB_TOKEN \
+//       pm2 start ecosystem.config.js --only dnd-sim
+//   (the unset list is KNOWN_KEYS in bin/dndsim, plus GITHUB_TOKEN)
 //
-// ANTHROPIC_API_KEY is NOT set here and is NOT inherited from the shell.
-// It lives in /var/www/dndsim/.env (mode 600, gitignored), which `dndsim
-// deploy` writes by copying the value out of /etc/environment, and which
-// run.sh sources before exec'ing python. pm2 is deliberately launched with
-// the key unset so ~/.pm2/dump.pm2 never carries it. Values in .env override
-// the env block below. Never commit the key to this file.
+// The platform API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
+// XAI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY) are NOT set here and are
+// NOT inherited from the shell. They live in /var/www/dndsim/.env (mode 600,
+// gitignored), which `dndsim deploy` writes by copying each value out of
+// /etc/environment, and which run.sh sources before exec'ing python. pm2 is
+// deliberately launched with every known key unset so ~/.pm2/dump.pm2 never
+// carries one. Values in .env override the env block below. Never commit a
+// key to this file.
 module.exports = {
   apps: [
     {
