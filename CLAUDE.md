@@ -62,8 +62,9 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
   `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides (full table in
   README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
   no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600) and adopts
-  every known key it lacks into it from `/etc/environment` (`GOOGLE_API_KEY`
-  there is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
+  every known key it lacks into it from `/etc/environment`, then from
+  `/var/www/ffc/server/.env` (first file holding a key wins; the list is
+  `DNDSIM_KEY_SOURCE`; `GOOGLE_API_KEY` is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
   `bin/dndsim`, overridable with `DNDSIM_KEYS`, and the same list is what
   the pm2 launch unsets. `dndsim keys` prints which known keys `.env` and
   the store hold (names only) and exits 1 without `ANTHROPIC_API_KEY`. State

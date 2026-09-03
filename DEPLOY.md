@@ -25,7 +25,10 @@ the root shell's copies — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
-The one hand step: make sure the keys are in `/etc/environment`. The known
+The one hand step: make sure the keys are in `/etc/environment`. `dndsim
+deploy` also consults `/var/www/ffc/server/.env`, second, because that is
+where this box's platform keys were found on 2026-09-03; the first file that
+holds a key wins, and `DNDSIM_KEY_SOURCE` (below) changes the list. The known
 names, one per LLM platform the app can seat at the table:
 
 | key | platform |
@@ -207,7 +210,10 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 ## Overrides
 
 `DNDSIM_FQDN` (default `dndsim.lab980.com`), `DNDSIM_BRANCH` (`main`),
-`DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (`/etc/environment`),
+`DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (colon-separated list of files the
+keys are adopted from, first hit wins; default
+`/etc/environment:/var/www/ffc/server/.env` — set it to just
+`/etc/environment` to stop the second file being consulted),
 `DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
 to adopt, report and unset for pm2; default is the eight known keys above —
 setting it replaces the list, so include `ANTHROPIC_API_KEY`).
