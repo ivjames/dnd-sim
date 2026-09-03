@@ -10,6 +10,7 @@ from engine import srd
 from engine.dice import RNG, average_of
 
 __all__ = ["CharacterSheet", "build_character", "monster_to_combatant",
+           "pc_to_combatant", "starting_resources", "fresh_turn",
            "CharacterBuildError", "ability_mod"]
 
 ABILITIES = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
@@ -194,9 +195,14 @@ def _default_spells(klass_row: dict, level: int, mod_wis: int) -> list[str]:
     known = list(lists.get("cantrips", []))[: int(klass_row["cantrips_known"].get(str(level), 3))]
     max_slot = max((int(k) for k in srd.spell_slots_for(klass_row["name"], level)), default=0)
     prepared_budget = max(1, level + mod_wis)
+    # Interleave the per-level lists so a caster with 3rd-level slots actually
+    # prepares a 3rd-level spell instead of exhausting the budget on 1st-level.
+    columns = [list(lists.get(str(lv), [])) for lv in range(1, max_slot + 1)]
     leveled: list[str] = []
-    for lv in range(1, max_slot + 1):
-        leveled.extend(lists.get(str(lv), []))
+    while any(columns):
+        for col in columns:
+            if col:
+                leveled.append(col.pop(0))
     return known + leveled[:max(prepared_budget, 4)]
 
 
@@ -351,6 +357,46 @@ def starting_resources(sheet: CharacterSheet) -> dict:
     return res
 
 
+def fresh_turn(speed: int, attacks: int = 0) -> dict:
+    """A turn budget with nothing spent yet (CONTRACTS §1.4 `Combatant.turn`)."""
+    return {
+        "action": False,
+        "bonus": False,
+        "reaction": False,
+        "movement_left": int(speed),
+        "attacks_left": int(attacks),
+        "free_object": False,
+    }
+
+
+def pc_to_combatant(sheet: CharacterSheet, position: tuple[int, int] = (0, 0)):
+    """Turn a CharacterSheet into a fresh party Combatant (see Amendment B.2)."""
+    from engine.state import Combatant  # local import: state imports this module
+
+    return Combatant(
+        id=sheet.id,
+        name=sheet.name,
+        side="party",
+        kind="pc",
+        sheet=sheet,
+        stat_block=None,
+        hp=sheet.max_hp,
+        max_hp=sheet.max_hp,
+        temp_hp=0,
+        ac=sheet.ac,
+        speed=sheet.speed,
+        abilities=dict(sheet.abilities),
+        save_profs=list(sheet.saves),
+        skill_profs=list(sheet.skills),
+        proficiency=sheet.proficiency,
+        position=(int(position[0]), int(position[1])),
+        size=sheet.size,
+        resources=starting_resources(sheet),
+        turn=fresh_turn(sheet.speed),
+        inventory=list(sheet.inventory),
+    )
+
+
 # ------------------------------------------------------------- monsters
 def monster_to_combatant(name: str, cid: str, rng: RNG, roll_hp: bool = False):
     """Instantiate a monster stat block as a Combatant."""
@@ -383,6 +429,7 @@ def monster_to_combatant(name: str, cid: str, rng: RNG, roll_hp: bool = False):
         position=(0, 0),
         size=block.get("size", "M"),
         resources=_monster_resources(block),
+        turn=fresh_turn(int(block["speed"])),
         inventory=[],
     )
 
@@ -393,6 +440,6 @@ def _monster_resources(block: dict) -> dict:
     if sc:
         res["spell_slots"] = {int(k): int(v) for k, v in (sc.get("slots") or {}).items()}
     for a in block.get("actions", []):
-        if "Recharge" in (a.get("desc") or ""):
+        if a.get("recharge") or "Recharge" in (a.get("desc") or ""):
             res.setdefault("recharge", {})[a["name"]] = True
     return res
