@@ -674,7 +674,9 @@ def test_price_lookup_by_the_full_provider_model_key():
     # the host key never bleeds into DeepSeek's own rows or vice versa
     assert price_for("deepinfra:deepseek-ai/DeepSeek-V3.2") != price_for("deepseek-v4-flash")
     # a dated/suffixed host id still prices by the boundary-prefix rule
-    assert price_for("deepinfra:Qwen/Qwen3-32B-2026") == (0.08, 0.28)
+    # A dated or suffixed host variant has no verified rate of its own and must
+    # NOT inherit the base row (Codex round 3): host keys match exactly.
+    assert not has_price("deepinfra:Qwen/Qwen3-32B-2026")
     # V3.2 is its own row, longer than the V3 row it also prefix-matches
     assert price_for("siliconflow:deepseek-ai/DeepSeek-V3") == (0.25, 1.0)
 
