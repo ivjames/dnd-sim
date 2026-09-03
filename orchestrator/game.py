@@ -33,6 +33,7 @@ MAX_ACTIONS_PER_TURN = 8
 DIALOGUE_MEMORY = 8  # spoken lines kept for the repetition guard
 SELF_REPEAT = 0.5  # word overlap at which a speaker is repeating itself
 ECHO_REPEAT = 0.7  # ... at which one character is parroting another
+FUZZY_MIN_WORDS = 4  # below this, only identical content counts as a repeat
 MAX_TURNS_PER_COMBAT = 400
 DEFAULT_BEATS_PER_SCENE = 2
 RECENT_EVENTS = 12
@@ -236,6 +237,12 @@ class Game:
         rephrasing itself, or another character parroting it back — is dropped
         rather than printed — unless it contradicts that line, which is a new
         contribution however alike the wording. Returns whether it was emitted.
+
+        Overlap is only trusted on lines of `FUZZY_MIN_WORDS` content words or
+        more. Below that a single word is most of the line, so "heal me" and
+        "heal him" or "I go left" and "I go right" score as high as a genuine
+        repeat does; short lines are therefore suppressed only when their
+        content is identical, which is what a repeated bark actually is.
         """
         text = " ".join(str(speech or "").split())
         if not text:
@@ -244,6 +251,10 @@ class Game:
         for prev_actor, prev_words, prev_negated in self._spoken:
             if negated != prev_negated:
                 continue  # one of the two contradicts the other; not a repeat
+            if words == prev_words:
+                return False  # the same thing said again, at any length
+            if min(len(words), len(prev_words)) < FUZZY_MIN_WORDS:
+                continue  # too short to judge by overlap: see _say's docstring
             limit = SELF_REPEAT if prev_actor == actor_id else ECHO_REPEAT
             if _overlap(words, prev_words) >= limit:
                 return False
@@ -799,22 +810,40 @@ _NEGATIONS = frozenset(
 )
 
 
+# Function words: they carry the grammar rather than the point, and two lines
+# that differ only in these are the same line. Everything else is content —
+# pronouns and short nouns included, since "heal me" and "heal him" differ by
+# nothing else. Negations are never listed here.
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "so", "yet",
+        "of", "to", "in", "into", "on", "onto", "upon", "at", "by", "for",
+        "from", "with", "as",
+        "is", "are", "was", "were", "be", "been", "being", "am",
+        "do", "does", "did", "has", "have", "had",
+        "will", "shall", "would", "should", "can", "could", "may", "might",
+        "must",
+    }
+)
+
+
 def _line_key(text: str) -> tuple[frozenset, bool]:
     """What a repetition is judged on: content words, and whether the line negates.
 
-    Short words carry the grammar rather than the point, so dropping them keeps
-    "Sir Zombie, your desecration ends here" and "Sir Zombie, your desecration
-    ends NOW" the same line. Negations are the exception that has to survive:
-    "open the door" and "do not open the door" reduce to the same words and mean
-    opposite things, so the flag is compared before the overlap is. Apostrophes
-    go first, so "don't" reduces to "dont" rather than to two fragments. If
-    nothing survives the length filter (a bark like "Click."), fall back to
-    every word, so identical barks still compare equal.
+    Function words are dropped, so "Sir Zombie, your desecration ends here" and
+    "Sir Zombie, your desecration ends NOW" still read as one line. Length is
+    deliberately not the test: "heal me" and "heal him", or "attack the goblin"
+    and "attack the orc", differ only in a word of two or three letters and are
+    different instructions. Negation is handled separately, by flag rather than
+    by word, because "open the door" and "do not open the door" overlap too far
+    to be told apart by words at all. Apostrophes go first, so "don't" reduces
+    to "dont" rather than to two fragments. If a line is nothing but function
+    words, fall back to all of them so it still compares equal to itself.
     """
     flat = text.lower().replace("'", "").replace("\u2019", "")
     words = [w for w in re.split(r"[^0-9a-z]+", flat) if w]
     negated = any(w in _NEGATIONS for w in words)
-    return frozenset([w for w in words if len(w) >= 4] or words), negated
+    return frozenset([w for w in words if w not in _STOPWORDS] or words), negated
 
 
 def _overlap(a: frozenset, b: frozenset) -> float:

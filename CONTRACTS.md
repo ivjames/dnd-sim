@@ -726,16 +726,29 @@ emitted — but a turn is a beat at the table, not a speech per die roll.
    own words; now a character who has nothing to add votes and stays quiet.
 
 3. **`Game._say(actor_id, name, speech) -> bool`** is the only path to a
-   `dialogue` event. It drops a line whose content-word overlap (Jaccard over
-   words of 4+ letters) with a recent line is ≥ `SELF_REPEAT` (0.5) for the same
-   speaker or ≥ `ECHO_REPEAT` (0.7) for a different one, over the last
-   `DIALOGUE_MEMORY` (8) lines. The thresholds are judgment, not measurement;
-   they are module constants in `orchestrator/game.py` so they can be tuned.
-   Negation is the exception to the word filter: "open the door" and "do not
-   open the door" reduce to the same content words and mean opposite things, so
-   `_line_key` returns a negation flag beside the word set and a line that
-   negates is never a repeat of one that does not. A character reversing itself
-   or contradicting the party is a contribution, however alike the wording.
+   `dialogue` event. Against each of the last `DIALOGUE_MEMORY` (8) lines it
+   drops the new one when the content words are identical, or — for lines of
+   `FUZZY_MIN_WORDS` (4) content words or more — when the Jaccard overlap is
+   ≥ `SELF_REPEAT` (0.5) for the same speaker or ≥ `ECHO_REPEAT` (0.7) for a
+   different one. `_line_key` decides what "content" means: function words out
+   (`_STOPWORDS`), everything else in, length no test of meaning.
+
+   Two rules exist because a word-overlap heuristic reads wording, not sense,
+   and the failures are asymmetric — a false repeat silences a real
+   contribution, while a missed one costs a line of noise. So:
+
+   - **Negation is compared before overlap.** "Open the door" and "do not open
+     the door" share every content word and mean opposite things, so `_line_key`
+     returns a negation flag beside the word set (`_NEGATIONS`, apostrophes
+     stripped first so "don't" arrives as "dont"), and a line that negates is
+     never a repeat of one that does not.
+   - **Overlap is not trusted on short lines.** In "heal me" / "heal him" or
+     "I go left" / "I go right" one word is most of the line, and the score is
+     as high as a real repeat's; below `FUZZY_MIN_WORDS` only identical content
+     counts, which is what a repeated bark ("Click.") actually is.
+
+   The thresholds are judgment, not measurement; all four constants are module
+   constants in `orchestrator/game.py` so they can be tuned.
 
 4. **Speech word caps** dropped from 40 to 20 in combat (`SPEECH_WORDS` in both
    agents) and to 25 for scene choices (`player.SCENE_SPEECH_WORDS`), and the

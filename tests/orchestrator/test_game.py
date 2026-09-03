@@ -183,6 +183,24 @@ def test_the_words_alone_would_not_have_saved_a_negation(negative):
     assert game_mod._overlap(words, positive) >= SELF_REPEAT
 
 
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("Heal me!", "Heal him!"),                       # different patient
+        ("Attack the goblin", "Attack the orc"),         # different target
+        ("I go left.", "I go right."),                   # different direction
+        ("Give it to Crick.", "Give it to Nyra."),       # different hands
+    ],
+)
+def test_say_keeps_a_line_that_changes_the_target(cfg, first, second):
+    """Two-letter words carry the instruction; length is no test of meaning."""
+    for speaker in ("pc_1", "pc_2"):  # the same mouth correcting itself, or another
+        game, _ = make_game(cfg)
+        game._emit_new = lambda *a, **k: None
+        assert game._say("pc_1", "Ysolde", first)
+        assert game._say(speaker, "Crick", second), f"{second!r} suppressed by {first!r}"
+
+
 def test_say_drops_an_identical_bark_from_another_monster(cfg):
     game, _ = make_game(cfg)
     game._emit_new = lambda *a, **k: None
