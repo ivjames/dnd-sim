@@ -160,10 +160,15 @@
 
       case 'move': {
         m = /^(.+?) moves\b/.exec(text);
-        var mover = (m && m[1]) || nameFrom(names, ev.actor);
-        if (!mover) return null;
+        if (!m) {
+          // Not "<name> moves": something else moved (a flaming sphere being
+          // rolled, a shove). The actor did not, so keep the engine's own
+          // sentence rather than claiming the actor moved.
+          var moved = stripDice(text.replace(/\s+to\s*\(\s*-?\d+\s*,\s*-?\d+\s*\)/, ''));
+          return moved ? moved.replace(/[.!]?$/, '.') : null;
+        }
         var ft = d.ft !== undefined ? d.ft : null;
-        return mover + (ft !== null ? ' moves ' + ft + ' feet.' : ' moves.');
+        return m[1] + (ft !== null ? ' moves ' + ft + ' feet.' : ' moves.');
       }
 
       case 'spell_cast': {

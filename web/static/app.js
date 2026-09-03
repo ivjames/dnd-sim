@@ -470,7 +470,10 @@
     heldUtt: null          // keeps the unlock utterance referenced until it ends
   };
 
-  function voiceArmed() { return V.supported && V.settings.enabled && V.unlocked; }
+  // Hidden pages stay disarmed: the SSE stream keeps flowing in the background,
+  // so a cancel on hide is not enough — the next event would speak again.
+  function pageHidden() { return typeof document !== 'undefined' && !!document.hidden; }
+  function voiceArmed() { return V.supported && V.settings.enabled && V.unlocked && !pageHidden(); }
 
   function voiceLoadSettings() {
     try {
@@ -886,7 +889,8 @@
     });
     window.addEventListener('resize', function () { drawGrid(); });
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) voiceCancelAll();
+      if (document.hidden) { voiceCancelAll(); }
+      else { V.sinceSeq = S.lastSeq || V.sinceSeq; }  // back: speak only what arrives from now on
       if (!document.hidden && S.gameId && !TERMINAL[S.status]) {
         if (!S.es || S.es.readyState === 2) connect(S.gameId);
         refreshSnapshot();
