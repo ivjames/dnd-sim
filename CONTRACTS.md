@@ -374,3 +374,117 @@ Two smaller web-side conventions, recorded so nobody is surprised:
     overshoot by more than one call. Exceeding it emits a `cost` event and sets
     status `budget_exceeded`; a final `cost` event with the full ledger is emitted
     on every exit path.
+
+### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
+
+The SRD tables in `engine/data/` are consumed exactly as shipped (49 spells, 29
+monsters, 38 weapons, 13 armors, 15 conditions, 17 equipment items, 4 races,
+4 classes). **No data record was changed.** What the engine reads, and the two
+places it derives something the record does not literally carry:
+
+1. **Race names.** `examples/*.json` (and PLAN.md) write races as
+   `"Dwarf (Hill)"` / `"Elf (High)"` / `"Halfling (Lightfoot)"`; `races.json`
+   names them `"Hill Dwarf"` etc. `srd.race()` now accepts both forms
+   (`"X (Y)"` → `"Y X"`). No change to either file.
+
+2. **`characters.pc_to_combatant(sheet, position=(0, 0))`** added (closes B.2),
+   plus `characters.fresh_turn(speed)`; `monster_to_combatant` fills `turn` the
+   same way (the turn budget lives on state, never in the data).
+   `starting_resources` reads the class `resources` table
+   (`{"second_wind": {"1": 1}, ...}`, count at the highest level reached) and
+   `sneak_attack_dice`; `_default_spells` interleaves spell levels so a level-5
+   caster prepares 3rd-level spells within its prepared budget.
+
+3. **Spell `effect` vocabulary consumed** (spells.json). Kinds: `attack`
+   (spell attack, or `auto_hit`; `rays` = separate bolts; `add_mod`;
+   `choose_damage_type` via `params.damage_type`; riders `speed_reduction` +
+   `effect_duration_rounds`, `no_reactions_rounds`, `no_healing_rounds`,
+   `grants_advantage_rounds`, `drain_half`; `summoned_weapon` = Spiritual
+   Weapon strikes as a bonus action for `duration_rounds`), `save` (damage,
+   `half_on_save`, `area` shapes sphere/cone/cube/line on the grid, `push_ft`,
+   `ignores_cover`, `persistent_aura`: Spirit Guardians = aura around the caster
+   checked at the start of each enemy turn, Flaming Sphere = a placed sphere
+   that burns creatures ending their turn within 5 ft and can be moved 30 ft
+   and rammed as a bonus action), `debuff` (save-or-condition with
+   `condition_duration`, `repeat_save` at the end of the target's turn,
+   `only_types`/`immune_types`, `ends_on_attack`), `heal` (`damage` is the
+   healing dice, `add_mod`, Disciple of Life +2+slot), `buff` (`ac_bonus`,
+   `set_base_ac`, `attack_bonus_die`/`save_bonus_die`/`check_bonus_die` with
+   `uses`, `temp_hp`, `max_hp_bonus`, `attackers_disadvantage`,
+   `speed_multiplier`, `extra_action` (Haste: one extra attack/Dash/Disengage/
+   Hide per turn; the target loses its next turn when Haste ends),
+   `fly_speed` (recorded only — the grid is flat), `max_healing`,
+   `save_advantage`, `conditions_applied`, `trigger: attacked` = Shield,
+   auto-cast as a reaction only when it converts a hit into a miss and absorbs
+   Magic Missile), `utility` (`stabilize`, `removes_conditions`, `teleport_ft`,
+   `dispel_level`; utility records with none of these — Light, Mage Hand,
+   Prestidigitation, Detect Magic — are never enumerated in combat).
+   `cantrip_scaling` multiplies the dice at caster levels 5/11/17. `upcast`
+   strings are parsed as `+NdF/slot`, `+N target|dart|ray/slot`, `+N/slot`
+   (flat), with an optional `/2slots` step. The top-level `range` string
+   ("Self (15-foot cone)") decides whether a shape originates at the caster.
+   Only `summon_none` never appears in the data; the resolver would emit the
+   cast event and nothing else.
+
+4. **Monster fields consumed** (monsters.json): `actions[*].kind`
+   (`melee_weapon|ranged_weapon|melee_or_ranged`), `attack_bonus`, `reach`,
+   `range`, `damage`, `damage_type`, and `extra[*]` riders (`save`+`dc` with
+   `condition`/`duration`/`repeat_save`/`immune_races`, `damage` +
+   `half_on_save`, `escape_dc` → repeat STR save, `max_hp_reduction`,
+   `ability_drain` + `amount`); `multiattack` (ordered names → attacks per
+   Attack action, in that order); `bonus_actions` (`disengage`/`hide` →
+   Nimble Escape, `dash_toward_enemy` → Aggressive); `spellcasting`
+   (`cantrips` + `spells: {level: [...]}`, `slots`, `dc`, `attack_bonus`,
+   `level`); "Recharge N-6" parsed from an action's `desc`; traits by `id`, or
+   by slugified `name` when the record has no id (Nimble Escape): `pack_tactics`,
+   `martial_advantage` (`damage`), `undead_fortitude`, `regeneration` (`amount`,
+   `stopped_by`), `stench_aura` (`save`, `dc`, `condition`, `radius`),
+   `turning_defiance`, `dark_devotion`, `two_heads`
+   (`save_advantage_conditions`). Not modelled: `surprise_attack`, `rampage`,
+   sunlight traits, Parry / Redirect Attack reactions.
+   **Gap:** the Goblin Boss record lists `["Scimitar", "Scimitar"]` with no
+   marker for the SRD's "the second attack has disadvantage"; the engine
+   honours a `{"name": ..., "disadvantage": true}` entry if one is ever added
+   but the shipped record plays both attacks straight.
+
+5. **Conditions** come from conditions.json flags: `attack_by`/`attack_own`
+   (prone's `"special"` = advantage within 5 ft, disadvantage beyond),
+   `auto_fail_saves`, `save_disadvantage`, `auto_crit_within_5`,
+   `incapacitated`, `speed_zero` (via state.py). Two engine-only markers ride on
+   `Combatant.conditions` without a data record: `hidden` (after Hide) and
+   `turned` (Turn Undead). Races: `saving_throw_advantages` tags (`poisoned` is
+   matched against poison damage too), `damage_resistances`, `hp_per_level`,
+   `weapon_proficiencies`, feature `lucky` (reroll natural 1 on attacks).
+   Equipment: `use: {kind: heal, amount, cost}` drives `use_item`.
+
+6. **Enumeration policy** (`legal_actions`), for token frugality and sane mock
+   play: attack templates target living, non-downed enemies only (nearest 5 for
+   ranged weapons, nearest 4 for single-target spells) — a creature at 0 HP is
+   never offered as a target, though damage-while-down is still resolved
+   (opportunity attacks, areas); upcast variants only for area / multi-target
+   spells (base + highest slot); one `move` per turn plus one per Dash, with up
+   to 6 `params.suggested` squares (approach the nearest enemies, then two
+   kiting squares; a turned creature only gets squares away from its turner);
+   `path` accepts `[[x,y], ...]`, `[x,y]` or a string; multi-target spells fall
+   back to `params.suggested` when the chooser sends an empty `targets` list;
+   the SRD bonus-action-spell rule is enforced; `ready`, `death_save` and
+   `skill_check` are not enumerated (death saves are automatic in
+   `advance_turn`; skill checks go through `skill_check()`).
+
+7. **Turn mechanics.** `advance_turn` ends the current turn (repeat saves, then
+   duration ticks, timed buffs, concentration duration, Flaming Sphere burn),
+   then advances past dead creatures and rolls the automatic death save for
+   dying ones (skipping them unless a natural 20 revives them), then runs
+   start-of-turn effects for the next actor (regeneration, recharge, auras).
+   `start_combat(state, rng_state)` uses `rng_state` when given, else
+   `state.rng`. `combat_over` treats "conscious" as `hp > 0 and not dead`.
+   Transient per-creature effects live in `Combatant.flags` (`buffs`,
+   `ac_bonus`, `speed_penalty`, `speed_multiplier`, `dodging`,
+   `spiritual_weapon`, `spirit_guardians`, `flaming_sphere`, ...), which
+   state.py already serializes; concentration-sourced conditions and buffs
+   carry `source="<caster_id>:<spell>"` so breaking concentration can find them.
+
+8. **Events.** Attack events carry the damage roll inline in `text` (per the
+   §1.5 example) and `data.{hit,crit,mode,reasons,ac,damage}`; `save` events
+   carry `data.target`. Reactions (opportunity attacks, auto-cast Shield,
+   Uncanny Dodge) are emitted *after* the attack event they answer.

@@ -5,6 +5,12 @@ and returns a NEW GameState plus the events that explain what happened. All
 randomness comes from the RNG snapshot carried in `state.rng`. Nothing here
 does I/O, spawns threads, or talks to a model — the LLMs only ever pick one of
 the `ActionTemplate`s this module hands them.
+
+The resolver reads the SRD tables in engine/data as they are: the closed
+`effect` vocabulary in spells.json, the `extra` riders / `multiattack` /
+`bonus_actions` / `spellcasting` fields of monsters.json, the per-condition
+flags in conditions.json, and `equipment[*].use`. See the engine Amendment in
+CONTRACTS.md for the exact keys consumed.
 """
 
 from __future__ import annotations
@@ -14,9 +20,9 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from engine import srd
-from engine.dice import RNG, RollResult, average_of
+from engine.dice import RNG, RollResult, average_of, parse_expr
 from engine.events import Event
-from engine.state import Combatant, Condition, GameState, Grid, INCAPACITATING
+from engine.state import Combatant, Condition, GameState, Grid
 
 __all__ = [
     "ActionTemplate", "Action", "IllegalAction",
@@ -28,19 +34,23 @@ MAX_LABEL = 80
 MAX_RANGED_TARGETS = 5
 MAX_SPELL_TARGETS = 4
 MAX_SUGGESTED = 6
-POTION = "Potion of Healing"
+CANTRIP_STEPS = (5, 11, 17)  # cantrip damage dice grow at these caster levels
 
-# Attacker-side conditions that impose disadvantage on its attack rolls.
-_ATTACKER_DISADVANTAGE = ("prone", "blinded", "poisoned", "frightened", "restrained")
-# Target-side conditions that grant advantage to attacks against it.
-_TARGET_ADVANTAGE = ("blinded", "restrained", "paralyzed", "stunned", "unconscious", "petrified")
-# Conditions that auto-fail STR/DEX saves.
-_AUTO_FAIL_STR_DEX = ("paralyzed", "stunned", "unconscious", "petrified")
-# Per-turn flags cleared when a creature's turn starts.
+# ---- condition semantics, straight from conditions.json ------------------------
+_COND: dict[str, dict] = {name: srd.condition(name) for name in srd.list_conditions()}
+_ATTACKER_DISADVANTAGE = tuple(n for n, c in _COND.items() if c.get("attack_own") == "disadvantage")
+_ATTACKER_ADVANTAGE = tuple(n for n, c in _COND.items() if c.get("attack_own") == "advantage")
+_TARGET_ADVANTAGE = tuple(n for n, c in _COND.items() if c.get("attack_by") == "advantage")
+_TARGET_DISADVANTAGE = tuple(n for n, c in _COND.items() if c.get("attack_by") == "disadvantage")
+_AUTO_CRIT = tuple(n for n, c in _COND.items() if c.get("auto_crit_within_5"))
+_AUTO_FAIL_SAVES = {n: tuple(c.get("auto_fail_saves") or ()) for n, c in _COND.items()}
+_SAVE_DISADVANTAGE = {n: tuple(c.get("save_disadvantage") or ()) for n, c in _COND.items()}
+# Engine-only markers that are not SRD conditions: "hidden" (after a successful
+# Hide) and "turned" (Turn Undead). They ride on Combatant.conditions too.
 _TURN_FLAGS = (
     "dodging", "disengaged", "sneak_attack_used", "martial_advantage_used",
     "light_weapon_attacked", "cast_bonus_spell", "cast_action_spell",
-    "no_reactions", "multi_seq", "multi_index", "moves_taken", "dashes_taken",
+    "no_reactions", "multi_index", "moves_taken", "dashes_taken", "turn_ended",
 )
 
 
@@ -89,8 +99,12 @@ def _label(s: str) -> str:
     return s if len(s) <= MAX_LABEL else s[: MAX_LABEL - 1] + "…"
 
 
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_")
+
+
 def _alive(c: Combatant) -> bool:
-    """Not dead and above 0 HP (may still be incapacitated, e.g. asleep)."""
+    """Not dead and above 0 HP (may still be incapacitated)."""
     return (not c.dead) and c.hp > 0
 
 
@@ -109,6 +123,19 @@ def _hostile(a: Combatant, b: Combatant) -> bool:
 
 def _with_mod(expr: str, mod: int) -> str:
     return expr if mod == 0 else f"{expr}{mod:+d}"
+
+
+def _max_of(expr: str) -> int:
+    return sum(sign * (count * faces if faces else count) for sign, count, faces in parse_expr(expr))
+
+
+def _scale_dice(expr: str, times: int) -> str:
+    """'1d10' x3 -> '3d10' (cantrip scaling); flat parts untouched."""
+    out = []
+    for i, (sign, count, faces) in enumerate(parse_expr(expr)):
+        s = "" if (i == 0 and sign > 0) else ("+" if sign > 0 else "-")
+        out.append(f"{s}{count * times}d{faces}" if faces else f"{s}{count}")
+    return "".join(out)
 
 
 def _rng_of(state: GameState) -> RNG:
@@ -136,6 +163,19 @@ def _cover_bonus(cover: str | None) -> int:
     return {"half": 2, "three_quarters": 5}.get(cover or "", 0)
 
 
+def _trait(c: Combatant, key: str) -> dict | None:
+    """Monster trait by id, or by slugified name when the record has no id."""
+    for t in (c.stat_block or {}).get("traits", []):
+        if t.get("id") == key or _slug(t.get("name", "")) == key:
+            return t
+    return None
+
+
+def _bonus_actions(c: Combatant) -> list[str]:
+    return [str(x).lower() for x in (c.stat_block or {}).get("bonus_actions", []) or []]
+
+
+# ---- buffs (timed modifiers carried in Combatant.flags["buffs"]) ----------------
 def _buffs(c: Combatant) -> list[dict]:
     return c.flags.setdefault("buffs", [])
 
@@ -144,19 +184,23 @@ def _has_buff(c: Combatant, name: str) -> bool:
     return any(b.get("name") == name for b in c.flags.get("buffs", []))
 
 
+def _buff_any(c: Combatant, key: str) -> bool:
+    return any(b.get(key) for b in c.flags.get("buffs", []))
+
+
 def _recompute(c: Combatant) -> None:
     """Fold the active buff list into the flat modifiers state.py consults."""
     buffs = c.flags.get("buffs", [])
     ac = sum(int(b.get("ac", 0)) for b in buffs)
     pen = sum(int(b.get("speed_penalty", 0)) for b in buffs)
-    if ac:
-        c.flags["ac_bonus"] = ac
-    else:
-        c.flags.pop("ac_bonus", None)
-    if pen:
-        c.flags["speed_penalty"] = pen
-    else:
-        c.flags.pop("speed_penalty", None)
+    mult = 1
+    for b in buffs:
+        mult *= int(b.get("speed_multiplier", 1) or 1)
+    for key, val, default in (("ac_bonus", ac, 0), ("speed_penalty", pen, 0), ("speed_multiplier", mult, 1)):
+        if val != default:
+            c.flags[key] = val
+        else:
+            c.flags.pop(key, None)
     if not buffs:
         c.flags.pop("buffs", None)
 
@@ -174,10 +218,35 @@ def _remove_buffs(c: Combatant, *, name: str | None = None, source: str | None =
             if (name is not None and b.get("name") == name) or (source is not None and b.get("source") == source)]
     if gone:
         c.flags["buffs"] = [b for b in buffs if b not in gone]
+        for b in gone:
+            if b.get("max_hp"):
+                c.max_hp = max(1, c.max_hp - int(b["max_hp"]))
+                c.hp = min(c.hp, c.max_hp)
+            if b.get("extra_action"):
+                c.flags["lethargic"] = True  # Haste ends: the target loses its next turn
         _recompute(c)
     return gone
 
 
+def _bonus_die_total(rng: RNG, c: Combatant, key: str) -> tuple[int, str]:
+    """Roll every buff die of `key` (attack_die/save_die/check_die); consume `uses`."""
+    total = 0
+    parts = []
+    for b in list(c.flags.get("buffs", [])):
+        die = b.get(key)
+        if not die:
+            continue
+        r = rng.roll(die)
+        total += r.total
+        parts.append(f"+{r.total} ({b['name']})")
+        if b.get("uses") is not None:
+            b["uses"] = int(b["uses"]) - 1
+            if b["uses"] <= 0:
+                _remove_buffs(c, name=b["name"])
+    return total, "".join(f" {p}" for p in parts)
+
+
+# ---- casters ------------------------------------------------------------------
 def _caster_level(c: Combatant) -> int:
     if c.sheet:
         return int(c.sheet.level)
@@ -189,7 +258,14 @@ def _known_spells(c: Combatant) -> list[str]:
     if c.sheet:
         return list(c.sheet.spells_known)
     sc = (c.stat_block or {}).get("spellcasting") or {}
-    return list(sc.get("spells", []))
+    out = list(sc.get("cantrips", []))
+    spells = sc.get("spells") or {}
+    if isinstance(spells, dict):
+        for lv in sorted(spells, key=lambda k: int(k)):
+            out.extend(spells[lv])
+    else:
+        out.extend(spells)
+    return out
 
 
 def _slots(c: Combatant) -> dict[int, int]:
@@ -201,14 +277,11 @@ def _proficient_with(c: Combatant, row: dict) -> bool:
     if not c.sheet:
         return True
     profs: list[str] = []
-    try:
-        profs += srd.klass(c.sheet.klass).get("weapon_proficiencies", [])
-    except srd.SRDLookupError:
-        pass
-    try:
-        profs += srd.race(c.sheet.race).get("weapon_proficiencies", [])
-    except srd.SRDLookupError:
-        pass
+    for getter, name in ((srd.klass, c.sheet.klass), (srd.race, c.sheet.race)):
+        try:
+            profs += getter(name).get("weapon_proficiencies", [])
+        except srd.SRDLookupError:
+            pass
     cat = row["category"].lower()
     for p in profs:
         pl = p.lower()
@@ -222,7 +295,8 @@ def _pc_weapon_specs(c: Combatant) -> list[dict]:
     """One melee spec (and one thrown/ranged spec where relevant) per distinct weapon."""
     out: list[dict] = []
     seen: set[str] = set()
-    for wname in (c.sheet.weapons if c.sheet else []):
+    names = list(c.sheet.weapons) if c.sheet else []
+    for wname in names:
         try:
             row = srd.weapon(wname)
         except srd.SRDLookupError:
@@ -231,39 +305,50 @@ def _pc_weapon_specs(c: Combatant) -> list[dict]:
             continue
         seen.add(row["name"])
         props = [p.lower() for p in row.get("properties", [])]
-        finesse = "finesse" in props
+        finesse = bool(row.get("finesse")) or "finesse" in props
+        thrown = bool(row.get("thrown")) or "thrown" in props
+        light = bool(row.get("light")) or "light" in props
         prof = c.proficiency if _proficient_with(c, row) else 0
         str_mod, dex_mod = c.mod("STR"), c.mod("DEX")
+        base = {"damage_type": row["damage_type"], "on_hit": None, "is_spell": False,
+                "properties": props, "light": light, "finesse": finesse}
         if row["ranged"]:
-            mod = max(str_mod, dex_mod) if "thrown" in props and finesse else dex_mod
-            out.append({
-                "name": row["name"], "bonus": mod + prof,
-                "damage": _with_mod(row["damage"], mod), "dice": row["damage"], "mod": mod,
-                "damage_type": row["damage_type"], "ranged": True, "reach": 5,
-                "range": tuple(row["range"]) if row.get("range") else (30, 120),
-                "properties": props, "on_hit": None, "is_spell": False,
-            })
+            mod = max(str_mod, dex_mod) if (thrown and finesse) else dex_mod
+            out.append({**base, "name": row["name"], "bonus": mod + prof,
+                        "damage": _with_mod(row["damage"], mod), "dice": row["damage"], "mod": mod,
+                        "ranged": True, "reach": 5,
+                        "range": tuple(row["range"]) if row.get("range") else (30, 120)})
             continue
         mod = max(str_mod, dex_mod) if finesse else str_mod
         dice = row["damage"]
         if row.get("versatile") and not (c.sheet and c.sheet.shield):
             dice = row["versatile"]
-        out.append({
-            "name": row["name"], "bonus": mod + prof,
-            "damage": _with_mod(dice, mod), "dice": dice, "mod": mod,
-            "damage_type": row["damage_type"], "ranged": False,
-            "reach": int(row.get("reach") or 5), "range": None,
-            "properties": props, "on_hit": None, "is_spell": False,
-        })
-        if "thrown" in props:
-            out.append({
-                "name": f"{row['name']} (thrown)", "weapon": row["name"], "bonus": mod + prof,
-                "damage": _with_mod(row["damage"], mod), "dice": row["damage"], "mod": mod,
-                "damage_type": row["damage_type"], "ranged": True, "reach": 5,
-                "range": tuple(row["range"]), "properties": props, "on_hit": None,
-                "is_spell": False,
-            })
+        out.append({**base, "name": row["name"], "bonus": mod + prof,
+                    "damage": _with_mod(dice, mod), "dice": dice, "mod": mod,
+                    "ranged": False, "reach": int(row.get("reach") or 5), "range": None})
+        if thrown:
+            out.append({**base, "name": f"{row['name']} (thrown)", "weapon": row["name"], "bonus": mod + prof,
+                        "damage": _with_mod(row["damage"], mod), "dice": row["damage"], "mod": mod,
+                        "ranged": True, "reach": 5, "range": tuple(row["range"] or (20, 60))})
+    if not any(not s["ranged"] for s in out):
+        try:
+            row = srd.weapon("Unarmed strike")
+            mod = c.mod("STR")
+            out.append({"name": row["name"], "bonus": mod + c.proficiency,
+                        "damage": _with_mod(row["damage"], mod), "dice": row["damage"], "mod": mod,
+                        "damage_type": row["damage_type"], "ranged": False, "reach": 5, "range": None,
+                        "properties": [], "light": False, "finesse": False, "on_hit": None, "is_spell": False})
+        except srd.SRDLookupError:
+            pass
     return out
+
+
+_RECHARGE_RE = re.compile(r"recharge\s+(\d)(?:\s*[-–]\s*(\d))?", re.IGNORECASE)
+
+
+def _recharge_min(action: dict) -> int | None:
+    m = _RECHARGE_RE.search(action.get("desc") or "")
+    return int(m.group(1)) if m else None
 
 
 def _monster_specs(c: Combatant) -> list[dict]:
@@ -274,25 +359,23 @@ def _monster_specs(c: Combatant) -> list[dict]:
         kind = a.get("kind")
         if kind not in ("melee_weapon", "ranged_weapon", "melee_or_ranged"):
             continue
-        if a.get("recharge") and not recharge.get(a["name"], True):
+        if _recharge_min(a) is not None and not recharge.get(a["name"], True):
             continue
         base = {
             "name": a["name"], "bonus": int(a.get("attack_bonus", 0)),
             "damage": a.get("damage") or "0", "dice": a.get("damage") or "0", "mod": 0,
             "damage_type": a.get("damage_type", "bludgeoning"),
-            "properties": [], "on_hit": a.get("on_hit"), "is_spell": False,
-            "recharge": a.get("recharge"),
+            "properties": [], "light": False, "finesse": False,
+            "on_hit": list(a.get("extra") or []), "is_spell": False,
+            "recharge": _recharge_min(a),
         }
         if kind in ("melee_weapon", "melee_or_ranged"):
             out.append({**base, "ranged": False, "reach": int(a.get("reach") or 5), "range": None})
         if kind in ("ranged_weapon", "melee_or_ranged"):
-            spec = {**base, "ranged": True, "reach": 5,
-                    "range": tuple(a.get("range") or (30, 120))}
+            spec = {**base, "ranged": True, "reach": 5, "range": tuple(a.get("range") or (30, 120))}
             if kind == "melee_or_ranged":
                 spec["name"] = f"{a['name']} (thrown)"
                 spec["weapon"] = a["name"]
-                if a.get("ranged_damage"):
-                    spec["damage"] = spec["dice"] = a["ranged_damage"]
             out.append(spec)
     return out
 
@@ -316,20 +399,17 @@ def _best_melee_spec(c: Combatant) -> dict | None:
 
 
 def _multiattack(c: Combatant) -> list[dict]:
-    ma = (c.stat_block or {}).get("multiattack") or []
+    """monsters.json: "multiattack": ["Scimitar", "Scimitar"] (ordered names)."""
     out = []
-    for entry in ma:
-        if isinstance(entry, str):
-            out.append({"name": entry})
-        else:
-            out.append(dict(entry))
+    for entry in (c.stat_block or {}).get("multiattack") or []:
+        out.append({"name": entry} if isinstance(entry, str) else dict(entry))
     return out
 
 
 def _attacks_per_action(c: Combatant) -> int:
     if c.kind == "pc":
         return 2 if c.has_feature("extra_attack") else 1
-    return max(1, len(_multiattack(c))) if _multiattack(c) else 1
+    return max(1, len(_multiattack(c)))
 
 
 def _spec_in_range(state: GameState, a: Combatant, t: Combatant, spec: dict) -> bool:
@@ -344,6 +424,20 @@ def _enemy_targets(state: GameState, a: Combatant) -> list[Combatant]:
     """Living hostile creatures, nearest first (stable order)."""
     out = [c for c in state.combatants.values() if _hostile(a, c) and _alive(c)]
     out.sort(key=lambda c: (_dist(a, c), c.id))
+    return out
+
+
+def _usable_items(c: Combatant) -> list[tuple[str, dict]]:
+    """Inventory entries whose equipment record declares a `use` (Potion of healing)."""
+    out = []
+    for item in dict.fromkeys(c.inventory):
+        try:
+            row = srd.equipment(item)
+        except srd.SRDLookupError:
+            continue
+        use = row.get("use")
+        if use and use.get("kind") == "heal":
+            out.append((row["name"], use))
     return out
 
 
@@ -364,19 +458,22 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
         return t
 
     turn = actor.turn
-    if not _can_act(actor):
+    if not _can_act(actor) or actor.flags.get("lethargic"):
         add("end_turn", "End turn", {}, [], "free")
         return out
 
     action_free = not turn.get("action", False)
+    haste_free = bool(turn.get("haste_action", False))
     bonus_free = not turn.get("bonus", False)
     attacks_left = int(turn.get("attacks_left", 0))
     movement_left = int(turn.get("movement_left", 0))
     turned = actor.has_condition("turned")
+    adjacent_enemies = [c for c in _enemy_targets(state, actor)
+                        if _dist(actor, c) <= c.reach_ft() and _can_act(c)]
 
     if not turned:
         # ---- weapon attacks
-        if action_free or attacks_left > 0:
+        if action_free or attacks_left > 0 or haste_free:
             specs = _attack_specs(actor)
             seq = _multiattack(actor)
             if attacks_left > 0 and seq:
@@ -396,6 +493,14 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
                 if _dist(actor, t) <= 60 and state.grid.has_line_of_sight(_pos(actor), _pos(t)):
                     add("attack", f"Attack {t.name} with Spiritual Weapon ({sw['bonus']:+d}, {sw['damage']} force)",
                         {"target": t.id, "spiritual_weapon": True}, [], "bonus")
+        # ---- flaming sphere ram
+        if bonus_free and actor.flags.get("flaming_sphere"):
+            fs = actor.flags["flaming_sphere"]
+            pts = _sphere_ram_points(state, actor, tuple(fs["pos"]))
+            if pts:
+                add("cast", f"Move Flaming Sphere (30 ft) and ram: DEX DC {fs['dc']}, {fs['damage']} fire half; choose point",
+                    {"spell": "Flaming Sphere", "slot": 0, "ram": True, "suggested": [list(p) for p in pts]},
+                    ["point"], "bonus")
         # ---- spells
         if action_free or bonus_free:
             _spell_templates(state, actor, add, action_free, bonus_free)
@@ -416,29 +521,29 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
                     f"Channel Divinity: Turn Undead (WIS DC {actor.spell_dc}, {len(undead)} undead in 30 ft)",
                     {"feature": "turn_undead"}, [], "action")
         # ---- items
-        if action_free and POTION in actor.inventory:
-            if actor.hp < actor.max_hp:
-                add("use_item", f"Drink {POTION} (2d4+2 HP)", {"item": POTION, "target": actor.id}, [], "action")
-            for ally in state.allies_of(actor.id):
-                if not ally.dead and ally.hp <= 0 and _dist(actor, ally) <= 5:
-                    add("use_item", f"Give {POTION} to {ally.name} (2d4+2 HP)",
-                        {"item": POTION, "target": ally.id}, [], "action")
+        if action_free:
+            for item, use in _usable_items(actor):
+                if actor.hp < actor.max_hp:
+                    add("use_item", f"Drink {item} ({use['amount']} HP)", {"item": item, "target": actor.id}, [], "action")
+                for ally in state.allies_of(actor.id):
+                    if not ally.dead and ally.hp <= 0 and _dist(actor, ally) <= 5:
+                        add("use_item", f"Give {item} to {ally.name} ({use['amount']} HP)",
+                            {"item": item, "target": ally.id}, [], "action")
         # ---- generic actions
-        adjacent_enemies = [c for c in _enemy_targets(state, actor)
-                            if _dist(actor, c) <= c.reach_ft() and _can_act(c)]
         if action_free:
             add("dodge", "Dodge: attacks against you have disadvantage until your next turn", {}, [], "action")
-            if adjacent_enemies:
-                add("disengage", "Disengage: your movement provokes no opportunity attacks", {}, [], "action")
             allies_up = [c for c in state.allies_of(actor.id) if _can_act(c)]
             if allies_up:
                 for e in adjacent_enemies[:3]:
                     add("help", f"Help an ally attack {e.name} (their next attack has advantage)",
                         {"target": e.id}, [], "action")
+        if action_free or haste_free:
+            if adjacent_enemies:
+                add("disengage", "Disengage: your movement provokes no opportunity attacks", {}, [], "action")
             if not actor.has_condition("hidden") and not adjacent_enemies:
                 add("hide", f"Hide (Stealth {actor.skill_bonus('Stealth'):+d} vs passive Perception)", {}, [], "action")
         cunning = actor.has_feature("cunning_action")
-        nimble = actor.trait("nimble_escape") is not None
+        nimble = _trait(actor, "nimble_escape") is not None or {"disengage", "hide"} & set(_bonus_actions(actor))
         if bonus_free and (cunning or nimble):
             src = "Cunning Action" if cunning else "Nimble Escape"
             if cunning and actor.effective_speed() > 0:
@@ -449,12 +554,11 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
             if not actor.has_condition("hidden") and not adjacent_enemies:
                 add("cunning_action", f"{src}: Hide (Stealth {actor.skill_bonus('Stealth'):+d})",
                     {"mode": "hide"}, [], "bonus")
-        if action_free and actor.effective_speed() > 0:
-            add("dash", f"Dash (+{actor.effective_speed()} ft movement this turn)", {}, [], "action")
-    else:
-        # A turned creature can only flee: Dash and move away from its turner.
-        if action_free and actor.effective_speed() > 0:
-            add("dash", f"Dash (+{actor.effective_speed()} ft movement this turn)", {}, [], "action")
+        if bonus_free and "dash_toward_enemy" in _bonus_actions(actor) and actor.effective_speed() > 0:
+            add("cunning_action", f"Aggressive: Dash toward an enemy (+{actor.effective_speed()} ft)",
+                {"mode": "dash"}, [], "bonus")
+    if (action_free or haste_free) and actor.effective_speed() > 0:
+        add("dash", f"Dash (+{actor.effective_speed()} ft movement this turn)", {}, [], "action")
 
     # ---- movement
     _move_template(state, actor, movement_left, add, flee=turned)
@@ -476,21 +580,16 @@ def _attack_templates(state: GameState, actor: Combatant, spec: dict, add) -> No
 def _offhand_templates(state: GameState, actor: Combatant, add) -> None:
     used = actor.flags.get("light_weapon_attacked")
     weapons = list(actor.sheet.weapons) if actor.sheet else []
-    candidates: list[str] = []
+    names = []
     for w in weapons:
         try:
-            row = srd.weapon(w)
+            names.append(srd.weapon(w)["name"])
         except srd.SRDLookupError:
-            continue
-        props = [p.lower() for p in row.get("properties", [])]
-        if "light" not in props or row["ranged"]:
-            continue
-        if row["name"] == used and weapons.count(w) < 2:
-            continue
-        if row["name"] not in candidates:
-            candidates.append(row["name"])
+            pass
     for spec in _pc_weapon_specs(actor):
-        if spec["ranged"] or spec["name"] not in candidates:
+        if spec["ranged"] or not spec.get("light"):
+            continue
+        if spec["name"] == used and names.count(used) < 2:
             continue
         mod = spec["mod"]
         dmg = spec["dice"] if mod >= 0 else _with_mod(spec["dice"], mod)
@@ -557,7 +656,6 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
     enemies = [c for c in _enemy_targets(state, actor) if _alive(c)]
     picks: list[tuple[int, int]] = []
     if flee or not enemies:
-        # Farthest reachable squares from the nearest enemy (or the turner).
         src = None
         turned = actor.get_condition("turned")
         if turned and turned.source in state.combatants:
@@ -566,15 +664,12 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
         scored = sorted(reach, key=lambda p: (-min((Grid.distance_ft(p, _pos(e)) for e in refs), default=0), p))
         return scored[:MAX_SUGGESTED]
     my_reach = actor.reach_ft()
-    # Approach: for each of the nearest enemies, the reachable square that ends
-    # closest to it (adjacent if possible, cheapest such square first).
     for e in enemies[:4]:
         best = min(reach, key=lambda p: (max(Grid.distance_ft(p, _pos(e)), my_reach), reach[p], p))
         if Grid.distance_ft(best, _pos(e)) < _dist(actor, e) and best not in picks:
             picks.append(best)
         if len(picks) >= 4:
             break
-    # A couple of "kite" squares for ranged/caster types.
     far = sorted(reach, key=lambda p: (-min(Grid.distance_ft(p, _pos(e)) for e in enemies), p))
     for p in far[:2]:
         if len(picks) >= MAX_SUGGESTED:
@@ -584,9 +679,48 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
     return picks[:MAX_SUGGESTED]
 
 
-# ---------------------------------------------------------------- spells (enumeration)
+# ---------------------------------------------------------------- spells (reading the record)
+def _eff_range(eff: dict) -> int:
+    return int(eff.get("range") or 0)
+
+
+def _self_origin(row: dict) -> bool:
+    """Cones, lines and Thunderwave's cube start at the caster ("Self (15-foot cone)")."""
+    shape = ((row["effect"].get("area") or {}).get("shape")) or None
+    return shape in ("cone", "line") or str(row.get("range", "")).lower().startswith("self")
+
+
+def _target_side(row: dict) -> str:
+    eff = row["effect"]
+    if eff.get("self_only"):
+        return "self"
+    if eff.get("ally_only"):
+        return "ally"
+    if eff["kind"] in ("attack", "save", "debuff"):
+        return "enemy"
+    if eff["kind"] == "buff":
+        return "ally"
+    return "any"
+
+
+def _is_aura(row: dict) -> bool:
+    eff = row["effect"]
+    area = eff.get("area") or {}
+    return bool(eff.get("persistent_aura")) and area.get("shape") == "sphere" and _eff_range(eff) <= int(area.get("size") or 0)
+
+
+def _combat_spell(row: dict) -> bool:
+    """Is there anything the resolver can do with this record inside a fight?"""
+    eff = row["effect"]
+    if row.get("casting_time") == "reaction":
+        return False
+    if eff["kind"] != "utility":
+        return True
+    return any(eff.get(k) for k in ("stabilize", "removes_conditions", "teleport_ft", "dispel_level"))
+
+
 def _parse_upcast(eff: dict, spell_level: int, slot: int) -> tuple[str, int, int]:
-    """(extra dice expr like '+2d6' or '', extra targets, extra flat)."""
+    """(extra dice expr like '+2d6' or '', extra targets/rays, extra flat)."""
     u = eff.get("upcast")
     if not u or slot <= spell_level or spell_level == 0:
         return "", 0, 0
@@ -599,7 +733,7 @@ def _parse_upcast(eff: dict, spell_level: int, slot: int) -> tuple[str, int, int
         return "", 0, 0
     if dice:
         return f"+{n * steps}{dice}", 0, 0
-    if "target" in what or "missile" in what or "ray" in what:
+    if any(w in what for w in ("target", "dart", "ray", "missile")):
         return "", n * steps, 0
     return "", 0, n * steps
 
@@ -608,42 +742,39 @@ def _spell_damage(eff: dict, caster: Combatant, slot: int, spell_level: int) -> 
     dmg = eff.get("damage")
     if not dmg:
         return None
-    by_level = eff.get("damage_by_level")
-    if spell_level == 0 and by_level:
+    if spell_level == 0 and eff.get("cantrip_scaling"):
         lvl = _caster_level(caster)
-        best = dmg
-        for k in sorted(int(x) for x in by_level):
-            if lvl >= k:
-                best = by_level[str(k)]
-        dmg = best
+        dmg = _scale_dice(dmg, 1 + sum(1 for step in CANTRIP_STEPS if lvl >= step))
     extra, _, _ = _parse_upcast(eff, spell_level, slot)
     return dmg + extra
 
 
-def _spell_heal(eff: dict, caster: Combatant, slot: int, spell_level: int) -> str | None:
-    heal = eff.get("heal")
-    if not heal:
-        return None
-    extra, _, _ = _parse_upcast(eff, spell_level, slot)
-    return heal + extra
-
-
 def _spell_targets_count(eff: dict, slot: int, spell_level: int) -> int:
     n = int(eff.get("targets", 1) or 0)
+    if eff.get("rays"):
+        n = int(eff["rays"])
     _, extra_targets, _ = _parse_upcast(eff, spell_level, slot)
     return n + extra_targets
 
 
+def _type_ok(t: Combatant, eff: dict) -> bool:
+    ctype = t.creature_type.lower()
+    only = [x.lower() for x in eff.get("only_types", [])]
+    if only and not any(x in ctype for x in only):
+        return False
+    immune = [x.lower() for x in eff.get("immune_types", [])]
+    if immune and any(x in ctype for x in immune):
+        return False
+    return True
+
+
 def _spell_target_ok(state: GameState, caster: Combatant, t: Combatant, row: dict) -> bool:
     eff = row["effect"]
-    side = eff.get("target_side", "enemy")
+    side = _target_side(row)
     if side == "self" and t.id != caster.id:
         return False
     if side == "enemy":
-        if not _hostile(caster, t) or not _alive(t):
-            return False
-        types = [x.lower() for x in eff.get("creature_types", [])]
-        if types and not any(x in t.creature_type.lower() for x in types):
+        if not _hostile(caster, t) or not _alive(t) or not _type_ok(t, eff):
             return False
     if side == "ally" and (t.side != caster.side or t.dead):
         return False
@@ -652,24 +783,24 @@ def _spell_target_ok(state: GameState, caster: Combatant, t: Combatant, row: dic
         if t.hp >= t.max_hp or t.is_undead() or "construct" in t.creature_type.lower():
             return False
     if kind == "buff":
-        b = eff.get("buff")
-        if b and b != "shield" and _has_buff(t, b):
+        if _has_buff(t, _slug(row["name"])) or (
+                eff.get("conditions_applied") and all(t.has_condition(c) for c in eff["conditions_applied"])):
             return False
-        if eff.get("requires_unarmored") and t.sheet and t.sheet.armor:
-            return False
+        if eff.get("set_base_ac") and (t.sheet is None or t.sheet.armor):
+            return False  # Mage Armor: "a willing creature who isn't wearing armor"
         if eff.get("temp_hp") and t.temp_hp > 0:
             return False
     if kind == "utility":
         if eff.get("stabilize"):
             return (not t.dead) and t.hp <= 0 and not t.stable
-        if eff.get("remove_conditions"):
-            return any(t.has_condition(c) for c in eff["remove_conditions"])
-        if eff.get("dispel"):
+        if eff.get("removes_conditions"):
+            return any(t.has_condition(c) for c in eff["removes_conditions"])
+        if eff.get("dispel_level"):
             return bool(t.flags.get("buffs")) or t.concentration is not None or any(
                 c.source and ":" in str(c.source) for c in t.conditions)
-    rng = int(eff.get("range", 5) or 0)
+    rng = _eff_range(eff)
     d = _dist(caster, t)
-    if rng == 0:
+    if rng == 0 or side == "self":
         return t.id == caster.id
     if d > rng:
         return False
@@ -684,11 +815,11 @@ def _spell_desc(row: dict, caster: Combatant, slot: int) -> str:
     kind = eff["kind"]
     dmg = _spell_damage(eff, caster, slot, lvl)
     if kind == "attack":
+        n = _spell_targets_count(eff, slot, lvl)
         if eff.get("auto_hit"):
-            n = _spell_targets_count(eff, slot, lvl)
             return f"{n}x {dmg} {eff.get('damage_type')} auto-hit"
         d = dmg + (f"+{caster.spellcasting_mod()}" if eff.get("add_mod") else "")
-        return f"{caster.spell_attack_bonus:+d}, {d} {eff.get('damage_type')}"
+        return f"{caster.spell_attack_bonus:+d}, " + (f"{n}x " if n > 1 else "") + f"{d} {eff.get('damage_type')}"
     if kind in ("save", "debuff"):
         bits = []
         if eff.get("save"):
@@ -697,26 +828,46 @@ def _spell_desc(row: dict, caster: Combatant, slot: int) -> str:
             bits.append(f"{dmg} {eff.get('damage_type')}" + (" half" if eff.get("half_on_save") else ""))
         if eff.get("conditions_applied"):
             bits.append("/".join(eff["conditions_applied"]))
-        if eff.get("sleep"):
-            bits.append(f"{eff['sleep']}+ HP of creatures sleep")
         return ", ".join(bits)
     if kind == "heal":
-        heal = _spell_heal(eff, caster, slot, lvl)
         mod = caster.spellcasting_mod() if eff.get("add_mod") else 0
-        return f"heals {heal}{mod:+d}" if mod else f"heals {heal}"
+        return f"heals {dmg}{mod:+d}" if mod else f"heals {dmg}"
     if kind == "buff":
-        b = eff.get("buff")
-        return {"bless": "+1d4 attacks & saves", "shield_of_faith": "+2 AC",
-                "mage_armor": "AC 13+DEX", "guidance": "+1d4 to a check",
-                "invisibility": "invisible", "aid": "+5 max HP",
-                "shield": "+5 AC"}.get(b, "") or (f"{eff['temp_hp']} temp HP" if eff.get("temp_hp") else "buff")
+        bits = []
+        if eff.get("ac_bonus"):
+            bits.append(f"+{eff['ac_bonus']} AC")
+        if eff.get("set_base_ac"):
+            bits.append(f"AC {eff['set_base_ac']}+DEX")
+        if eff.get("attack_bonus_die"):
+            bits.append(f"+{eff['attack_bonus_die']} attacks")
+        if eff.get("save_bonus_die"):
+            bits.append(f"+{eff['save_bonus_die']} saves")
+        if eff.get("check_bonus_die"):
+            bits.append(f"+{eff['check_bonus_die']} to a check")
+        if eff.get("temp_hp"):
+            bits.append(f"{eff['temp_hp']} temp HP")
+        if eff.get("max_hp_bonus"):
+            bits.append(f"+{eff['max_hp_bonus']} max HP")
+        if eff.get("attackers_disadvantage"):
+            bits.append("attackers have disadvantage")
+        if eff.get("speed_multiplier"):
+            bits.append(f"speed x{eff['speed_multiplier']}")
+        if eff.get("extra_action"):
+            bits.append("extra action")
+        if eff.get("fly_speed"):
+            bits.append(f"fly {eff['fly_speed']} ft")
+        if eff.get("max_healing"):
+            bits.append("max healing")
+        if eff.get("conditions_applied"):
+            bits.append("/".join(eff["conditions_applied"]))
+        return ", ".join(bits) or "buff"
     if eff.get("stabilize"):
         return "stabilize"
-    if eff.get("remove_conditions"):
-        return "cure " + "/".join(eff["remove_conditions"])
-    if eff.get("teleport"):
-        return f"teleport {eff['teleport']} ft"
-    if eff.get("dispel"):
+    if eff.get("removes_conditions"):
+        return "cure " + "/".join(eff["removes_conditions"])
+    if eff.get("teleport_ft"):
+        return f"teleport {eff['teleport_ft']} ft"
+    if eff.get("dispel_level"):
         return "dispel magic"
     return "utility"
 
@@ -732,22 +883,20 @@ def _spell_templates(state: GameState, actor: Combatant, add, action_free: bool,
         except srd.SRDLookupError:
             continue
         eff = row.get("effect") or {}
-        if eff.get("combat") is False:
+        if not _combat_spell(row):
             continue
         ct = row.get("casting_time", "action")
-        if ct == "reaction":
-            continue  # Shield: auto-cast as a reaction inside apply()
+        lvl = int(row["level"])
         if ct == "bonus":
-            if not bonus_free or actor.flags.get("cast_action_spell") and row["level"] > 0:
+            if not bonus_free or actor.flags.get("cast_bonus_spell"):
                 continue
-            if actor.flags.get("cast_bonus_spell"):
+            if actor.flags.get("cast_action_spell") and lvl > 0:
                 continue
         else:
             if not action_free or int(actor.turn.get("attacks_left", 0)) > 0:
                 continue
-            if actor.flags.get("cast_bonus_spell") and row["level"] > 0:
+            if actor.flags.get("cast_bonus_spell") and lvl > 0:
                 continue
-        lvl = int(row["level"])
         if lvl == 0:
             slot_levels = [0]
         else:
@@ -755,10 +904,10 @@ def _spell_templates(state: GameState, actor: Combatant, add, action_free: bool,
             if not avail:
                 continue
             slot_levels = [avail[0]]
-            # Offer the upcast variant only where it is a single extra template
+            # Upcast variants only where they are a single extra template
             # (area / multi-target spells); per-target spells stay at base slot.
             if eff.get("upcast") and avail[-1] != avail[0] and (
-                    eff.get("area") or int(eff.get("targets", 1) or 0) > 1):
+                    (eff.get("area") or {}).get("shape") or _spell_targets_count(eff, lvl, lvl) > 1):
                 slot_levels.append(avail[-1])
         for slot in slot_levels:
             _spell_templates_for_slot(state, actor, row, slot, add, ct)
@@ -771,20 +920,20 @@ def _spell_templates_for_slot(state: GameState, actor: Combatant, row: dict, slo
     tag = f" (L{slot})" if slot else ""
     desc = _spell_desc(row, actor, slot)
     lvl = int(row["level"])
-    area = eff.get("area")
+    area = eff.get("area") or {}
     base = {"spell": name, "slot": slot}
 
-    if eff.get("aura"):
+    if _is_aura(row):
         if not (actor.concentration and actor.concentration.get("spell") == name):
-            add("cast", f"Cast {name}{tag}: {eff['aura']['radius']} ft aura, {desc}", dict(base), [], cost)
+            add("cast", f"Cast {name}{tag}: {area['size']} ft aura, {desc}", dict(base), [], cost)
         return
-    if eff.get("teleport"):
-        pts = _teleport_points(state, actor, int(eff["teleport"]))
+    if eff.get("teleport_ft"):
+        pts = _teleport_points(state, actor, int(eff["teleport_ft"]))
         if pts:
             add("cast", f"Cast {name}{tag}: {desc}; choose point",
                 {**base, "suggested": [list(p) for p in pts]}, ["point"], cost)
         return
-    if area:
+    if area.get("shape"):
         pts = _area_points(state, actor, row, slot)
         if pts:
             add("cast", f"Cast {name}{tag}: {area['shape']} {area['size']} ft, {desc}; choose point",
@@ -795,14 +944,14 @@ def _spell_templates_for_slot(state: GameState, actor: Combatant, row: dict, slo
     cands.sort(key=lambda t: (_dist(actor, t), t.id))
     if not cands:
         return
+    side = _target_side(row)
     if n_targets > 1:
-        side = eff.get("target_side")
         who = "enemies" if side == "enemy" else "allies"
         add("cast", f"Cast {name}{tag} on up to {n_targets} {who}: {desc}",
             {**base, "suggested": [t.id for t in cands[:n_targets]], "max_targets": n_targets},
             ["targets"], cost)
         return
-    if eff.get("target_side") == "self" or int(eff.get("range", 5) or 0) == 0:
+    if side == "self" or _eff_range(eff) == 0:
         add("cast", f"Cast {name}{tag}: {desc}", {**base, "target": actor.id}, [], cost)
         return
     for t in cands[:MAX_SPELL_TARGETS]:
@@ -820,9 +969,7 @@ def _teleport_points(state: GameState, actor: Combatant, ft: int) -> list[tuple[
     for x in range(me[0] - r, me[0] + r + 1):
         for y in range(me[1] - r, me[1] + r + 1):
             p = (x, y)
-            if p == me or not grid.passable(p) or p in occupied:
-                continue
-            if Grid.distance_ft(me, p) > ft:
+            if p == me or not grid.passable(p) or p in occupied or Grid.distance_ft(me, p) > ft:
                 continue
             pts.append(p)
     if enemies:
@@ -832,21 +979,25 @@ def _teleport_points(state: GameState, actor: Combatant, ft: int) -> list[tuple[
     return pts[:MAX_SUGGESTED]
 
 
-def _area_squares(state: GameState, caster: Combatant, eff: dict, point: tuple[int, int]) -> set[tuple[int, int]]:
-    area = eff["area"]
+def _sphere_ram_points(state: GameState, actor: Combatant, sphere: tuple[int, int]) -> list[tuple[int, int]]:
+    pts = []
+    for e in _enemy_targets(state, actor):
+        p = _pos(e)
+        if Grid.distance_ft(sphere, p) <= 30 and state.grid.in_bounds(p):
+            pts.append(p)
+    return pts[:MAX_SUGGESTED]
+
+
+def _area_squares(state: GameState, caster: Combatant, row: dict, point: tuple[int, int]) -> set[tuple[int, int]]:
+    area = row["effect"]["area"]
     return state.grid.area_squares(area["shape"], int(area["size"]), _pos(caster), tuple(point))
 
 
-def _creatures_in_area(state: GameState, caster: Combatant, eff: dict, point: tuple[int, int]) -> list[Combatant]:
-    squares = _area_squares(state, caster, eff, point)
-    out = []
-    self_origin = int(eff.get("range", 0) or 0) == 0
-    for c in state.combatants.values():
-        if c.dead or _pos(c) not in squares:
-            continue
-        if self_origin and c.id == caster.id:
-            continue
-        out.append(c)
+def _creatures_in_area(state: GameState, caster: Combatant, row: dict, point: tuple[int, int]) -> list[Combatant]:
+    squares = _area_squares(state, caster, row, point)
+    self_origin = _self_origin(row)
+    out = [c for c in state.combatants.values()
+           if not c.dead and _pos(c) in squares and not (self_origin and c.id == caster.id)]
     out.sort(key=lambda c: c.id)
     return out
 
@@ -854,24 +1005,22 @@ def _creatures_in_area(state: GameState, caster: Combatant, eff: dict, point: tu
 def _area_points(state: GameState, actor: Combatant, row: dict, slot: int) -> list[tuple[int, int]]:
     eff = row["effect"]
     area = eff["area"]
-    rng = int(eff.get("range", 0) or 0)
+    rng = _eff_range(eff)
     grid = state.grid
     me = _pos(actor)
     enemies = _enemy_targets(state, actor)
     if not enemies:
         return []
     candidates: list[tuple[int, int]] = []
-    if rng == 0 and area["shape"] == "cube":
-        for p in sorted(grid.neighbors(me)):
-            candidates.append(p)
-    elif rng == 0:
+    if _self_origin(row) and area["shape"] == "cube":
+        candidates = sorted(grid.neighbors(me))
+    elif _self_origin(row):
         candidates = [_pos(e) for e in enemies if grid.has_line_of_sight(me, _pos(e))]
     else:
         for e in enemies:
             p = _pos(e)
             if Grid.distance_ft(me, p) <= rng and grid.has_line_of_sight(me, p):
                 candidates.append(p)
-        # also try the midpoint between pairs of nearby enemies for sphere/cube
         for i, a in enumerate(enemies[:4]):
             for b in enemies[i + 1:4]:
                 mid = ((_pos(a)[0] + _pos(b)[0]) // 2, (_pos(a)[1] + _pos(b)[1]) // 2)
@@ -880,15 +1029,14 @@ def _area_points(state: GameState, actor: Combatant, row: dict, slot: int) -> li
     seen: set[tuple[int, int]] = set()
     scored = []
     protect = 1 + slot if actor.has_feature("sculpt_spells") and row.get("school") == "evocation" else 0
-    only_enemies = eff.get("target_side") == "enemy"
+    only_enemies = bool(eff.get("enemies_only"))
     for p in candidates:
         if p in seen:
             continue
         seen.add(p)
-        hit = _creatures_in_area(state, actor, eff, p)
+        hit = _creatures_in_area(state, actor, row, p)
         n_enemy = sum(1 for c in hit if _hostile(actor, c) and _alive(c))
-        n_ally = 0 if only_enemies else sum(1 for c in hit if c.side == actor.side)
-        n_ally = max(0, n_ally - protect)
+        n_ally = 0 if only_enemies else max(0, sum(1 for c in hit if c.side == actor.side) - protect)
         if n_enemy == 0:
             continue
         scored.append((-(n_enemy - 2 * n_ally), p))
@@ -923,15 +1071,19 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
         actor.turn["bonus"] = True
         actor.turn["attacks_left"] = 0
         actor.turn["movement_left"] = 0
+        actor.turn["haste_action"] = False
         actor.flags["turn_ended"] = True
     elif kind == "attack":
         _do_attack(new, events, rng, actor, tpl, params)
     elif kind == "cast":
-        _do_cast(new, events, rng, actor, tpl, params)
+        if params.get("ram"):
+            _ram_flaming_sphere(new, events, rng, actor, params)
+        else:
+            _do_cast(new, events, rng, actor, tpl, params)
     elif kind == "move":
         _do_move(new, events, rng, actor, tpl, params)
     elif kind == "dash":
-        actor.turn["action"] = True
+        _spend_action(actor)
         actor.flags["dashes_taken"] = int(actor.flags.get("dashes_taken", 0)) + 1
         actor.turn["movement_left"] = int(actor.turn.get("movement_left", 0)) + actor.effective_speed()
         _ev(new, events, "system", f"{actor.name} dashes (+{actor.effective_speed()} ft).", actor.id,
@@ -941,7 +1093,7 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
         actor.flags["dodging"] = True
         _ev(new, events, "system", f"{actor.name} takes the Dodge action.", actor.id, dodge=True)
     elif kind == "disengage":
-        actor.turn["action"] = True
+        _spend_action(actor)
         actor.flags["disengaged"] = True
         _ev(new, events, "system", f"{actor.name} disengages.", actor.id, disengage=True)
     elif kind == "help":
@@ -951,7 +1103,7 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
         _ev(new, events, "system", f"{actor.name} helps: the next ally to attack {target.name} has advantage.",
             actor.id, target=target.id)
     elif kind == "hide":
-        actor.turn["action"] = True
+        _spend_action(actor)
         _do_hide(new, events, rng, actor)
     elif kind == "cunning_action":
         actor.turn["bonus"] = True
@@ -971,8 +1123,9 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
     elif kind == "second_wind":
         actor.turn["bonus"] = True
         actor.resources["second_wind"] = int(actor.resources.get("second_wind", 0)) - 1
-        roll = rng.roll(f"1d10+{actor.sheet.level}")
-        _heal(new, events, actor, roll.total, "Second Wind", roll=roll)
+        expr = f"1d10+{actor.sheet.level}"
+        roll = rng.roll(expr)
+        _heal(new, events, actor, roll.total, "Second Wind", roll=roll, expr=expr)
     elif kind == "action_surge":
         actor.resources["action_surge"] = int(actor.resources.get("action_surge", 0)) - 1
         actor.turn["action"] = False
@@ -986,20 +1139,31 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
         actor.turn["action"] = True
         item = params.get("item")
         target = new.combatants[params.get("target", actor.id)]
-        if item == POTION:
-            actor.inventory.remove(POTION)
-            roll = rng.roll("2d4+2")
-            _ev(new, events, "system",
-                f"{actor.name} " + ("drinks" if target.id == actor.id else f"gives {target.name}") + f" a {POTION}.",
-                actor.id, item=item, target=target.id)
-            _heal(new, events, target, roll.total, POTION, roll=roll, source_id=actor.id)
-        else:
+        use = dict(srd.equipment(item).get("use") or {})
+        if use.get("kind") != "heal":
             raise IllegalAction(f"cannot use {item!r}")
+        held = next((x for x in actor.inventory if x.lower() == item.lower()), None)
+        if held is None:
+            raise IllegalAction(f"{actor.name} has no {item}")
+        actor.inventory.remove(held)
+        roll = rng.roll(use["amount"])
+        _ev(new, events, "system",
+            f"{actor.name} " + ("drinks" if target.id == actor.id else f"gives {target.name}") + f" a {item}.",
+            actor.id, item=item, target=target.id)
+        _heal(new, events, target, roll.total, item, roll=roll, source_id=actor.id, expr=use["amount"])
     else:
         raise IllegalAction(f"unsupported action type {kind!r}")
 
     new.rng = rng.state()
     return new, events
+
+
+def _spend_action(actor: Combatant) -> None:
+    """Use the main action, or the Haste action if the main one is gone."""
+    if actor.turn.get("action") and actor.turn.get("haste_action"):
+        actor.turn["haste_action"] = False
+    else:
+        actor.turn["action"] = True
 
 
 # ---------------------------------------------------------------- attacks
@@ -1034,6 +1198,8 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
                 if idx < len(seq) and seq[idx].get("disadvantage"):
                     spec = {**spec, "disadvantage": True}
                 actor.flags["multi_index"] = idx + 1
+        elif actor.turn.get("action") and actor.turn.get("haste_action"):
+            actor.turn["haste_action"] = False  # Haste: one extra weapon attack
         else:
             actor.turn["action"] = True
             if seq and spec.get("weapon", spec["name"]) == seq[0]["name"]:
@@ -1041,9 +1207,9 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
                 actor.flags["multi_index"] = 1
             else:
                 actor.turn["attacks_left"] = _attacks_per_action(actor) - 1
-        if "light" in spec.get("properties", []) and not spec["ranged"]:
+        if spec.get("light") and not spec["ranged"]:
             actor.flags["light_weapon_attacked"] = spec["name"]
-        if spec.get("recharge"):
+        if spec.get("recharge") is not None:
             actor.resources.setdefault("recharge", {})[spec.get("weapon", spec["name"])] = False
     _resolve_attack(new, events, rng, actor, target, spec)
 
@@ -1054,20 +1220,26 @@ def _attack_mode(new: GameState, attacker: Combatant, target: Combatant, spec: d
     d = _dist(attacker, target)
     for cname in _ATTACKER_DISADVANTAGE:
         if attacker.has_condition(cname):
-            dis.append(cname)
+            dis.append(f"attacker {cname}")
+    for cname in _ATTACKER_ADVANTAGE:
+        if attacker.has_condition(cname):
+            adv.append(f"attacker {cname}")
     if attacker.exhaustion_level() >= 3:
         dis.append("exhaustion")
-    if attacker.has_condition("invisible") or attacker.has_condition("hidden"):
+    if attacker.has_condition("hidden"):
         adv.append("unseen attacker")
-    if target.has_condition("prone"):
-        (adv if d <= 5 else dis).append("prone target")
+    if target.has_condition("prone"):  # conditions.json: attack_by "special"
+        (adv if d <= 5 else dis).append("target prone")
     for cname in _TARGET_ADVANTAGE:
         if target.has_condition(cname):
-            adv.append(cname)
-    if target.has_condition("faerie_fire"):
-        adv.append("faerie fire")
-    elif target.has_condition("invisible") or target.has_condition("hidden"):
+            adv.append(f"target {cname}")
+    for cname in _TARGET_DISADVANTAGE:
+        if target.has_condition(cname):
+            dis.append(f"target {cname}")
+    if target.has_condition("hidden"):
         dis.append("unseen target")
+    if _buff_any(target, "attackers_disadvantage"):
+        dis.append("blur")
     if target.flags.get("dodging") and _can_act(target) and target.effective_speed() > 0:
         dis.append("dodging")
     if spec.get("ranged") and not spec.get("no_range_penalty"):
@@ -1082,7 +1254,7 @@ def _attack_mode(new: GameState, attacker: Combatant, target: Combatant, spec: d
         adv.append("help")
     if target.flags.get("advantage_against"):
         adv.append("guiding bolt")
-    if attacker.trait("pack_tactics") and any(
+    if _trait(attacker, "pack_tactics") and any(
             c.id != attacker.id and c.side == attacker.side and _can_act(c) and _dist(c, target) <= 5
             for c in new.combatants.values()):
         adv.append("pack tactics")
@@ -1098,23 +1270,34 @@ def _attack_mode(new: GameState, attacker: Combatant, target: Combatant, spec: d
 
 
 def _shield_slot(target: Combatant, total: int, ac: int) -> int | None:
-    """The slot Shield would be cast from if it turns this hit into a miss, else None."""
+    """Slot Shield would be cast from if it turns this hit into a miss, else None."""
     if "Shield" not in _known_spells(target) or not _can_react(target):
         return None
-    if total >= ac + 5:
+    bonus = int(srd.spell("Shield")["effect"].get("ac_bonus", 5))
+    if total >= ac + bonus:
         return None
     avail = sorted(s for s, n in _slots(target).items() if s >= 1 and n > 0)
     return avail[0] if avail else None
 
 
 def _cast_shield_reaction(new: GameState, events: list[Event], target: Combatant, slot: int, ac: int) -> None:
-    """Auto-cast Shield as a reaction (CONTRACTS §1.6: only when it converts a hit to a miss)."""
+    row = srd.spell("Shield")
+    bonus = int(row["effect"].get("ac_bonus", 5))
     target.resources["spell_slots"][slot] = _slots(target)[slot] - 1
     target.turn["reaction"] = True
-    _add_buff(target, {"name": "shield", "ac": 5, "rounds": 1, "tick": "start", "source": f"{target.id}:Shield"})
+    _add_buff(target, {"name": "shield", "ac": bonus, "rounds": int(row["effect"].get("duration_rounds") or 1),
+                       "tick": "start", "source": f"{target.id}:Shield"})
     _ev(new, events, "spell_cast",
-        f"{target.name} casts Shield as a reaction (L{slot}): AC {ac} → {ac + 5} until its next turn; the attack misses.",
-        target.id, spell="Shield", slot=slot, target=target.id, reaction=True, ac_before=ac, ac_after=ac + 5)
+        f"{target.name} casts Shield as a reaction (L{slot}): AC {ac} → {ac + bonus} until its next turn; the attack misses.",
+        target.id, spell="Shield", slot=slot, target=target.id, reaction=True, ac_before=ac, ac_after=ac + bonus)
+
+
+def _lucky_reroll(rng: RNG, attacker: Combatant, roll: RollResult, mode: str, bonus: int) -> tuple[RollResult, str]:
+    """Halfling Lucky: reroll a natural 1 on attack rolls once."""
+    if roll.natural == 1 and attacker.sheet and "lucky" in attacker.sheet.features:
+        again = rng.roll_d20(bonus, "normal")
+        return again, " (lucky reroll)"
+    return roll, ""
 
 
 def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Combatant,
@@ -1124,12 +1307,10 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
     cover = 0 if spec.get("ignore_cover") else _cover_bonus(new.grid.cover_between(_pos(attacker), _pos(target)))
     ac = target.effective_ac() + cover
     roll = rng.roll_d20(int(spec["bonus"]), mode)
+    roll, lucky_txt = _lucky_reroll(rng, attacker, roll, mode, int(spec["bonus"]))
     total = roll.total
-    extra_txt = ""
-    if _has_buff(attacker, "bless"):
-        b = rng.roll("1d4")
-        total += b.total
-        extra_txt = f" +{b.total} (bless)"
+    die_total, extra_txt = _bonus_die_total(rng, attacker, "attack_die")
+    total += die_total
     natural = roll.natural or 0
     threshold = 19 if (attacker.has_feature("improved_critical") and not spec.get("is_spell")) else 20
     crit = False
@@ -1143,7 +1324,7 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
     if shield_slot is not None:
         hit = False
     d = _dist(attacker, target)
-    if hit and d <= 5 and (target.has_condition("paralyzed") or target.has_condition("unconscious")):
+    if hit and d <= 5 and any(target.has_condition(c) for c in _AUTO_CRIT):
         crit = True
     dtype = spec.get("damage_type", "bludgeoning")
     parts: list[str] = []
@@ -1157,7 +1338,7 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
         # Sneak Attack: finesse/ranged weapon, once per turn, advantage or an ally adjacent to the target.
         if (attacker.has_feature("sneak_attack") and not spec.get("is_spell")
                 and not attacker.flags.get("sneak_attack_used")
-                and ("finesse" in spec.get("properties", []) or spec.get("ranged"))):
+                and (spec.get("finesse") or spec.get("ranged"))):
             ally_adjacent = any(c.id != attacker.id and c.side == attacker.side and _can_act(c) and _dist(c, target) <= 5
                                 for c in new.combatants.values())
             if mode == "advantage" or (ally_adjacent and mode != "disadvantage"):
@@ -1166,10 +1347,11 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
                 total_dmg += sr.total
                 attacker.flags["sneak_attack_used"] = True
                 parts.append(f"sneak attack {_roll_text(sr)}")
-        if attacker.trait("martial_advantage") and not attacker.flags.get("martial_advantage_used") and any(
+        ma = _trait(attacker, "martial_advantage")
+        if ma and not attacker.flags.get("martial_advantage_used") and any(
                 c.id != attacker.id and c.side == attacker.side and _can_act(c) and _dist(c, target) <= 5
                 for c in new.combatants.values()):
-            mr = rng.roll_damage("2d6", crit)
+            mr = rng.roll_damage(ma.get("damage", "2d6"), crit)
             total_dmg += mr.total
             attacker.flags["martial_advantage_used"] = True
             parts.append(f"martial advantage {_roll_text(mr)}")
@@ -1184,7 +1366,7 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
         outcome = "CRITICAL HIT"
     else:
         outcome = "hit" if hit else "miss"
-    text = (f"{attacker.name} {verb} {target.name} with {what}: {_roll_text(roll)}{extra_txt} vs AC {ac}"
+    text = (f"{attacker.name} {verb} {target.name} with {what}: {_roll_text(roll)}{lucky_txt}{extra_txt} vs AC {ac}"
             + (f" (+{cover} cover)" if cover else "") + f", {outcome}")
     if hit:
         text += f", {'; '.join(parts)}" + (f" = {total_dmg}" if len(parts) > 1 else "") + f" {dtype}"
@@ -1215,60 +1397,73 @@ def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Com
     result["damage"] = _deal_damage(new, events, rng, target, total_dmg, dtype, attacker.id, crit=crit)
     on_hit = spec.get("on_hit")
     if on_hit and not target.dead:
-        _apply_on_hit(new, events, rng, attacker, target, on_hit, result["damage"])
+        riders = on_hit if isinstance(on_hit, list) else [on_hit]
+        for rider in riders:
+            _apply_rider(new, events, rng, attacker, target, rider, result["damage"])
     return result
 
 
-def _apply_on_hit(new: GameState, events: list[Event], rng: RNG, attacker: Combatant,
-                  target: Combatant, on_hit: dict, dealt: int) -> None:
-    if on_hit.get("immune_races") and target.sheet and any(
-            target.sheet.race.lower().startswith(r.lower()) for r in on_hit["immune_races"]):
+def _apply_rider(new: GameState, events: list[Event], rng: RNG, attacker: Combatant,
+                 target: Combatant, rider: dict, dealt: int) -> None:
+    """One `extra` entry of a monster action, or a spell's on-hit effect."""
+    if rider.get("immune_races") and target.sheet and any(
+            r.lower() in target.sheet.race.lower() for r in rider["immune_races"]):
         return
-    if on_hit.get("speed_penalty"):
-        _add_buff(target, {"name": "slowed", "speed_penalty": int(on_hit["speed_penalty"]), "rounds": 1,
-                           "tick": "start", "source": attacker.id})
-        _ev(new, events, "condition_add", f"{target.name}'s speed is reduced by {on_hit['speed_penalty']} ft.",
+    if rider.get("speed_reduction"):
+        _add_buff(target, {"name": "slowed", "speed_penalty": int(rider["speed_reduction"]),
+                           "rounds": int(rider.get("effect_duration_rounds") or 1), "tick": "start",
+                           "source": attacker.id})
+        _ev(new, events, "condition_add", f"{target.name}'s speed is reduced by {rider['speed_reduction']} ft.",
             target.id, condition="slowed", source=attacker.id)
-    if on_hit.get("no_reactions"):
+    if rider.get("no_reactions_rounds"):
         target.flags["no_reactions"] = True
         _ev(new, events, "condition_add", f"{target.name} can't take reactions until its next turn.",
             target.id, condition="no_reactions", source=attacker.id)
-    if on_hit.get("advantage_against"):
+    if rider.get("no_healing_rounds"):
+        _add_buff(target, {"name": "no_healing", "no_healing": True, "rounds": int(rider["no_healing_rounds"]),
+                           "tick": "start", "source": attacker.id})
+        _ev(new, events, "condition_add", f"{target.name} can't regain hit points until the start of {attacker.name}'s next turn.",
+            target.id, condition="no_healing", source=attacker.id)
+    if rider.get("grants_advantage_rounds"):
         target.flags["advantage_against"] = {"until": attacker.id, "armed": False}
         _ev(new, events, "condition_add", f"The next attack against {target.name} has advantage.",
             target.id, condition="advantage_against", source=attacker.id)
-    if on_hit.get("heal_half") and dealt > 0:
+    if rider.get("drain_half") and dealt > 0:
         _heal(new, events, attacker, dealt // 2, "Vampiric Touch")
-    if on_hit.get("drain_ability"):
-        amt = rng.roll(on_hit.get("drain", "1d4")).total
-        ab = on_hit["drain_ability"]
+    if rider.get("ability_drain"):
+        amt = rng.roll(rider.get("amount", "1d4")).total
+        ab = rider["ability_drain"]
         target.abilities[ab] = max(1, int(target.abilities.get(ab, 10)) - amt)
         _ev(new, events, "condition_add", f"{target.name}'s {ab} is drained by {amt} (now {target.abilities[ab]}).",
             target.id, condition="ability_drain", ability=ab, amount=amt)
-    if on_hit.get("save"):
-        ok, _ = _saving_throw(new, events, rng, target, on_hit["save"], int(on_hit["dc"]),
-                              source_name=attacker.name, tags=[on_hit.get("damage_type", ""), on_hit.get("condition", "")])
-        if on_hit.get("damage"):
-            dmg = rng.roll(on_hit["damage"]).total
-            if ok and on_hit.get("half_on_save"):
+        if ab == "STR" and target.abilities[ab] <= 0:
+            _die(new, events, target, "strength drained to 0")
+    if rider.get("save"):
+        tags = [rider.get("damage_type", ""), rider.get("condition", "")]
+        ok, _ = _saving_throw(new, events, rng, target, rider["save"], int(rider["dc"]),
+                              source_name=attacker.name, tags=tags)
+        if rider.get("damage"):
+            dmg = rng.roll(rider["damage"]).total
+            if ok and rider.get("half_on_save"):
                 dmg //= 2
             elif ok:
                 dmg = 0
             if dmg:
-                _deal_damage(new, events, rng, target, dmg, on_hit.get("damage_type", "poison"), attacker.id)
-        if not ok and on_hit.get("condition"):
-            cond = Condition(on_hit["condition"], duration=on_hit.get("duration_rounds"), source=attacker.id,
-                             save_dc=int(on_hit["dc"]) if on_hit.get("repeat_save") else None,
-                             save_ability=on_hit["save"] if on_hit.get("repeat_save") else None,
-                             extra={"repeat_save": bool(on_hit.get("repeat_save"))})
+                _deal_damage(new, events, rng, target, dmg, rider.get("damage_type", "poison"), attacker.id)
+        if not ok and rider.get("condition"):
+            repeat = bool(rider.get("repeat_save")) or rider.get("escape_dc") is not None
+            cond = Condition(rider["condition"], duration=rider.get("duration"), source=attacker.id,
+                             save_dc=int(rider.get("escape_dc") or rider["dc"]) if repeat else None,
+                             save_ability=("STR" if rider.get("escape_dc") is not None else rider["save"]) if repeat else None,
+                             extra={"repeat_save": repeat})
             _add_condition(new, events, target, cond, attacker.name)
-        if not ok and on_hit.get("reduce_max_hp") and dealt > 0:
+        if not ok and rider.get("max_hp_reduction") and dealt > 0:
             target.max_hp = max(1, target.max_hp - dealt)
             target.hp = min(target.hp, target.max_hp)
             _ev(new, events, "condition_add", f"{target.name}'s hit point maximum is reduced by {dealt}.",
                 target.id, condition="max_hp_reduced", amount=dealt)
-    elif on_hit.get("condition"):
-        cond = Condition(on_hit["condition"], duration=on_hit.get("duration_rounds"), source=attacker.id,
+    elif rider.get("condition"):
+        cond = Condition(rider["condition"], duration=rider.get("duration"), source=attacker.id,
                          extra={"repeat_save": False})
         _add_condition(new, events, target, cond, attacker.name)
 
@@ -1298,7 +1493,8 @@ def _deal_damage(new: GameState, events: list[Event], rng: RNG, target: Combatan
     text += f" ({before} → {target.hp} HP)"
     _ev(new, events, "damage", text, source_id, target=target.id, amount=amount, damage_type=dtype,
         hp_before=before, hp_after=target.hp, absorbed=absorbed, crit=crit)
-    if dtype in ("acid", "fire") and target.trait("regeneration"):
+    regen = _trait(target, "regeneration")
+    if regen and dtype in [x.lower() for x in regen.get("stopped_by", [])]:
         target.flags["no_regen"] = True
     if amount <= 0 and not was_down:
         return amount
@@ -1306,12 +1502,6 @@ def _deal_damage(new: GameState, events: list[Event], rng: RNG, target: Combatan
         overflow = amount - max(0, before)
         _drop_to_zero(new, events, rng, target, amount, overflow, crit, dtype, source_id, was_down)
         return amount
-    # Still standing: wake sleepers, break turning, check concentration.
-    sleep = target.get_condition("unconscious")
-    if sleep and sleep.extra.get("sleep"):
-        target.remove_condition("unconscious")
-        target.remove_condition("prone")
-        _ev(new, events, "condition_remove", f"{target.name} is jolted awake.", target.id, condition="unconscious")
     if target.has_condition("turned"):
         target.remove_condition("turned")
         _ev(new, events, "condition_remove", f"{target.name} is no longer turned.", target.id, condition="turned")
@@ -1345,10 +1535,8 @@ def _drop_to_zero(new: GameState, events: list[Event], rng: RNG, target: Combata
         _die(new, events, target, "massive damage")
         return
     if target.kind == "monster":
-        uf = target.trait("undead_fortitude")
-        if uf and dtype != "radiant" and not crit:
-            dc = 5 + amount
-            ok, _ = _saving_throw(new, events, rng, target, "CON", dc, source_name="Undead Fortitude")
+        if _trait(target, "undead_fortitude") and dtype != "radiant" and not crit:
+            ok, _ = _saving_throw(new, events, rng, target, "CON", 5 + amount, source_name="Undead Fortitude")
             if ok:
                 target.hp = 1
                 _ev(new, events, "system", f"{target.name}'s Undead Fortitude keeps it standing at 1 HP.",
@@ -1356,7 +1544,6 @@ def _drop_to_zero(new: GameState, events: list[Event], rng: RNG, target: Combata
                 return
         _die(new, events, target, "reduced to 0 HP")
         return
-    # PC: unconscious and dying.
     target.hp = 0
     target.stable = False
     target.death_saves = {"success": 0, "failure": 0}
@@ -1381,10 +1568,17 @@ def _die(new: GameState, events: list[Event], target: Combatant, why: str) -> No
 
 
 def _heal(new: GameState, events: list[Event], target: Combatant, amount: int, source_name: str,
-          roll: RollResult | None = None, source_id: str | None = None) -> int:
+          roll: RollResult | None = None, source_id: str | None = None, expr: str | None = None,
+          mod: int = 0) -> int:
     if target.dead:
         _ev(new, events, "system", f"{source_name} cannot help {target.name}; they are dead.", target.id)
         return 0
+    if _buff_any(target, "no_healing"):
+        _ev(new, events, "system", f"{target.name} cannot regain hit points right now (Chill Touch).", target.id,
+            target=target.id, source=source_name)
+        return 0
+    if expr and _buff_any(target, "max_healing"):
+        amount = _max_of(expr) + mod  # Beacon of Hope
     amount = max(0, int(amount))
     before = target.hp
     target.hp = min(target.max_hp, before + amount)
@@ -1398,8 +1592,7 @@ def _heal(new: GameState, events: list[Event], target: Combatant, amount: int, s
     if before <= 0 < target.hp:
         target.death_saves = {"success": 0, "failure": 0}
         target.stable = False
-        for cname in ("unconscious",):
-            target.remove_condition(cname)
+        target.remove_condition("unconscious")
         _ev(new, events, "condition_remove", f"{target.name} regains consciousness.", target.id,
             condition="unconscious")
     return healed
@@ -1425,7 +1618,7 @@ def _add_condition(new: GameState, events: list[Event], target: Combatant, cond:
         src = f" ({source_name})" if source_name else ""
         _ev(new, events, "condition_add", f"{target.name} is {cond.name}{dur}{src}.", target.id,
             condition=cond.name, duration=cond.duration, source=cond.source)
-        if cond.name in INCAPACITATING or cond.name in ("paralyzed", "stunned"):
+        if (_COND.get(cond.name) or {}).get("incapacitated"):
             _end_concentration(new, events, target, reason=cond.name)
     return fresh
 
@@ -1448,8 +1641,12 @@ def _break_invisibility(new: GameState, events: list[Event], c: Combatant) -> No
         if cond and cond.source:
             for caster in new.combatants.values():
                 conc = caster.concentration
-                if conc and f"{caster.id}:{conc.get('spell')}" == cond.source and conc.get("spell") == "Invisibility":
-                    _end_concentration(new, events, caster, reason="target attacked")
+                if conc and f"{caster.id}:{conc.get('spell')}" == cond.source:
+                    try:
+                        if srd.spell(conc["spell"])["effect"].get("ends_on_attack"):
+                            _end_concentration(new, events, caster, reason="target attacked")
+                    except srd.SRDLookupError:
+                        pass
 
 
 # ---------------------------------------------------------------- saves
@@ -1457,27 +1654,37 @@ def _saving_throw(new: GameState, events: list[Event], rng: RNG, target: Combata
                   *, source_name: str = "", tags: Iterable[str] | None = None, cover: int = 0,
                   is_spell: bool = False) -> tuple[bool, RollResult | None]:
     ability = ability.upper()
-    if ability in ("STR", "DEX") and any(target.has_condition(c) for c in _AUTO_FAIL_STR_DEX):
-        _ev(new, events, "save", f"{target.name} automatically fails the {ability} save vs DC {dc} ({source_name}).",
-            target.id, ability=ability, dc=dc, success=False, auto=True, source=source_name)
-        return False, None
+    for cname, fails in _AUTO_FAIL_SAVES.items():
+        if ability in fails and target.has_condition(cname):
+            _ev(new, events, "save", f"{target.name} automatically fails the {ability} save vs DC {dc} ({source_name}).",
+                target.id, target=target.id, ability=ability, dc=dc, success=False, auto=True, source=source_name)
+            return False, None
     adv: list[str] = []
     dis: list[str] = []
     tag_set = {str(t).lower() for t in (tags or []) if t}
-    if target.has_condition("restrained") and ability == "DEX":
-        dis.append("restrained")
+    if "poison" in tag_set or "poisoned" in tag_set:
+        tag_set |= {"poison", "poisoned"}
+    for cname, abilities in _SAVE_DISADVANTAGE.items():
+        if ability in abilities and target.has_condition(cname):
+            dis.append(cname)
     if target.exhaustion_level() >= 3:
         dis.append("exhaustion")
     if target.sheet:
         for adv_tag in target.sheet.save_advantages:
             if adv_tag.lower() in tag_set:
                 adv.append(adv_tag)
-    if target.trait("magic_resistance") and is_spell:
+    for b in target.flags.get("buffs", []):
+        if ability in [a.upper() for a in (b.get("save_advantage") or [])]:
+            adv.append(b["name"])
+    if _trait(target, "magic_resistance") and is_spell:
         adv.append("magic resistance")
-    if target.trait("dark_devotion") and tag_set & {"charmed", "frightened"}:
+    if _trait(target, "dark_devotion") and tag_set & {"charmed", "frightened"}:
         adv.append("dark devotion")
-    if target.trait("turn_defiance") and "turn" in tag_set:
-        adv.append("turn defiance")
+    if _trait(target, "turning_defiance") and "turn" in tag_set:
+        adv.append("turning defiance")
+    two = _trait(target, "two_heads")
+    if two and tag_set & {c.lower() for c in two.get("save_advantage_conditions", [])}:
+        adv.append("two heads")
     mode = "normal"
     if adv and not dis:
         mode = "advantage"
@@ -1488,18 +1695,16 @@ def _saving_throw(new: GameState, events: list[Event], rng: RNG, target: Combata
         bonus += cover
     roll = rng.roll_d20(bonus, mode)
     total = roll.total
-    extra = ""
-    if _has_buff(target, "bless"):
-        b = rng.roll("1d4")
-        total += b.total
-        extra = f" +{b.total} (bless)"
+    die_total, extra = _bonus_die_total(rng, target, "save_die")
+    total += die_total
     ok = total >= dc
     reasons = f" [{', '.join(adv + dis)}]" if (adv or dis) else ""
     _ev(new, events, "save",
         f"{target.name} {ability} save vs DC {dc} ({source_name}): {_roll_text(roll)}{extra}"
         + (f" (+{cover} cover)" if cover and ability == "DEX" else "")
         + f", {'success' if ok else 'failure'}{reasons}",
-        target.id, ability=ability, dc=dc, roll=roll.to_dict(), total=total, success=ok, source=source_name)
+        target.id, target=target.id, ability=ability, dc=dc, roll=roll.to_dict(), total=total, success=ok,
+        source=source_name)
     return ok, roll
 
 
@@ -1520,7 +1725,9 @@ def _end_concentration(new: GameState, events: list[Event], caster: Combatant, r
                 _ev(new, events, "condition_remove", f"{c.name} is no longer {cd.name} ({spell} ends).",
                     c.id, condition=cd.name, spell=spell)
         _remove_buffs(c, source=tag)
-    caster.flags.pop("spirit_guardians", None)
+    for key in ("spirit_guardians", "flaming_sphere"):
+        if (caster.flags.get(key) or {}).get("source") == tag:
+            caster.flags.pop(key, None)
     caster.concentration = None
     _ev(new, events, "concentration_broken", f"{caster.name}'s concentration on {spell} ends ({reason}).",
         caster.id, spell=spell, reason=reason)
@@ -1533,7 +1740,6 @@ def _do_cast(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
     eff = row["effect"]
     slot = int(params.get("slot", 0))
     lvl = int(row["level"])
-    ct = row.get("casting_time", "action")
     if tpl.cost == "bonus":
         actor.turn["bonus"] = True
         actor.flags["cast_bonus_spell"] = True
@@ -1559,8 +1765,8 @@ def _do_cast(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         point = _parse_point(raw)
         if not new.grid.in_bounds(point):
             raise IllegalAction(f"point {point} is off the grid")
-        rng_ft = int(eff.get("range", 0) or 0)
-        if rng_ft and Grid.distance_ft(_pos(actor), point) > rng_ft:
+        rng_ft = _eff_range(eff)
+        if rng_ft and not _self_origin(row) and Grid.distance_ft(_pos(actor), point) > rng_ft:
             raise IllegalAction(f"point {point} is beyond {name}'s range")
     elif "targets" in tpl.needs:
         n = int(params.get("max_targets", _spell_targets_count(eff, slot, lvl)))
@@ -1571,8 +1777,7 @@ def _do_cast(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         if not ids:
             raise IllegalAction(f"{name} needs targets")
         ids = ids[:n]
-        # Magic Missile / Scorching Ray: spread any unused bolts over the chosen targets.
-        if eff["kind"] == "attack" and len(ids) < n:
+        if eff.get("rays") and len(ids) < n:  # spare darts/rays go round-robin over the chosen targets
             i = 0
             while len(ids) < n:
                 ids.append(ids[i % len(ids)])
@@ -1602,43 +1807,47 @@ def _do_cast(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
 
     kind = eff["kind"]
     if kind == "attack":
-        _cast_attack(new, events, rng, actor, row, slot, targets)
-    elif kind == "save":
-        _cast_save(new, events, rng, actor, row, slot, targets, point, tag)
+        _cast_attack(new, events, rng, actor, row, slot, targets, params)
+    elif kind in ("save", "debuff"):
+        if _is_aura(row):
+            actor.flags["spirit_guardians"] = {
+                "spell": name, "dc": actor.spell_dc, "damage": _spell_damage(eff, actor, slot, lvl),
+                "damage_type": eff.get("damage_type", "radiant"), "radius": int(eff["area"]["size"]),
+                "save": eff.get("save", "WIS"), "half_on_save": bool(eff.get("half_on_save")),
+                "enemies_only": bool(eff.get("enemies_only")), "source": tag,
+            }
+            _ev(new, events, "condition_add", f"{name} fills a {eff['area']['size']} ft radius around {actor.name}.",
+                actor.id, condition=_slug(name))
+        elif eff.get("persistent_aura") and point is not None:
+            actor.flags["flaming_sphere"] = {
+                "spell": name, "pos": [point[0], point[1]], "dc": actor.spell_dc,
+                "damage": _spell_damage(eff, actor, slot, lvl), "damage_type": eff.get("damage_type", "fire"),
+                "save": eff.get("save", "DEX"), "half_on_save": bool(eff.get("half_on_save")),
+                "radius": int(eff["area"]["size"]), "source": tag,
+            }
+            _sphere_burn(new, events, rng, actor, point)
+        else:
+            _cast_save(new, events, rng, actor, row, slot, targets, point, tag)
     elif kind == "heal":
-        heal_expr = _spell_heal(eff, actor, slot, lvl)
+        expr = _spell_damage(eff, actor, slot, lvl)
         for t in targets:
-            roll = rng.roll(heal_expr)
-            amount = roll.total + (actor.spellcasting_mod() if eff.get("add_mod") else 0)
+            roll = rng.roll(expr)
+            mod = actor.spellcasting_mod() if eff.get("add_mod") else 0
             if actor.has_feature("disciple_of_life") and lvl > 0:
-                amount += 2 + slot
-            _heal(new, events, t, amount, name, roll=roll, source_id=actor.id)
+                mod += 2 + slot
+            _heal(new, events, t, roll.total + mod, name, roll=roll, source_id=actor.id, expr=expr, mod=mod)
     elif kind == "buff":
         for t in targets:
             _apply_buff(new, events, rng, actor, t, row, slot, tag)
-    elif kind == "debuff":
-        if eff.get("sleep"):
-            _cast_sleep(new, events, rng, actor, row, slot, point, tag)
-        elif eff.get("aura"):
-            actor.flags["spirit_guardians"] = {
-                "spell": name, "dc": actor.spell_dc, "damage": _spell_damage(eff, actor, slot, lvl),
-                "damage_type": eff.get("damage_type", "radiant"), "radius": int(eff["aura"]["radius"]),
-                "save": eff.get("save", "WIS"), "source": tag,
-            }
-            _ev(new, events, "condition_add",
-                f"Spirits swirl in a {eff['aura']['radius']} ft radius around {actor.name}.", actor.id,
-                condition="spirit_guardians")
-        else:
-            _cast_save(new, events, rng, actor, row, slot, targets, point, tag)
     elif kind == "utility":
         _cast_utility(new, events, rng, actor, row, slot, targets, point)
-    else:  # "summon_none" or anything unknown: the cast itself is the whole effect
+    else:  # "summon_none" or anything unknown: the cast event is the whole effect
         _ev(new, events, "system", f"{name} has no further mechanical effect.", actor.id, spell=name)
 
-    if eff.get("ongoing") == "spiritual_weapon":
+    if eff.get("summoned_weapon"):
         actor.flags["spiritual_weapon"] = {
             "rounds": int(eff.get("duration_rounds") or 10),
-            "damage": _with_mod(_spell_damage(eff, actor, slot, lvl), actor.spellcasting_mod()),
+            "damage": _with_mod(_spell_damage(eff, actor, slot, lvl), actor.spellcasting_mod() if eff.get("add_mod") else 0),
             "bonus": actor.spell_attack_bonus,
         }
 
@@ -1659,13 +1868,16 @@ def _parse_point(raw: Any) -> tuple[int, int]:
 
 
 def _cast_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, row: dict, slot: int,
-                 targets: list[Combatant]) -> None:
+                 targets: list[Combatant], params: dict) -> None:
     eff = row["effect"]
     lvl = int(row["level"])
     dmg = _spell_damage(eff, actor, slot, lvl)
     if eff.get("add_mod"):
         dmg = _with_mod(dmg, actor.spellcasting_mod())
     dtype = eff.get("damage_type", "force")
+    choices = [x.lower() for x in eff.get("choose_damage_type") or []]
+    if choices and str(params.get("damage_type", "")).lower() in choices:
+        dtype = str(params["damage_type"]).lower()
     if eff.get("auto_hit"):
         for t in targets:
             if t.dead:
@@ -1678,14 +1890,15 @@ def _cast_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant
                 target=t.id, amount=r.total)
             _deal_damage(new, events, rng, t, r.total, dtype, actor.id)
         return
+    rider = {k: eff[k] for k in ("speed_reduction", "effect_duration_rounds", "no_healing_rounds",
+                                 "no_reactions_rounds", "grants_advantage_rounds", "drain_half") if eff.get(k)}
     spec = {"name": row["name"], "bonus": actor.spell_attack_bonus, "damage": dmg, "dice": dmg, "mod": 0,
             "damage_type": dtype, "ranged": eff.get("attack_type") == "ranged", "reach": 5,
-            "range": (int(eff.get("range", 60) or 60), int(eff.get("range", 60) or 60)),
-            "properties": [], "on_hit": eff.get("on_hit"), "is_spell": True}
+            "range": (_eff_range(eff) or 60, _eff_range(eff) or 60),
+            "properties": [], "on_hit": rider or None, "is_spell": True}
     for t in targets:
-        if t.dead:
-            continue
-        _resolve_attack(new, events, rng, actor, t, spec)
+        if not t.dead:
+            _resolve_attack(new, events, rng, actor, t, spec)
 
 
 def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, row: dict, slot: int,
@@ -1699,13 +1912,12 @@ def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
     affected = list(targets)
     protected: list[str] = []
     if point is not None:
-        affected = _creatures_in_area(new, actor, eff, point)
-        if eff.get("target_side") == "enemy":
+        affected = [c for c in _creatures_in_area(new, actor, row, point) if _type_ok(c, eff)]
+        if eff.get("enemies_only"):
             affected = [c for c in affected if _hostile(actor, c)]
         if actor.has_feature("sculpt_spells") and row.get("school") == "evocation":
             allies = [c for c in affected if c.side == actor.side]
-            for c in allies[: 1 + slot]:
-                protected.append(c.id)
+            protected = [c.id for c in allies[: 1 + slot]]
             affected = [c for c in affected if c.id not in protected]
             if protected:
                 names = ", ".join(new.combatants[i].name for i in protected)
@@ -1714,14 +1926,11 @@ def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
     if not affected:
         _ev(new, events, "system", f"{name} affects no one.", actor.id, spell=name)
         return
-    # One damage roll shared by everyone in an area; individual rolls otherwise.
     shared = rng.roll(dmg_expr) if (dmg_expr and point is not None) else None
     for t in affected:
         if t.dead:
             continue
-        cover = 0
-        if not eff.get("ignore_cover"):
-            cover = _cover_bonus(new.grid.cover_between(_pos(actor), _pos(t)))
+        cover = 0 if eff.get("ignores_cover") else _cover_bonus(new.grid.cover_between(_pos(actor), _pos(t)))
         ok, _ = _saving_throw(new, events, rng, t, eff["save"], dc, source_name=name, cover=cover, is_spell=True,
                               tags=[dtype] + list(eff.get("conditions_applied", [])))
         if dmg_expr:
@@ -1732,14 +1941,48 @@ def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
             if amount or not ok:
                 _deal_damage(new, events, rng, t, amount, dtype, actor.id)
         if not ok:
+            duration = eff.get("condition_duration") or eff.get("duration_rounds")
+            repeat = bool(eff.get("repeat_save"))
             for cname in eff.get("conditions_applied", []):
-                cond = Condition(cname, duration=eff.get("duration_rounds"), source=tag if eff.get("concentration") else f"{actor.id}:{name}:{new.round}",
-                                 save_dc=dc if eff.get("repeat_save") else None,
-                                 save_ability=(eff.get("escape_ability") or eff["save"]) if eff.get("repeat_save") else None,
-                                 extra={"repeat_save": bool(eff.get("repeat_save")), "spell": name})
+                cond = Condition(cname, duration=duration,
+                                 source=tag if eff.get("concentration") else f"{actor.id}:{name}:{new.round}",
+                                 save_dc=dc if repeat else None, save_ability=eff["save"] if repeat else None,
+                                 extra={"repeat_save": repeat, "spell": name})
                 _add_condition(new, events, t, cond, name)
             if eff.get("push_ft"):
                 _push(new, events, actor, t, int(eff["push_ft"]))
+
+
+def _sphere_burn(new: GameState, events: list[Event], rng: RNG, caster: Combatant, point: tuple[int, int],
+                 only: Combatant | None = None) -> None:
+    """Flaming Sphere: creatures within 5 ft of the sphere save or burn."""
+    fs = caster.flags.get("flaming_sphere")
+    if not fs:
+        return
+    squares = new.grid.sphere_squares(tuple(point), int(fs["radius"]))
+    victims = [only] if only else sorted((c for c in new.combatants.values()
+                                          if not c.dead and _pos(c) in squares and c.id != caster.id),
+                                         key=lambda c: c.id)
+    for t in victims:
+        ok, _ = _saving_throw(new, events, rng, t, fs["save"], int(fs["dc"]), source_name=fs["spell"], is_spell=True)
+        r = rng.roll(fs["damage"])
+        amount = (r.total // 2 if fs.get("half_on_save") else 0) if ok else r.total
+        if amount:
+            _deal_damage(new, events, rng, t, amount, fs["damage_type"], caster.id)
+
+
+def _ram_flaming_sphere(new: GameState, events: list[Event], rng: RNG, actor: Combatant, params: dict) -> None:
+    fs = actor.flags.get("flaming_sphere")
+    if not fs:
+        raise IllegalAction("no Flaming Sphere to move")
+    point = _parse_point(params.get("point"))
+    if not new.grid.in_bounds(point) or Grid.distance_ft(tuple(fs["pos"]), point) > 30:
+        raise IllegalAction(f"the sphere cannot reach {point}")
+    actor.turn["bonus"] = True
+    fs["pos"] = [point[0], point[1]]
+    _ev(new, events, "move", f"{actor.name} rolls the Flaming Sphere to ({point[0]},{point[1]}).", actor.id,
+        to=list(point), sphere=True)
+    _sphere_burn(new, events, rng, actor, point)
 
 
 def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft: int) -> None:
@@ -1762,46 +2005,11 @@ def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft:
             **{"from": [tx, ty], "to": list(pos), "forced": True})
 
 
-def _cast_sleep(new: GameState, events: list[Event], rng: RNG, actor: Combatant, row: dict, slot: int,
-                point: tuple[int, int] | None, tag: str) -> None:
-    eff = row["effect"]
-    lvl = int(row["level"])
-    pool_expr = eff["sleep"] + _parse_upcast(eff, lvl, slot)[0]
-    pool = rng.roll(pool_expr)
-    remaining = pool.total
-    _ev(new, events, "roll", f"{row['name']} affects {_roll_text(pool)} HP of creatures.", actor.id,
-        pool=pool.total)
-    excluded = [x.lower() for x in eff.get("creature_types_excluded", [])]
-    victims = [c for c in _creatures_in_area(new, actor, eff, point or _pos(actor))
-               if _alive(c) and not c.has_condition("unconscious")
-               and not any(x in c.creature_type.lower() for x in excluded)
-               and "magical_sleep" not in _condition_immunities_of(c)]
-    victims.sort(key=lambda c: (c.hp, c.id))
-    for c in victims:
-        if c.hp > remaining:
-            break
-        remaining -= c.hp
-        cond = Condition("unconscious", duration=int(eff.get("duration_rounds") or 10), source=tag,
-                         extra={"sleep": True, "spell": row["name"]})
-        _add_condition(new, events, c, cond, row["name"])
-
-
-def _condition_immunities_of(c: Combatant) -> set[str]:
-    out = c.condition_immunities()
-    if c.sheet:
-        try:
-            out |= {x.lower() for x in srd.race(c.sheet.race).get("condition_immunities", [])}
-        except srd.SRDLookupError:
-            pass
-    return out
-
-
 def _apply_buff(new: GameState, events: list[Event], rng: RNG, actor: Combatant, t: Combatant, row: dict,
                 slot: int, tag: str) -> None:
     eff = row["effect"]
     name = row["name"]
     lvl = int(row["level"])
-    buff = eff.get("buff")
     rounds = int(eff.get("duration_rounds") or 10)
     src = tag if eff.get("concentration") else f"{actor.id}:{name}:{new.round}"
     if eff.get("temp_hp"):
@@ -1813,28 +2021,52 @@ def _apply_buff(new: GameState, events: list[Event], rng: RNG, actor: Combatant,
         _ev(new, events, "heal", f"{t.name} gains {amount} temporary HP from {name} ({_roll_text(r)}).", actor.id,
             target=t.id, temp_hp=t.temp_hp, amount=amount)
         return
+    if eff.get("conditions_applied"):
+        duration = eff.get("condition_duration") or rounds
+        for cname in eff["conditions_applied"]:
+            _add_condition(new, events, t, Condition(cname, duration=duration, source=src, extra={"spell": name}), name)
+        return
+    buff: dict[str, Any] = {"name": _slug(name), "rounds": rounds, "tick": "end", "source": src}
+    bits = []
+    if eff.get("ac_bonus"):
+        buff["ac"] = int(eff["ac_bonus"])
+        bits.append(f"+{eff['ac_bonus']} AC")
+    if eff.get("set_base_ac"):
+        shield = 2 if (t.sheet and t.sheet.shield) else 0
+        delta = int(eff["set_base_ac"]) + t.mod("DEX") + shield - t.ac
+        buff["ac"] = max(0, delta)
+        bits.append(f"AC {t.ac + buff['ac']}")
+    for key in ("attack_bonus_die", "save_bonus_die", "check_bonus_die"):
+        if eff.get(key):
+            buff[key.replace("_bonus_", "_")] = eff[key]
+            bits.append(f"+{eff[key]} {key.split('_')[0]}s")
+    if eff.get("uses"):
+        buff["uses"] = int(eff["uses"])
     if eff.get("max_hp_bonus"):
         _, _, flat = _parse_upcast(eff, lvl, slot)
         bonus = int(eff["max_hp_bonus"]) + flat
         t.max_hp += bonus
         t.hp += bonus
-        _add_buff(t, {"name": buff or "aid", "rounds": rounds, "tick": "end", "source": src, "max_hp": bonus})
-        _ev(new, events, "heal", f"{t.name}'s hit point maximum rises by {bonus} ({name}).", actor.id,
-            target=t.id, amount=bonus, hp_after=t.hp)
-        return
-    if eff.get("conditions_applied"):
-        for cname in eff["conditions_applied"]:
-            cond = Condition(cname, duration=rounds, source=src, extra={"spell": name})
-            _add_condition(new, events, t, cond, name)
-        return
-    ac = {"shield_of_faith": 2, "shield": 5, "mage_armor": 3}.get(buff, 0)
-    tick = "start" if buff == "shield" else "end"
-    _add_buff(t, {"name": buff, "ac": ac, "rounds": rounds, "tick": tick, "source": src})
-    label = {"bless": "is blessed (+1d4 to attacks and saves)", "shield_of_faith": "is warded (+2 AC)",
-             "mage_armor": "is sheathed in Mage Armor (AC 13 + DEX)", "guidance": "is guided (+1d4 to a check)",
-             "shield": "raises a Shield (+5 AC)"}.get(buff, f"gains {name}")
-    _ev(new, events, "condition_add", f"{t.name} {label}.", actor.id, target=t.id, condition=buff,
-        duration=rounds, ac_bonus=ac)
+        buff["max_hp"] = bonus
+        bits.append(f"+{bonus} max HP")
+    for key in ("attackers_disadvantage", "extra_action", "max_healing"):
+        if eff.get(key):
+            buff[key] = True
+            bits.append(key.replace("_", " "))
+    if eff.get("speed_multiplier"):
+        buff["speed_multiplier"] = int(eff["speed_multiplier"])
+        bits.append(f"speed x{eff['speed_multiplier']}")
+    if eff.get("save_advantage"):
+        buff["save_advantage"] = [a.upper() for a in eff["save_advantage"]]
+        bits.append("advantage on " + "/".join(buff["save_advantage"]) + " saves")
+    if eff.get("fly_speed"):
+        buff["fly_speed"] = int(eff["fly_speed"])
+        bits.append(f"flying {eff['fly_speed']} ft")
+    _add_buff(t, buff)
+    if buff.get("extra_action"):
+        t.turn["haste_action"] = True
+    _ev(new, events, "condition_add", f"{t.name} gains {name} ({', '.join(bits) or 'buff'}).", actor.id,
+        target=t.id, condition=buff["name"], duration=rounds, ac_bonus=buff.get("ac", 0))
 
 
 def _cast_utility(new: GameState, events: list[Event], rng: RNG, actor: Combatant, row: dict, slot: int,
@@ -1848,13 +2080,13 @@ def _cast_utility(new: GameState, events: list[Event], rng: RNG, actor: Combatan
                 t.death_saves = {"success": 0, "failure": 0}
                 _ev(new, events, "stable", f"{t.name} is stabilized by {name}.", actor.id, target=t.id)
         return
-    if eff.get("remove_conditions"):
+    if eff.get("removes_conditions"):
         for t in targets:
-            for cname in eff["remove_conditions"]:
+            for cname in eff["removes_conditions"]:
                 if _remove_condition(new, events, t, cname, name):
                     break
         return
-    if eff.get("teleport"):
+    if eff.get("teleport_ft"):
         if point is None:
             raise IllegalAction(f"{name} needs a point")
         if not new.grid.passable(point) or point in set(new.grid.occupied(new, ignore=actor.id)):
@@ -1864,7 +2096,7 @@ def _cast_utility(new: GameState, events: list[Event], rng: RNG, actor: Combatan
         _ev(new, events, "move", f"{actor.name} teleports from ({old[0]},{old[1]}) to ({point[0]},{point[1]}).",
             actor.id, **{"from": list(old), "to": list(point), "teleport": True})
         return
-    if eff.get("dispel"):
+    if eff.get("dispel_level"):
         for t in targets:
             for b in list(t.flags.get("buffs", [])):
                 _remove_buffs(t, name=b.get("name"))
@@ -2012,19 +2244,29 @@ def _do_hide(new: GameState, events: list[Event], rng: RNG, actor: Combatant) ->
         _add_condition(new, events, actor, Condition("hidden", source=actor.id), "Hide")
 
 
+def _destroy_undead_cr(actor: Combatant) -> float:
+    """classes.json feature ids: destroy_undead_half -> CR 1/2, destroy_undead_1 -> CR 1, ..."""
+    best = -1.0
+    for f in (actor.sheet.features if actor.sheet else []):
+        m = re.match(r"destroy_undead(?:_(half|quarter|\d+))?$", f)
+        if m:
+            word = m.group(1) or "half"
+            best = max(best, {"half": 0.5, "quarter": 0.25}.get(word, float(word) if word.isdigit() else 0.5))
+    return best
+
+
 def _turn_undead(new: GameState, events: list[Event], rng: RNG, actor: Combatant) -> None:
     dc = actor.spell_dc
     _ev(new, events, "spell_cast", f"{actor.name} presents a holy symbol: Turn Undead (WIS DC {dc}).", actor.id,
         feature="turn_undead", dc=dc)
-    destroy_cr = 0.5 if actor.has_feature("destroy_undead") else -1
+    destroy_cr = _destroy_undead_cr(actor)
     for c in _enemy_targets(new, actor):
         if not c.is_undead() or _dist(actor, c) > 30 or not new.grid.has_line_of_sight(_pos(actor), _pos(c)):
             continue
         ok, _ = _saving_throw(new, events, rng, c, "WIS", dc, source_name="Turn Undead", tags=["turn"])
         if ok:
             continue
-        cr = float((c.stat_block or {}).get("cr", 0))
-        if cr <= destroy_cr:
+        if float((c.stat_block or {}).get("cr", 0)) <= destroy_cr:
             _die(new, events, c, "destroyed by Turn Undead")
             continue
         _add_condition(new, events, c, Condition("turned", duration=10, source=actor.id), "Turn Undead")
@@ -2036,9 +2278,10 @@ def _reset_turn(c: Combatant) -> None:
         "action": False, "bonus": False, "reaction": False,
         "movement_left": c.effective_speed(), "attacks_left": 0, "free_object": False,
     }
+    if _buff_any(c, "extra_action"):
+        c.turn["haste_action"] = True
     for k in _TURN_FLAGS:
         c.flags.pop(k, None)
-    c.flags.pop("turn_ended", None)
 
 
 def _start_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) -> bool:
@@ -2051,48 +2294,54 @@ def _start_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) 
     if c.exhaustion_level() >= 6 and not c.dead:
         _die(new, events, c, "exhaustion")
         return False
-    # Buffs that expire at the start of the bearer's turn (Shield, Ray of Frost slow)
     for b in list(c.flags.get("buffs", [])):
         if b.get("tick") == "start":
             b["rounds"] = int(b.get("rounds", 1)) - 1
             if b["rounds"] <= 0:
                 _remove_buffs(c, name=b["name"])
                 _ev(new, events, "condition_remove", f"{c.name}'s {b['name']} fades.", c.id, condition=b["name"])
-    # Regeneration
-    regen = c.trait("regeneration")
+    regen = _trait(c, "regeneration")
     if regen and _alive(c):
         if c.flags.pop("no_regen", False):
             _ev(new, events, "system", f"{c.name} cannot regenerate this turn.", c.id)
         elif c.hp < c.max_hp:
             _heal(new, events, c, int(regen.get("amount", 10)), "Regeneration")
-    # Recharge
     recharge = c.resources.get("recharge") or {}
     for aname in sorted(recharge):
         if not recharge[aname]:
+            action = next((a for a in (c.stat_block or {}).get("actions", []) if a["name"] == aname), {})
+            need = _recharge_min(action) or 5
             r = rng.roll("1d6")
-            if r.total >= 5:
+            if r.total >= need:
                 recharge[aname] = True
                 _ev(new, events, "roll", f"{c.name}'s {aname} recharges ({_roll_text(r)}).", c.id, action=aname)
             else:
                 _ev(new, events, "roll", f"{c.name}'s {aname} does not recharge ({_roll_text(r)}).", c.id, action=aname)
-    # Auras: Spirit Guardians
+    # Auras: Spirit Guardians around a caster; Stench around a ghast.
     for caster in sorted(new.combatants.values(), key=lambda x: x.id):
         sg = caster.flags.get("spirit_guardians")
-        if not sg or not _alive(caster) or not _hostile(caster, c) or _dist(caster, c) > int(sg["radius"]):
-            continue
-        ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
-        r = rng.roll(sg["damage"])
-        amount = r.total // 2 if ok else r.total
-        _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
-        if not _alive(c):
-            return False
-    # Ghast stench
-    for g in sorted(new.combatants.values(), key=lambda x: x.id):
-        if g.trait("stench") and _alive(g) and _hostile(g, c) and _dist(g, c) <= 5 \
-                and "poisoned" not in _condition_immunities_of(c) and not c.has_condition("poisoned"):
-            ok, _ = _saving_throw(new, events, rng, c, "CON", 10, source_name=f"{g.name}'s Stench", tags=["poison", "poisoned"])
+        if sg and _alive(caster) and caster.id != c.id and _dist(caster, c) <= int(sg["radius"]) \
+                and (_hostile(caster, c) or not sg.get("enemies_only")):
+            ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
+            r = rng.roll(sg["damage"])
+            amount = (r.total // 2 if sg.get("half_on_save") else 0) if ok else r.total
+            if amount:
+                _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
+            if not _alive(c):
+                return False
+        stench = _trait(caster, "stench_aura")
+        if stench and _alive(caster) and _hostile(caster, c) and _dist(caster, c) <= int(stench.get("radius", 5)) \
+                and stench.get("condition", "poisoned") not in c.condition_immunities() \
+                and not c.has_condition(stench.get("condition", "poisoned")):
+            ok, _ = _saving_throw(new, events, rng, c, stench.get("save", "CON"), int(stench.get("dc", 10)),
+                                  source_name=f"{caster.name}'s Stench", tags=["poison", stench.get("condition", "poisoned")])
             if not ok:
-                _add_condition(new, events, c, Condition("poisoned", duration=1, source=g.id), "Stench")
+                _add_condition(new, events, c, Condition(stench.get("condition", "poisoned"), duration=1, source=caster.id), "Stench")
+    if c.flags.pop("lethargic", False):
+        _ev(new, events, "system", f"{c.name} is overcome by lethargy as Haste ends and cannot act this turn.", c.id)
+        c.turn.update({"action": True, "bonus": True, "movement_left": 0, "haste_action": False})
+        _ev(new, events, "turn_start", f"{c.name}'s turn (round {new.round}).", c.id)
+        return True
     if not _alive(c):
         return False
     _ev(new, events, "turn_start", f"{c.name}'s turn (round {new.round}).", c.id)
@@ -2103,7 +2352,11 @@ def _end_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) ->
     if not c.flags.get("turn_ended"):
         _ev(new, events, "turn_end", f"{c.name}'s turn ends.", c.id)
     c.flags.pop("turn_ended", None)
-    # Conditions: repeat saves, then durations.
+    # Flaming Spheres: a creature that ends its turn within 5 ft of one burns.
+    for caster in sorted(new.combatants.values(), key=lambda x: x.id):
+        fs = caster.flags.get("flaming_sphere")
+        if fs and caster.id != c.id and _alive(c) and Grid.distance_ft(_pos(c), tuple(fs["pos"])) <= int(fs["radius"]):
+            _sphere_burn(new, events, rng, caster, tuple(fs["pos"]), only=c)
     for cond in list(c.conditions):
         if cond.name not in [x.name for x in c.conditions]:
             continue
@@ -2118,17 +2371,12 @@ def _end_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) ->
             cond.duration -= 1
             if cond.duration <= 0:
                 _remove_condition(new, events, c, cond.name, "it wears off")
-    # Timed buffs
     for b in list(c.flags.get("buffs", [])):
         if b.get("tick", "end") == "end":
             b["rounds"] = int(b.get("rounds", 1)) - 1
             if b["rounds"] <= 0:
-                if b.get("max_hp"):
-                    c.max_hp = max(1, c.max_hp - int(b["max_hp"]))
-                    c.hp = min(c.hp, c.max_hp)
                 _remove_buffs(c, name=b["name"])
                 _ev(new, events, "condition_remove", f"{c.name}'s {b['name']} wears off.", c.id, condition=b["name"])
-    # Concentration duration
     if c.concentration:
         c.concentration["rounds_left"] = int(c.concentration.get("rounds_left", 1)) - 1
         if c.concentration["rounds_left"] <= 0:
@@ -2139,7 +2387,6 @@ def _end_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) ->
         if sw["rounds"] <= 0:
             c.flags.pop("spiritual_weapon", None)
             _ev(new, events, "condition_remove", f"{c.name}'s Spiritual Weapon fades.", c.id, condition="spiritual_weapon")
-    # Guiding Bolt advantage lasts until the end of the caster's next turn.
     for other in new.combatants.values():
         ga = other.flags.get("advantage_against")
         if ga and ga.get("until") == c.id:
@@ -2203,7 +2450,6 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
                 continue
         if _start_of_turn(new, events, rng, c):
             return
-    # Nobody can act (everyone dead or dying) — leave the index where it is.
 
 
 def start_combat(state: GameState, rng_state: dict | None = None) -> tuple[GameState, list[Event]]:
@@ -2269,7 +2515,6 @@ def skill_check(state: GameState, actor_id: str, skill: str, dc: int) -> tuple[G
     events: list[Event] = []
     rng = _rng_of(new)
     actor = new.combatants[actor_id]
-    mode = "normal"
     reasons = []
     if actor.exhaustion_level() >= 1:
         reasons.append("exhaustion")
@@ -2279,17 +2524,12 @@ def skill_check(state: GameState, actor_id: str, skill: str, dc: int) -> tuple[G
         reasons.append("frightened")
     if actor.has_condition("blinded") and skill in ("Perception", "Investigation"):
         reasons.append("blinded")
-    if reasons:
-        mode = "disadvantage"
+    mode = "disadvantage" if reasons else "normal"
     bonus = actor.skill_bonus(skill)
     roll = rng.roll_d20(bonus, mode)
     total = roll.total
-    extra = ""
-    if _has_buff(actor, "guidance"):
-        g = rng.roll("1d4")
-        total += g.total
-        extra = f" +{g.total} (guidance)"
-        _remove_buffs(actor, name="guidance")
+    die_total, extra = _bonus_die_total(rng, actor, "check_die")
+    total += die_total
     ok = total >= int(dc)
     _ev(new, events, "skill_check",
         f"{actor.name} {skill} check vs DC {dc}: {_roll_text(roll)}{extra}, {'success' if ok else 'failure'}"

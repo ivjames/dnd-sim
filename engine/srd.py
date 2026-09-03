@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from functools import lru_cache
 
 __all__ = [
@@ -57,7 +58,20 @@ def _get(table: dict[str, dict], name: str, what: str) -> dict:
     return row
 
 
+_PAREN_RE = re.compile(r"^\s*([^()]+?)\s*\(([^()]+)\)\s*$")
+
+
 def race(name: str) -> dict:
+    """Race lookup. Accepts both "Hill Dwarf" and the examples' "Dwarf (Hill)"."""
+    if isinstance(name, str):
+        key = name.strip().lower()
+        if key in _RACES:
+            return _RACES[key]
+        m = _PAREN_RE.match(name)
+        if m:
+            alt = f"{m.group(2).strip()} {m.group(1).strip()}".lower()
+            if alt in _RACES:
+                return _RACES[alt]
     return _get(_RACES, name, "race")
 
 

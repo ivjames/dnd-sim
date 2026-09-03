@@ -340,20 +340,25 @@ def starting_resources(sheet: CharacterSheet) -> dict:
         "spell_slots": {int(k): int(v) for k, v in sheet.spell_slots.items()},
         "hit_dice": sheet.level,
     }
-    if "second_wind" in sheet.features:
-        res["second_wind"] = 1
-    if "action_surge" in sheet.features:
-        res["action_surge"] = 1
-    if "channel_divinity_turn_undead" in sheet.features:
-        res["channel_divinity"] = 1
-    if "arcane_recovery" in sheet.features:
-        res["arcane_recovery"] = 1
-    if "sneak_attack" in sheet.features:
+    try:
         klass_row = srd.klass(sheet.klass)
+    except srd.SRDLookupError:
+        klass_row = {}
+    # classes.json: "resources": {"second_wind": {"1": 1}, "action_surge": {"2": 1}, ...}
+    # -> the count at the highest listed level the sheet has reached.
+    for name, by_level in (klass_row.get("resources") or {}).items():
+        levels = sorted(int(k) for k in by_level if int(k) <= sheet.level)
+        if levels:
+            res[name] = int(by_level[str(levels[-1])])
+    # Feature-name fallbacks for sheets built without a resources table.
+    for feature, key in (("second_wind", "second_wind"), ("action_surge", "action_surge"),
+                         ("channel_divinity_turn_undead", "channel_divinity"),
+                         ("arcane_recovery", "arcane_recovery")):
+        if feature in sheet.features:
+            res.setdefault(key, 1)
+    if "sneak_attack" in sheet.features:
         res["sneak_attack_dice"] = int(
-            klass_row.get("sneak_attack_dice", {}).get(str(sheet.level), 1))
-    if "uncanny_dodge" in sheet.features:
-        res["uncanny_dodge"] = 1
+            (klass_row.get("sneak_attack_dice") or {}).get(str(sheet.level), 1))
     return res
 
 
