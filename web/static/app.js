@@ -463,6 +463,7 @@
     settings: { enabled: false, rate: 'normal', muteMechanics: false },
     unlocked: false,       // a user gesture has started speech on this page
     sinceSeq: Infinity,    // speak only events with seq > this
+    caughtUp: false,       // history replay rendered; until then sinceSeq stays Infinity
     queue: [],             // [{ ev, phrase, key }] in seq order
     current: null,         // { item, chunks, idx, node, timer, utt }
     voices: [],
@@ -505,6 +506,17 @@
     return V.profiles[key];
   }
 
+  // {id: true} for every party member: the snapshot's combatants with side
+  // 'party', plus the config's party ids when the snapshot carries them (before
+  // combat the combatant list can be empty).
+  function voiceParty() {
+    var cs = combatants(), out = {};
+    Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].side === 'party') out[id] = true; });
+    var g = S.game || {}, cfg = g.config || {};
+    if (cfg && Array.isArray(cfg.party)) cfg.party.forEach(function (m) { if (m && m.id) out[m.id] = true; });
+    return out;
+  }
+
   function voiceNames() {
     var cs = combatants(), out = {};
     Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].name) out[id] = cs[id].name; });
@@ -514,9 +526,10 @@
   function voiceOnEvent(ev) {
     if (!voiceArmed() || !ev || !(ev.seq > V.sinceSeq)) return;
     if (!Speech.shouldSpeak(ev, V.settings)) return;
-    var phrase = Speech.phraseFor(ev, voiceNames());
+    var party = voiceParty();
+    var phrase = Speech.phraseFor(ev, voiceNames(), party);
     if (!phrase) return;
-    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev) });
+    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party) });
     voiceTrimQueue();
     voicePump();
   }
@@ -593,8 +606,12 @@
   }
 
   // Switching games: silence, and speak nothing until the history replay is done.
-  function voiceReset() { voiceCancelAll(); V.sinceSeq = Infinity; }
-  function voiceCaughtUp(seq) { V.sinceSeq = seq; }
+  function voiceReset() { voiceCancelAll(); V.sinceSeq = Infinity; V.caughtUp = false; }
+  function voiceCaughtUp(seq) { V.caughtUp = true; V.sinceSeq = seq; }
+  // Move the "speak from here" mark to the latest seen event — but only once
+  // the history replay has been rendered; before that the Infinity guard
+  // stays, or enabling mid-load would read the whole transcript.
+  function voiceMarkNow() { if (V.caughtUp) V.sinceSeq = S.lastSeq; }
 
   function voiceOnGameEnd(status) {
     // 'finished' lets the epilogue finish; anything else is a halt.
@@ -616,7 +633,7 @@
       u.onend = u.onerror = function () { V.heldUtt = null; };
       try { V.synth.speak(u); } catch (e) { /* ignore */ }
     }
-    V.sinceSeq = S.lastSeq;   // only what arrives from now on; never the replayed transcript
+    voiceMarkNow();           // only what arrives from now on; never the replayed transcript
     voiceRenderControls();
   }
 
@@ -890,7 +907,7 @@
     window.addEventListener('resize', function () { drawGrid(); });
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) { voiceCancelAll(); }
-      else { V.sinceSeq = S.lastSeq || V.sinceSeq; }  // back: speak only what arrives from now on
+      else { voiceMarkNow(); }  // back: speak only what arrives from now on
       if (!document.hidden && S.gameId && !TERMINAL[S.status]) {
         if (!S.es || S.es.readyState === 2) connect(S.gameId);
         refreshSnapshot();

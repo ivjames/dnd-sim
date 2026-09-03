@@ -58,12 +58,20 @@
     return m ? { who: m[1].trim(), said: m[2].trim() } : { who: null, said: String(text || '').trim() };
   }
 
-  function isPC(actor) { return typeof actor === 'string' && actor.indexOf('pc_') === 0; }
+  // Party membership comes from the caller (`party`: {id: true} built from the
+  // snapshot's combatants with side 'party', or the config's party ids). Ids
+  // are arbitrary strings, so the 'pc_' prefix is only a fallback when no
+  // party information has been supplied at all.
+  function isPC(actor, party) {
+    if (typeof actor !== 'string' || !actor) return false;
+    if (party && typeof party === 'object') return !!party[actor];
+    return actor.indexOf('pc_') === 0;
+  }
 
   // What is said for an event, or null for "nothing". `names` is an optional
   // {id: display name} map (the snapshot's combatants) used where the engine
   // line carries only an id.
-  function phraseFor(ev, names) {
+  function phraseFor(ev, names, party) {
     if (!ev) return null;
     var d = ev.data || {};
     var text = String(ev.text || '');
@@ -78,7 +86,7 @@
         var who = sp.who || nameFrom(names, ev.actor);
         // PCs have their own voice; the voice is the attribution. Everyone
         // else shares the NPC voice, so keep the name.
-        return isPC(ev.actor) || !who ? sp.said : who + ': ' + sp.said;
+        return isPC(ev.actor, party) || !who ? sp.said : who + ': ' + sp.said;
       }
 
       case 'scene': {
@@ -190,11 +198,11 @@
   // Which voice speaks the event: the DM narrates everything except a line of
   // dialogue, which belongs to its speaker — each PC its own voice, all
   // monsters/NPCs one shared voice.
-  function voiceKeyFor(ev) {
+  function voiceKeyFor(ev, party) {
     if (!ev) return 'dm';
     if (ev.kind !== 'dialogue') return 'dm';
     if (!ev.actor || ev.actor === 'dm') return 'dm';
-    return isPC(ev.actor) ? ev.actor : 'npc';
+    return isPC(ev.actor, party) ? ev.actor : 'npc';
   }
 
   // FNV-1a, 32-bit, so the same actor id lands on the same voice every load.
