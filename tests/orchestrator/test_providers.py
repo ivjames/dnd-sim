@@ -980,3 +980,18 @@ def test_explicit_prefix_provider_still_honours_dated_ids():
     # Dated Anthropic ids keep boundary matching through the bare-id fallback.
     assert has_price("anthropic:claude-haiku-4-5-20251001")
     assert price_for("anthropic:claude-haiku-4-5-20251001") == price_for("claude-haiku-4-5-20251001")
+
+
+def test_unpriced_host_id_that_prefixes_a_priced_one_gets_the_default_rate():
+    from llm.cost import _DEFAULT_PRICE, cache_read_price_for, has_price, price_for
+
+    m = "deepinfra:meta-llama/Llama-3.3-70B-Instruct"  # only the -Turbo id has a row
+    assert not has_price(m)
+    assert price_for(m) == _DEFAULT_PRICE
+    assert cache_read_price_for(m) == _DEFAULT_PRICE[0] * 0.1
+
+
+def test_bare_undated_id_still_borrows_its_dated_row():
+    from llm.cost import price_for
+
+    assert price_for("claude-haiku-4-5") == price_for("claude-haiku-4-5-20251001")

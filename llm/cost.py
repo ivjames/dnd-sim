@@ -164,10 +164,16 @@ def price_for(model: str) -> tuple[float, float]:
     hit = _lookup(PRICES, model)
     if hit is not None:
         return hit
-    # legacy leniency: a dated key answering for its undated model id
-    for known, price in PRICES.items():
-        if known.startswith(model):
-            return price
+    # legacy leniency: a dated key answering for its undated model id — bare
+    # ids only. An explicit provider:model that _lookup did not price has no
+    # verified rate, and a longer host key that merely starts with it (the
+    # Turbo variant of a Llama id) must not lend it one.
+    from .providers import split_model  # noqa: PLC0415
+
+    if split_model(model)[0] is None:
+        for known, price in PRICES.items():
+            if known.startswith(model):
+                return price
     return _DEFAULT_PRICE
 
 
