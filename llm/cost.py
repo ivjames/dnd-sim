@@ -139,13 +139,15 @@ def _lookup(table: dict, model: str):
     hit = _lookup_raw(table, model)
     if hit is not None:
         return hit
-    from .providers import provider_named, split_model  # noqa: PLC0415 (cycle-safe)
+    from .providers import provider_for, provider_named, split_model  # noqa: PLC0415
 
     name, wire = split_model(model)
     if name is None or wire == model:
         return None
     prov = provider_named(name)
-    if prov is None or not prov.prefixes:
+    # Only when the bare id would route to this very provider: `anthropic:gpt-5.4-nano`
+    # names a provider that will reject the id, so it must not borrow OpenAI's rate.
+    if prov is None or not prov.prefixes or provider_for(wire) is not prov:
         return None
     return _lookup_raw(table, wire)
 

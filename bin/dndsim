@@ -183,9 +183,9 @@ source_key_name() {  # $1=KEY -> two lines, "<file>" then "<name>": the first so
   local key="$1" alias f  # KEY (canonical name first, then its alias); nothing if none does.
   alias="$(key_alias "$key")"  # Two lines, not one space-joined line: a path may contain
   for f in "${KEY_SOURCES[@]}"; do  # spaces, and the caller reads it back line by line.
+    # First file that holds the key wins, under either name; within a file the
+    # canonical name beats the alias. Source order is the documented contract.
     if env_file_has "$f" "$key"; then printf '%s\n%s\n' "$f" "$key"; return 0; fi
-  done
-  for f in "${KEY_SOURCES[@]}"; do
     if [ -n "$alias" ] && env_file_has "$f" "$alias"; then printf '%s\n%s\n' "$f" "$alias"; return 0; fi
   done
   return 0

@@ -943,3 +943,14 @@ def test_unknown_provider_prefix_never_prices():
     from llm.cost import has_price
 
     assert not has_price("nosuch:gpt-5.4-nano")
+
+
+@pytest.mark.parametrize(
+    "mismatched",
+    ["anthropic:gpt-5.4-nano", "openai:deepseek-v4-flash", "deepseek:claude-sonnet-5"],
+)
+def test_explicit_provider_that_does_not_route_the_bare_id_is_unpriced(mismatched):
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    assert not has_price(mismatched)
+    assert price_for(mismatched) == _DEFAULT_PRICE
