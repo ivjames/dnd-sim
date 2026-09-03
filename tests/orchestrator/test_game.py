@@ -393,6 +393,27 @@ def test_cli_runs_a_mock_game(tmp_path, monkeypatch, capsys):
     assert set(first) == {"seq", "round", "kind", "actor", "text", "data"}
 
 
+def test_cli_prose_output_names_who_is_speaking(tmp_path, monkeypatch, capsys):
+    import json
+
+    from orchestrator import cli
+
+    raw = json.loads(open("examples/goblin_ambush.json").read())
+    raw["scenario"]["max_scenes"] = 1
+    raw["scenario"]["beats_per_scene"] = 1
+    raw["max_rounds_per_combat"] = 3
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(raw))
+
+    monkeypatch.setattr(cli.Game, "__init__", _patched_game_init(cli.Game.__init__))
+    cli.main(["--config", str(path), "--mock", "--tempo", "0"])
+    out = capsys.readouterr().out
+    names = [p["name"] for p in raw["party"]]
+    # a prose line, not "  [attack] Goblin 4 attacks Thorin Cragmantle: ..."
+    spoken = [ln for ln in out.splitlines() if any(ln.startswith(f"{n}: ") for n in names)]
+    assert spoken, "no dialogue line named its speaker"
+
+
 def _patched_game_init(orig):
     """Force the CLI's Game to use the fake engine (the real one may not exist)."""
 

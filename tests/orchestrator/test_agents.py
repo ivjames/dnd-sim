@@ -315,6 +315,14 @@ def test_summarize_uses_cheap_model_and_clamps():
     assert "RESPONSE_SHAPE: summary" in client.prompts[0]
 
 
+def test_summarize_names_the_speaker_of_a_dialogue_event():
+    """The summary is fed back to every agent; anonymous lines misattribute plans."""
+    client = ScriptedClient('{"summary": "ok"}')
+    line = eng.Event(1, 1, "dialogue", "pc_1", "I take the left fork.", {"speaker": "Thorin"})
+    summarize(client, "m", Ledger(), "", [line])
+    assert "Thorin: I take the left fork." in client.prompts[0]
+
+
 def test_summarize_keeps_previous_on_garbage():
     assert summarize(ScriptedClient(""), "m", Ledger(), "previous text", events(2)) == "previous text"
 
