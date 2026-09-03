@@ -179,14 +179,14 @@ key_alias() {  # $1=KEY -> alias name on stdout ('' if none)
   case "$1" in GEMINI_API_KEY) printf 'GOOGLE_API_KEY';; esac
 }
 
-source_key_name() {  # $1=KEY -> "<file> <name>": the first source holding KEY (canonical
-  local key="$1" alias f  # name first, then its alias), '' if none does. Never the value.
-  alias="$(key_alias "$key")"
-  for f in "${KEY_SOURCES[@]}"; do
-    if env_file_has "$f" "$key"; then printf '%s %s' "$f" "$key"; return 0; fi
+source_key_name() {  # $1=KEY -> two lines, "<file>" then "<name>": the first source holding
+  local key="$1" alias f  # KEY (canonical name first, then its alias); nothing if none does.
+  alias="$(key_alias "$key")"  # Two lines, not one space-joined line: a path may contain
+  for f in "${KEY_SOURCES[@]}"; do  # spaces, and the caller reads it back line by line.
+    if env_file_has "$f" "$key"; then printf '%s\n%s\n' "$f" "$key"; return 0; fi
   done
   for f in "${KEY_SOURCES[@]}"; do
-    if [ -n "$alias" ] && env_file_has "$f" "$alias"; then printf '%s %s' "$f" "$alias"; return 0; fi
+    if [ -n "$alias" ] && env_file_has "$f" "$alias"; then printf '%s\n%s\n' "$f" "$alias"; return 0; fi
   done
   return 0
 }
@@ -221,7 +221,7 @@ ensure_env() {
     env_file_has "$envf" "$key" && continue
     hit="$(source_key_name "$key")"
     [ -n "$hit" ] || continue
-    srcf="${hit%% *}"; src="${hit#* }"
+    { IFS= read -r srcf; IFS= read -r src; } <<< "$hit"
     val="$(env_file_get "$srcf" "$src")"
     env_file_append "$envf" "$key" "$val"
     unset val

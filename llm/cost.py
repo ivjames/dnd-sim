@@ -115,7 +115,7 @@ CACHE_READ_PRICES: dict[str, float] = {
 }
 
 
-def _lookup(table: dict, model: str):
+def _lookup_raw(table: dict, model: str):
     """Exact key, else the longest prefix key ending on an id boundary."""
     if model in table:
         return table[model]
@@ -127,6 +127,27 @@ def _lookup(table: dict, model: str):
             if best is None or len(known) > len(best):
                 best = known
     return table[best] if best is not None else None
+
+
+def _lookup(table: dict, model: str):
+    """`_lookup_raw`, then — for the explicit `provider:model` form on a
+    provider that its bare id would route to anyway (`openai:gpt-5.4-nano`,
+    `deepseek:deepseek-v4-flash`) — the bare id's row. Host-qualified keys
+    (`deepinfra:...`, `siliconflow:...`) never fall back: the same model id
+    costs different money on different hosts, so those rows are keyed in full.
+    """
+    hit = _lookup_raw(table, model)
+    if hit is not None:
+        return hit
+    from .providers import provider_named, split_model  # noqa: PLC0415 (cycle-safe)
+
+    name, wire = split_model(model)
+    if name is None or wire == model:
+        return None
+    prov = provider_named(name)
+    if prov is None or not prov.prefixes:
+        return None
+    return _lookup_raw(table, wire)
 
 
 def has_price(model: str) -> bool:

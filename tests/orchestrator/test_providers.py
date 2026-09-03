@@ -905,3 +905,41 @@ def test_cli_mock_run_is_byte_identical_across_runs_and_seat_overrides(tmp_path,
     # a seat override changes only the ledger lines (pc_3 priced as deepseek)
     assert sans_cost(a) == sans_cost(c)
     assert len(a.splitlines()) == len(c.splitlines())
+
+
+# -- explicit provider:model on a prefix-routed provider prices as the bare id --
+
+
+@pytest.mark.parametrize(
+    "explicit,bare",
+    [
+        ("openai:gpt-5.4-nano", "gpt-5.4-nano"),
+        ("deepseek:deepseek-v4-flash", "deepseek-v4-flash"),
+        ("anthropic:claude-sonnet-5", "claude-sonnet-5"),
+    ],
+)
+def test_explicit_form_on_prefix_provider_prices_like_bare_id(explicit, bare):
+    from llm.cost import cache_read_price_for, has_price, price_for
+
+    assert has_price(bare)
+    assert has_price(explicit)
+    assert price_for(explicit) == price_for(bare)
+    assert cache_read_price_for(explicit) == cache_read_price_for(bare)
+
+
+def test_host_qualified_keys_do_not_fall_back_to_bare_rows():
+    from llm.cost import _DEFAULT_PRICE, has_price, price_for
+
+    # Priced only under its host key: the bare id must not answer for it.
+    assert has_price("deepinfra:deepseek-ai/DeepSeek-V3.2")
+    assert not has_price("deepseek-ai/DeepSeek-V3.2")
+    # A host id with no row stays unpriced even though DeepSeek's own API
+    # prices a similarly named model.
+    assert not has_price("deepinfra:deepseek-v4-flash")
+    assert price_for("deepinfra:deepseek-v4-flash") == _DEFAULT_PRICE
+
+
+def test_unknown_provider_prefix_never_prices():
+    from llm.cost import has_price
+
+    assert not has_price("nosuch:gpt-5.4-nano")
