@@ -36,7 +36,14 @@ def apply_env_defaults(config: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
-def _make_client(cfg: dict[str, Any]) -> Any:
+def _make_client(cfg: dict[str, Any], seats: dict[str, str] | None = None) -> Any:
+    """Mock client in mock mode; otherwise a RouterClient checked against `seats`.
+
+    `seats` is `GameConfig.seat_models()` — every model at the table. In live
+    mode each must route to a provider whose key is set and must have a price
+    row (CONTRACTS.md amendment 2026-09-03: fail fast at creation, because the
+    budget stop is blind for an unpriced model) unless DND_ALLOW_UNPRICED=1.
+    """
     seed = int(cfg.get("seed") or 0)
     if cfg.get("mock"):
         from llm.client import MockLLMClient  # noqa: PLC0415
@@ -45,17 +52,19 @@ def _make_client(cfg: dict[str, Any]) -> Any:
             return MockLLMClient(seed=seed)
         except TypeError:
             return MockLLMClient()
-    from llm.client import AnthropicClient  # noqa: PLC0415
+    from llm.client import LLMError  # noqa: PLC0415
+    from llm.router import RouterClient  # noqa: PLC0415
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Start with DND_SIM_MOCK=1 for mock mode."
-        )
+    if seats is None:
+        from orchestrator.config import GameConfig  # noqa: PLC0415
+
+        seats = GameConfig.from_dict(cfg).seat_models()
+    client = RouterClient()
     try:
-        return AnthropicClient(api_key=api_key)
-    except TypeError:
-        return AnthropicClient()
+        client.preflight(seats)
+    except LLMError as exc:
+        raise RuntimeError(f"{exc}\nStart with DND_SIM_MOCK=1 for mock mode.") from exc
+    return client
 
 
 def default_game_factory(
@@ -68,7 +77,7 @@ def default_game_factory(
 
     cfg_dict = apply_env_defaults(config)
     cfg = GameConfig.from_dict(cfg_dict)
-    client = _make_client(cfg_dict)
+    client = _make_client(cfg_dict, seats=cfg.seat_models())
     bus = EventBus()
     game = Game(cfg, client, bus, on_event=on_event)
     return game, bus

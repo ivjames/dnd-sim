@@ -9,7 +9,8 @@ import sys
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from llm.client import AnthropicClient, MockLLMClient
+from llm.client import LLMError, MockLLMClient
+from llm.router import RouterClient
 
 from .bus import EventBus
 from .config import GameConfig
@@ -51,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="orchestrator.cli", description="Run a dnd-sim game headless.")
     p.add_argument("--config", required=True, help="path to a game config JSON")
     p.add_argument("--mock", action="store_true", help="use the deterministic mock LLM")
-    p.add_argument("--live", action="store_true", help="use the real Anthropic API")
+    p.add_argument("--live", action="store_true", help="use the real APIs (one provider per seat, by model id)")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--tempo", type=int, default=None, help="ms between events (0 = as fast as possible)")
     p.add_argument("--budget", type=float, default=None, help="USD budget for this run")
@@ -71,7 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     mock = args.mock or (not args.live and os.environ.get("DND_SIM_MOCK") == "1")
     cfg.mock = mock
 
-    client = MockLLMClient(seed=cfg.seed) if mock else AnthropicClient()
+    if mock:
+        client: Any = MockLLMClient(seed=cfg.seed)
+    else:
+        client = RouterClient()
+        try:
+            client.preflight(cfg.seat_models())
+        except LLMError as exc:
+            print(f"error: {exc}", file=sys.stderr, flush=True)
+            return 2
     bus = EventBus()
 
     def sink(ev: Any) -> None:

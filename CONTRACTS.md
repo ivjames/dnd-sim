@@ -167,7 +167,7 @@ class Ledger:
     total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}}
     def to_dict(self)
 ```
-Model names come from env: `DND_DM_MODEL` (default `claude-sonnet-5`), `DND_PLAYER_MODEL` (default `claude-haiku-4-5-20251001`), `DND_SUMMARY_MODEL` (default = player model).
+Model names come from env: `DND_DM_MODEL` (default `claude-sonnet-5`), `DND_PLAYER_MODEL` (default `claude-haiku-4-5-20251001`), `DND_SUMMARY_MODEL` (default = player model). A model id may name any platform in `llm/providers.py`; see the amendment "2026-09-03 — llm/ — multi-provider routing" for `RouterClient`, `OpenAICompatClient` and per-seat `model`.
 
 ---
 
@@ -415,6 +415,119 @@ Two smaller web-side conventions, recorded so nobody is surprised:
    The DM block clears Sonnet 5's 1,024 floor and does cache. Left as-is:
    padding prompts to reach the floor would cost more than it saves at current
    game lengths; it is a future cost lever if player calls dominate spend.
+
+### 2026-09-03 — llm/ — multi-provider routing
+
+Any seat at the table (DM, each player, summarizer) can be served by a
+different platform. `LLMClient.complete` in §2 is unchanged; what changed is
+which object sits behind it in live mode and how a model id reaches a seat.
+
+1. **`llm/providers.py` — `PROVIDERS`**, one row per platform, routed by
+   model-id prefix (`provider_for(model)`). Every URL and price was read from
+   the cited page on 2026-09-03.
+
+   | name | key env var | base URL | routes prefixes | dialect | `json_object` | max-tokens field |
+   |---|---|---|---|---|---|---|
+   | anthropic | `ANTHROPIC_API_KEY` | (native SDK) | `claude-` | anthropic | no (asked in system text) | `max_tokens` |
+   | openai | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-`, `chatgpt-`, `o1`, `o3`, `o4` | openai_compat | yes | `max_completion_tokens` (`max_tokens` is deprecated there) |
+   | xai | `XAI_API_KEY` | `https://api.x.ai/v1` | `grok-` | openai_compat | yes | `max_tokens` |
+   | mistral | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | `mistral-`, `ministral-`, `magistral-`, `codestral-`, `open-mistral`, `open-mixtral`, `pixtral-` | openai_compat | yes | `max_tokens` |
+   | gemini | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-` | openai_compat | **no** (unconfirmed on the compat layer; left off) | `max_tokens` |
+   | deepseek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` (the docs post to `/chat/completions` with no `/v1`) | `deepseek-` | openai_compat | yes (needs "json" in the prompt — the suffix has it) | `max_tokens` |
+
+2. **`OpenAICompatClient(provider, key)`** (`llm/compat.py`, httpx) serves
+   every `openai_compat` row: `POST <base_url>/chat/completions`, `Bearer`
+   key. Mapping from the §2 call:
+   - `system` (str or Anthropic content blocks) → one `{"role": "system"}`
+     message, block texts joined with blank lines, `cache_control` dropped;
+     with `json_only=True` the same `JSON_ONLY_SUFFIX` the Anthropic client
+     appends is appended here, and `response_format: {"type": "json_object"}`
+     is added **only** when the row says the provider accepts it. Non-JSON
+     calls send neither.
+   - `messages` → `{"role", "content"}` with content flattened to text.
+   - `max_tokens` → the row's field; `temperature` and extra fields per
+     **`COMPAT_RULES`** (first prefix match; default = forward temperature,
+     nothing extra): `gpt-5-*`/`gpt-5`/`gpt-6*` drop temperature and send
+     `reasoning_effort: "minimal"`, `gpt-5.x` drop temperature and send
+     `"none"`; `grok-4.6`/`grok-4.5`/`grok-4.20-multi-agent` keep temperature
+     and send `reasoning_effort: "low"`; `gemini-2.5-flash*` send `"none"`,
+     other `gemini-*` send `"minimal"` (2.5 Pro and 3.x cannot switch thinking
+     off); `deepseek-*` send top-level `thinking: {"type": "disabled"}`
+     (thinking is on by default there). Same reason as `MODEL_RULES`: hidden
+     reasoning is billed as output and counts against the 200–600-token caps.
+   - Response → `LLMResponse`: `choices[0].message.content` (empty string when
+     null), `finish_reason` → `stop_reason`, `usage.prompt_tokens −
+     cached` → `input_tokens`, `cached` → `cache_read_tokens` where `cached`
+     is `prompt_tokens_details.cached_tokens` (OpenAI/xAI/Gemini/Mistral) or
+     `prompt_cache_hit_tokens` (DeepSeek), `completion_tokens` (reasoning
+     tokens included) → `output_tokens`, `cache_write_tokens` = 0 always.
+   - Retry: 429 / 5xx / timeout / transport error → backoff 0.5·2ⁿ s capped
+     at 8, three attempts; any other 4xx → `LLMError` at once with the
+     provider name, status and the server's error message. The key is never
+     in a message.
+
+3. **`RouterClient`** (`llm/router.py`) implements `LLMClient`, builds one
+   client per provider lazily (`AnthropicClient` for the anthropic row, the
+   compat client otherwise), and is what `web/factory.py` and
+   `orchestrator/cli.py` hand to `Game` in live mode. Mock mode still gets
+   `MockLLMClient` and is byte-for-byte unchanged (verified: same seed → same
+   `--json` stream before and after, and with or without seat overrides).
+   Unknown prefix → `LLMError` listing the known prefixes; missing key →
+   `LLMError` naming the env var.
+
+4. **Per-seat models.** A party member may carry `"model": "<id>"`, which
+   overrides `player_model` for that PC (`GameConfig.player_model_for(spec)`);
+   `dm_model` / `summary_model` stay per game. `GameConfig.seat_models()`
+   returns `{"dm", "summary", "player:<id>"...} → model`. `Game.seat_models`
+   records combatant id → model, and `snapshot()["models"]` exposes
+   `{"dm", "summary", "players": {id: model}}`. The ledger row per seat
+   (`player:<id>`) is priced at that seat's model.
+
+5. **Fail fast on price (live mode only).** `RouterClient.preflight(seats)`
+   runs at game creation (factory and CLI) and raises one `LLMError` listing
+   every seat whose model has no provider, whose provider's key is unset, or
+   which has **no row in `PRICES`** — the budget stop is blind otherwise.
+   `DND_ALLOW_UNPRICED=1` waives only the price check (the model then bills at
+   the $2/$10 default). The web API surfaces it as the 400 it already returns
+   for a bad config; the CLI prints it and exits 2. `_check_budget` is
+   unchanged and still runs before every call regardless of provider — the
+   router is below it.
+
+6. **`llm/cost.py`.** `PRICES` gained rows for OpenAI (`gpt-6-astra`,
+   `gpt-5.6-*`, `gpt-5.5[-pro]`, `gpt-5.4[-mini|-nano|-pro]`, `gpt-5.2[-pro]`,
+   `gpt-5.1`, `gpt-5[-mini|-nano|-pro]`), xAI (`grok-4.6`, `grok-4.5`,
+   `grok-4.3`, `grok-4.20-0309-*`, `grok-build-0.1`), Mistral
+   (`mistral-medium-latest`, `mistral-medium-3-5`, `mistral-small-latest`,
+   `mistral-large-latest`, `codestral-latest`, `ministral-{3b,8b,14b}-latest`),
+   Gemini (`gemini-3.8/3.7/3.6-flash` at promotional rates through
+   2026-12-31, `gemini-3.5-flash[-lite]`, `gemini-3.1-flash-lite`,
+   `gemini-3.1-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash[-lite]`) and
+   DeepSeek (`deepseek-v4-flash`, `deepseek-v4-pro`, at **peak** rates).
+   Lookup is exact, then the longest prefix ending on an id boundary
+   (`-`, `.`, end) — so `gpt-5.4-nano-<date>` prices as `gpt-5.4-nano`, never
+   as `gpt-5`. `has_price(model)` is that test. Cache reads still cost
+   0.1× input by default; `CACHE_READ_PRICES` overrides it where a provider's
+   discount differs (xAI 0.15–0.25×, DeepSeek ~0.03×) via
+   `cache_read_price_for`. The Anthropic rows and the §2 formula for them are
+   unchanged.
+
+7. **Not supported across providers, deliberately:** Anthropic prompt caching
+   (`cache_control` is stripped; whatever a provider caches on its own is
+   only *priced*, never requested); Anthropic thinking controls (the compat
+   rules above are the nearest knob each platform offers, and some — Gemini
+   2.5 Pro / 3.x, gpt-6-astra — cannot switch reasoning off, only down);
+   structured-output schemas (only `json_object` mode, and only where
+   confirmed); streaming; tool use. Gemini's `json_object` support on the
+   compat layer could not be confirmed from its docs and is left off, so
+   Gemini seats rely on the JSON instruction in the system text plus the
+   agents' tolerant parser, as Anthropic seats already do.
+
+8. **Not read, so not set:** an OpenAI statement on whether `temperature` is
+   rejected on the gpt-5 family (the reference only says support "can
+   differ ... particularly for newer reasoning models"); dropping it can
+   never 400, so it is dropped. `requirements.txt` now names
+   `httpx>=0.27,<1.0` explicitly (it was already installed as anthropic's
+   dependency).
 
 ### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
 

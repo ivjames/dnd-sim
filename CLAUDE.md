@@ -31,7 +31,7 @@ reopen these in a code change; if one has to change, make it a decision.
 A **proxied app**: nginx fronts a pm2-managed **Python 3.11 / Flask** process
 on `127.0.0.1:8071`. Not Node — there is no `package.json`, no `npm ci`, no
 build. The install is `python3 -m venv .venv && .venv/bin/pip install -r
-requirements.txt`, and `requirements.txt` is deliberately tiny (Flask,
+requirements.txt`, and `requirements.txt` is deliberately tiny (Flask, httpx,
 anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
 
 - Repo: `ivjames/dnd-sim` · droplet dir: `/var/www/dndsim`

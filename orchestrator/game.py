@@ -102,6 +102,7 @@ class Game:
         self._thread: threading.Thread | None = None
         self.dm: DMAgent | None = None
         self.players: dict[str, PlayerAgent] = {}
+        self.seat_models: dict[str, str] = {}  # combatant id -> model serving it
 
     # ------------------------------------------------------------------
     # controls
@@ -239,6 +240,7 @@ class Game:
             sheet = eng.build_character(dict(spec), self.rng)
             pos = starts[i] if i < len(starts) else (1, 1 + i)
             combatants[sheet.id] = self._pc_combatant(sheet, tuple(pos))
+            self.seat_models[sheet.id] = self.cfg.player_model_for(spec)
         scene = {
             "title": self.cfg.title,
             "description": self.cfg.opening,
@@ -258,7 +260,7 @@ class Game:
         for cid, c in combatants.items():
             self.players[cid] = PlayerAgent(
                 self.client,
-                self.cfg.player_model,
+                self.seat_models.get(cid, self.cfg.player_model),
                 c.sheet,
                 self.ledger,
                 engine=self.engine,
@@ -743,6 +745,11 @@ class Game:
             "round": getattr(self.state, "round", 0) if self.state is not None else 0,
             "outcome": self.outcome,
             "error": self.error,
+            "models": {
+                "dm": self.cfg.dm_model,
+                "summary": self.cfg.summary_model,
+                "players": dict(self.seat_models),
+            },
         }
 
 

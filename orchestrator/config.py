@@ -58,6 +58,20 @@ class GameConfig:
     def opening(self) -> str:
         return (self.scenario or {}).get("opening", "") or ""
 
+    # -- seats (CONTRACTS.md amendment 2026-09-03, multi-provider) ---------
+
+    def player_model_for(self, spec: dict) -> str:
+        """The model serving one party member: its own `model`, else player_model."""
+        return str((spec or {}).get("model") or self.player_model)
+
+    def seat_models(self) -> dict[str, str]:
+        """Every seat at the table -> model id (dm, summary, player:<id>...)."""
+        seats = {"dm": self.dm_model, "summary": self.summary_model}
+        for i, spec in enumerate(self.party or []):
+            pid = str((spec or {}).get("id") or f"pc_{i + 1}")
+            seats[f"player:{pid}"] = self.player_model_for(spec)
+        return seats
+
     def encounters(self) -> list[dict]:
         return list((self.scenario or {}).get("encounters", []) or [])
 

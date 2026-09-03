@@ -29,7 +29,7 @@ web  →  orchestrator  →  agents  →  llm
 | Path | What |
 |---|---|
 | `engine/` | Pure deterministic 5e rules + SRD data. No network, no threads. |
-| `llm/` | Anthropic client, `MockLLMClient`, token/cost ledger. |
+| `llm/` | Anthropic client, OpenAI-compatible client, per-seat router, `MockLLMClient`, token/cost ledger. |
 | `agents/` | Prompt construction and output parsing for DM and players. |
 | `orchestrator/` | Game loop, scenes, turns, memory, event bus, controls. |
 | `web/` | Flask app, SQLite transcripts, SSE stream, static spectator UI. |
@@ -75,13 +75,69 @@ Tests:
 |---|---|---|
 | `PORT` | `8071` | Listen port. |
 | `HOST` | `127.0.0.1` | Bind address. Keep it loopback; nginx fronts it. |
-| `ANTHROPIC_API_KEY` | — | Required for live mode. On lab980, `dndsim deploy` copies it from `/etc/environment` into `.env`, which `run.sh` sources. |
+| `ANTHROPIC_API_KEY` | — | Required for live mode whenever a seat names a `claude-*` model (the defaults do). On lab980, `dndsim deploy` copies it from `/etc/environment` into `.env`, which `run.sh` sources. |
+| `OPENAI_API_KEY` | — | Needed only if a seat names a `gpt-*` model (OpenAI, `https://api.openai.com/v1`). |
+| `XAI_API_KEY` | — | Needed only if a seat names a `grok-*` model (xAI, `https://api.x.ai/v1`). |
+| `MISTRAL_API_KEY` | — | Needed only if a seat names a `mistral-*` / `ministral-*` / `magistral-*` / `codestral-*` model (`https://api.mistral.ai/v1`). |
+| `GEMINI_API_KEY` | — | Needed only if a seat names a `gemini-*` model (Google's OpenAI-compatible endpoint, `https://generativelanguage.googleapis.com/v1beta/openai`). |
+| `DEEPSEEK_API_KEY` | — | Needed only if a seat names a `deepseek-*` model (`https://api.deepseek.com`). |
+| `DND_ALLOW_UNPRICED` | unset | `1` → let a live game start with a model that has no row in `llm/cost.py` `PRICES` (it is then charged at the default $2/$10 rate). Off by default: the budget stop is blind for an unpriced model, so game creation refuses. |
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
 | `DND_SIM_DB` | `./data/dndsim.sqlite3` | SQLite transcript store. |
 | `DND_SIM_EXAMPLES` | `./examples` | Where `/api/presets` reads scenarios from. |
 | `DND_DM_MODEL` | `claude-sonnet-5` | DM model. |
 | `DND_PLAYER_MODEL` | `claude-haiku-4-5-20251001` | Player model. |
 | `DND_SUMMARY_MODEL` | = player model | Rolling-summary model. |
+
+Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
+may name a model on any platform above — the platform is chosen from the
+model id's prefix. Keys are read only for platforms actually seated.
+
+## Seating other platforms
+
+Every seat at the table — the DM, each player, the summarizer — can be served
+by a different platform. `llm/providers.py` holds the table (one row per
+platform: key variable, base URL, model-id prefixes); the `RouterClient`
+picks the row by prefix, so nothing in a config names a provider, only a
+model. Anthropic uses its native SDK; every other row goes through one
+OpenAI-compatible `chat/completions` adapter.
+
+Per-game models are `dm_model` / `player_model` / `summary_model` (or the env
+vars). A party member may carry its own `"model"`, which overrides
+`player_model` for that character only:
+
+```json
+{
+  "dm_model": "claude-sonnet-5",
+  "player_model": "claude-haiku-4-5-20251001",
+  "party": [
+    {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3},
+    {"id": "pc_2", "name": "Vessa Quill", "race": "Halfling (Lightfoot)", "klass": "Rogue", "level": 3,
+     "model": "grok-4.3"},
+    {"id": "pc_3", "name": "Sister Marigold Penn", "race": "Human", "klass": "Cleric", "level": 3,
+     "model": "gemini-2.5-flash"},
+    {"id": "pc_4", "name": "Ilbrandt Ash", "race": "Elf (High)", "klass": "Wizard", "level": 3,
+     "model": "deepseek-v4-flash"}
+  ]
+}
+```
+
+In live mode, game creation checks every seat up front and refuses with one
+message naming what is wrong: a model no row routes, a platform whose key is
+not set (the message names the variable), or a model with no price row (see
+`DND_ALLOW_UNPRICED`). The ledger keeps one row per seat, priced at that
+seat's model, so the budget stop works across platforms. Mock mode ignores all
+of it — no keys, no prices, and a seated config produces the same transcript
+as an unseated one for the same seed. The game snapshot reports the seating
+under `models` (`dm`, `summary`, `players.<id>`).
+
+What does not cross platforms: Anthropic prompt caching (the compat adapter
+sends plain system text; cached-token counts a provider reports are still
+priced), and the thinking controls — reasoning models on the other platforms
+get their effort turned down per `llm/providers.py` `COMPAT_RULES` so hidden
+reasoning does not eat the tight per-call token caps. Prices in `llm/cost.py`
+were read from each platform's pricing page on 2026-09-03; re-check them when
+seating a model for real money.
 | `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
 
 ## HTTP API
