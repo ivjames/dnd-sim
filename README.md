@@ -590,6 +590,16 @@ when the game ends. It deliberately leaves `status` alone: holding is the
 narration keeping step, the table's own pause is something else, and the two
 stay separately controllable.
 
+A renewal that fails is not the same as one that is refused. Three answers mean
+this game will never take a hold — no such game (404), one another process is
+running (409), one that does not support it (501) — and those turn the option
+off for that game, with the tooltip saying so. Anything else is the wire
+failing rather than the game answering: a dropped connection, a 502 while nginx
+restarts under a deploy. The page keeps asking through those, backing off one
+heartbeat per consecutive failure up to a minute. Giving up on them instead is
+what used to leave a listener tens of lines behind with nothing on screen to
+say why.
+
 The checkbox is a *setting*, and the UI keeps that apart from whether anything
 is being held right now. It is disabled where the option cannot apply to this
 game at all (no speech synthesis, a game that has ended, one another process is

@@ -101,7 +101,14 @@
           // changes what this page may show: re-render the gate rather than
           // leaving buttons up that will only fail again.
           noteWriteRefusal(r.status, data);
-          throw new Error((data && data.error) || ('HTTP ' + r.status));
+          var err = new Error((data && data.error) || ('HTTP ' + r.status));
+          // The status, for the callers that have to tell a refusal apart from
+          // a blip. The message cannot carry it — it is the server's own words
+          // whenever there are any — and a rejection from `fetch` itself never
+          // reaches this line, so an absent `status` means "no server answered"
+          // rather than some code standing in for one.
+          err.status = r.status;
+          throw err;
         }
         return data;
       });
@@ -703,6 +710,7 @@
   var HOLD_LOW = 1;         // ... and at which we let it go again (hysteresis)
   var HOLD_LEASE = 12;      // seconds asked for; the server caps it and it self-expires
   var HOLD_TICK = 4000;     // renewal interval, comfortably inside the lease
+  var HOLD_RETRY_MAX = 60000;   // ceiling on the back-off after a failed hold call
   var BACKLOG_SCAN = 400;   // cap the count: the badge only needs "lots"
   // This tab's hold lease. Per tab, not per browser: two tabs on one game are
   // two listeners at different places in it, and the server waits for whichever
@@ -747,7 +755,9 @@
     holding: false,        // the game has CONFIRMED a lease — what the badge may claim
     holdWanted: false,     // what we have asked for — drives the hysteresis, not the badge
     holdSentAt: 0,         // last renewal, so the heartbeat stays a heartbeat
-    holdBroken: false      // this game will not take a hold (ended, or another process)
+    holdBroken: false,     // this game will not take a hold (ended, or another process)
+    holdFails: 0,          // consecutive failed hold calls, for the back-off
+    holdRetryAt: 0         // ... and the time before which we do not ask again
   };
 
   function pageHidden() { return typeof document !== 'undefined' && !!document.hidden; }
@@ -1381,6 +1391,12 @@
     if (!V.holdWanted && !V.holding) return;
     voiceHoldSend(0);
   }
+  // The three statuses that mean this game will never take a hold, whatever we
+  // do: no such game (404), running in another process (409), a game object
+  // without the method (501) — see `hold()` in web/routes/api.py. Nothing else
+  // is an answer about the game.
+  var HOLD_REFUSED = { 404: 1, 409: 1, 501: 1 };
+
   function voiceHoldSend(seconds) {
     if (!S.gameId) return;
     var want = seconds > 0;
@@ -1389,6 +1405,10 @@
     // every finished line, so without this the page would POST a lease for
     // each one instead of once a tick.
     if (want && V.holdWanted && (now - V.holdSentAt) < HOLD_TICK) return;
+    // Backing off after a failure the server did not explain (see below). A
+    // release is never held back: letting a game go is the one call that must
+    // not wait on the reason the last one failed.
+    if (want && now < V.holdRetryAt) return;
     V.holdWanted = want;
     V.holdSentAt = now;
     var id = S.gameId;
@@ -1400,15 +1420,30 @@
         // Saying it on the strength of a request merely sent is the UI
         // claiming a thing works before it knows that it does.
         V.holding = want && !!(r && r.holding > 0);
+        V.holdFails = 0;
+        V.holdRetryAt = 0;
         voiceRenderControls();
       })
-      .catch(function () {
-        // 404/409/501: this game cannot be held (ended, restarted, or served by
-        // another process). Stop asking; the narrator just runs behind.
+      .catch(function (err) {
         if (id !== S.gameId) return;
-        V.holdBroken = true;
         V.holding = false;
         V.holdWanted = false;
+        if (HOLD_REFUSED[err && err.status]) {
+          // The server said this game cannot be held. Stop asking; the
+          // narrator just runs behind.
+          V.holdBroken = true;
+        } else {
+          // Anything else — a dropped connection, a 5xx, nginx restarting
+          // under a deploy — is the wire failing, not the game answering, and
+          // latching on it strands the narrator arbitrarily far behind for the
+          // rest of the page's life over one blip. So keep asking; just not at
+          // full rate forever. Back off a tick per consecutive failure, capped
+          // at HOLD_RETRY_MAX, so a blip costs one tick and a wedged endpoint
+          // is asked once a minute. A success clears it.
+          V.holdFails += 1;
+          V.holdRetryAt = Date.now() +
+            Math.min(V.holdFails * HOLD_TICK, HOLD_RETRY_MAX);
+        }
         voiceRenderControls();
       });
   }
@@ -1427,6 +1462,8 @@
     V.holdWanted = false;
     V.holdSentAt = 0;
     V.holdBroken = false;
+    V.holdFails = 0;
+    V.holdRetryAt = 0;
     // Clips are keyed by game id, so the old game's are dead weight; and a
     // refusal belonged to that game's budget, not to this one's.
     clipForget();
