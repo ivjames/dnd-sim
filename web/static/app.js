@@ -34,6 +34,7 @@
     groupBody: null,
     snapTimer: null,
     pollTimer: null,
+    loadGen: 0,         // bumped per selectGame; a stale load must not finish
     presets: []
   };
 
@@ -1195,18 +1196,27 @@
     try { localStorage.setItem('dndsim.game', id); } catch (e) { /* private mode */ }
     if ($('game-select').value !== id) $('game-select').value = id;
 
+    // Switch again before this load finishes and its history would be rendered
+    // into the new game's transcript, and its voiceStartAt would place the
+    // playhead against the wrong events. Only the newest load may finish.
+    var gen = ++S.loadGen;
+    var current = function () { return gen === S.loadGen; };
+
     api('/api/games/' + encodeURIComponent(id) + '/events?after=-1')
       .then(function (events) {
+        if (!current()) return null;
         (events || []).forEach(renderEvent);
         return refreshSnapshot();
       })
-      .then(function () { voiceStartAt(); })
+      .then(function () { if (current()) voiceStartAt(); })
       .then(function () {
+        if (!current()) return;
         if (!TERMINAL[S.status]) connect(id);
         else { setConn('ended (' + S.status + ')', 'conn-off'); voiceOnGameEnd(); }
         startPolling();
       })
       .catch(function (e) {
+        if (!current()) return;
         V.loading = false;
         voiceRenderControls();
         ctlNote('load failed: ' + e.message, true);
