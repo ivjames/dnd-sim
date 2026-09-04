@@ -1,0 +1,89 @@
+{
+  "title": "Bad Business in the Brine Cellar",
+  "seed": 11,
+  "setting": "Saltmarsh in the off-season: a fishing town with too many empty rooms and a harbourmaster who pays in coin nobody local will take.",
+  "tone": "small-stakes, muddy boots, comic in the way a bad job is comic",
+  "budget_usd": 0.75,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 15,
+  "player_temperature": 1.0,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Hob Tanner",
+      "race": "Human",
+      "klass": "Fighter",
+      "level": 1,
+      "abilities": {"STR": 16, "DEX": 13, "CON": 15, "INT": 9, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "persona": "Three weeks a mercenary, eleven years a butcher's boy, and it shows in how he holds a blade — competently, and like meat. Wants this job over before supper. Says the plan out loud to check it is a plan. Hates being underground and will keep saying so."
+    },
+    {
+      "id": "pc_2",
+      "name": "Pib Underbough",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 1,
+      "abilities": {"STR": 8, "DEX": 17, "CON": 14, "INT": 12, "WIS": 12, "CHA": 14},
+      "equipment": "default",
+      "persona": "Grew up in these cellars and knows which barrels are load-bearing. Wants a look at what the harbourmaster is actually storing, which is not what the party was hired for. Bargains with everything, including rats. Will volunteer Hob for anything involving reach."
+    },
+    {
+      "id": "pc_3",
+      "name": "Deacon Orla Vance",
+      "race": "Human",
+      "klass": "Cleric",
+      "level": 1,
+      "abilities": {"STR": 12, "DEX": 10, "CON": 14, "INT": 11, "WIS": 16, "CHA": 13},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Newly posted, badly briefed, taking notes on everything. Wants a report she can defend to her chapter house, which means she keeps asking why before she asks where. Treats a vermin nest as a public health matter. Disapproves of looting and says so, once, each time."
+    },
+    {
+      "id": "pc_4",
+      "name": "Emmet Sull",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 1,
+      "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 16, "WIS": 12, "CHA": 11},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Copying a bestiary for a living and taking field jobs to draw from life. Wants a specimen, ideally intact, absolutely regardless of what that costs the rest of the party. One spell slot and an unwarranted sense of timing. Narrates what he is drawing while people are being bitten."
+    }
+  ],
+  "scenario": {
+    "opening": "The brine cellar smells of fish, wet rope, and something with an opinion. The harbourmaster's stock has been going missing a barrel at a time, and the only door is the one behind you. Down at the far wall, past the stacked casks, something is chewing and something else is telling it to be quiet.",
+    "location": "The brine cellar under the harbourmaster's office",
+    "objectives": [
+      "Find out what is taking the stock",
+      "Get paid",
+      "Come back up the stairs"
+    ],
+    "max_scenes": 1,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "Past the Casks",
+        "description": "Two rows of salt-fish barrels, a floor of standing brine, and a gnawed hole where the wall should be.",
+        "location": "The brine cellar"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Giant Rat", "count": 4},
+          {"name": "Kobold", "count": 2}
+        ],
+        "grid": {
+          "width": 10,
+          "height": 8,
+          "party_start": [[1, 3], [1, 4], [2, 3], [2, 4]],
+          "enemy_start": [[8, 2], [8, 5], [7, 1], [7, 6], [9, 3], [9, 4]],
+          "difficult": [[4, 3], [4, 4], [5, 3], [5, 4]],
+          "walls": [[5, 0], [5, 1], [5, 6], [5, 7]]
+        }
+      }
+    ]
+  }
+}

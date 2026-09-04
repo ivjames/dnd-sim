@@ -126,8 +126,8 @@ def test_class_default_spells_exist_and_examples_build():
         for lists in (srd.klass(klass).get("default_spells") or {}).values():
             for s in lists:
                 srd.spell(s)
-    for path in ("goblin_ambush.json", "crypt.json"):
-        cfg = json.loads((DATA.parents[1] / "examples" / path).read_text())
+    for path in sorted((DATA.parents[1] / "examples").glob("*.json")):
+        cfg = json.loads(path.read_text())
         from engine.characters import build_character
         from engine.dice import RNG
         for spec in cfg["party"]:

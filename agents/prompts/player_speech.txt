@@ -6,3 +6,4 @@ RESPONSE_SHAPE: player_speech
 Reply with JSON only:
 {{"speech": "<what your character says or does, in character, 35 words max>"}}
 Say what you attempt. Do not state whether it succeeds, do not roll, do not narrate the world's reaction.
+Answer this moment, not the situation in general: pick up something said, act on it, push back on it, or do a small physical thing (look closer, block a door, hand something over) while you speak.
