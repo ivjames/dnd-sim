@@ -1,6 +1,6 @@
 # CONTRACTS — binding interfaces between layers
 
-Python 3.11. Type hints everywhere. Dataclasses (or plain dicts where noted) — **no Pydantic**, keep deps minimal (`flask`, `anthropic`, `pytest` only).
+Python 3.11. Type hints everywhere. Dataclasses (or plain dicts where noted) — **no Pydantic**, keep deps minimal (`flask`, `anthropic`, `httpx`, `pytest`, and `boto3` for Polly narration — see the 2026-09-04 `tts/` amendment).
 All state is JSON-serializable via `to_dict()` / `from_dict()` on every dataclass. IDs are short strings (`"pc_1"`, `"mon_3"`).
 
 ---
@@ -164,7 +164,8 @@ class MockLLMClient(LLMClient):     # seeded; given a prompt containing legal ac
 PRICES = {"claude-sonnet-5": (2.0, 10.0), "claude-haiku-4-5-20251001": (1.0, 5.0)}   # $/MTok in, out; cache read = 0.1×in, cache write = 1.25×in
 class Ledger:
     def add(self, role: str, resp: LLMResponse) -> float   # returns USD for this call
-    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}}
+    def add_usd(self, role: str, usd: float, **counters: int) -> float   # a priced-elsewhere service; see the 2026-09-04 tts amendment
+    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}, "narrator": {"clips","chars","usd"} — `calls` stays 0, it means MODEL calls}
     def to_dict(self)
 ```
 Model names come from env: `DND_DM_MODEL` (default `claude-sonnet-5`), `DND_PLAYER_MODEL` (default `claude-haiku-4-5-20251001`), `DND_SUMMARY_MODEL` (default = player model). A model id may name any platform in `llm/providers.py`; see the amendment "2026-09-03 — llm/ — multi-provider routing" for `RouterClient`, `OpenAICompatClient` and per-seat `model`.
@@ -216,7 +217,7 @@ class GameConfig:
     seed: int
     setting: str                     # free text world/tone
     tone: str = "classic heroic"
-    party: list[dict]                # character specs (see build_character)
+    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "gender" (voice casting) — neither reaches the engine
     scenario: dict                   # {"opening": str, "encounters": [{"trigger":"scene_1", "monsters":[{"name":"Goblin","count":4}], "grid": {"width":12,"height":10,"party_start":[[1,4],[1,5],[2,4],[2,5]], "enemy_start":[[10,3],...], "difficult":[[5,5]], "walls":[]}}], "max_scenes": 3}
     dm_model: str; player_model: str; summary_model: str
     max_rounds_per_combat: int = 20
@@ -271,6 +272,8 @@ GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>
 POST /api/games/<id>/pause | /resume | /stop
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
+GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
+GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
 
@@ -878,3 +881,279 @@ levers, one mechanical and one prompt-side.
 
 Determinism is unaffected: `MockLLMClient` ignores `temperature`, so a mock run
 at the same seed is still byte-identical.
+
+### 2026-09-04 — new `tts/` + web/ + llm/ — narration moves to Amazon Polly
+
+Spoken narration was the spectator's own `speechSynthesis`: free, private, and
+whatever voice the device happened to ship — an iPad reading a dwarf's dying
+words in the one voice it has. It is now **Amazon Polly, rendered server-side**,
+with the browser's voices kept as a real fallback rather than deleted.
+
+1. **New top-level package `tts/`.** A sibling of `llm/`, not a layer under it:
+   an outside service with a price list. It imports nothing from `engine`,
+   `agents`, `orchestrator`, `llm` or `web`; only `web` imports it, so the
+   layering rule reads `web → orchestrator → agents → llm` **and** `web → tts`.
+
+   ```python
+   # tts/voices.py   (pure: no boto3, no I/O)
+   @dataclass(frozen=True)
+   class Voice:  id: str; language: str; gender: str      # DescribeVoices' Id/LanguageCode/Gender
+   @dataclass(frozen=True)
+   class Cast:   key: str; voice_id: str; language: str; engine: str; pitch_pct: int; rate_pct: int; vtl_pct: int
+   def hash_key(s: str) -> int                            # FNV-1a/32 over UTF-16 code units — the same
+                                                          # number as speech.js `hashString`
+   def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
+   def cast_for(key, pool, dm_voice="", gender="", engine="standard") -> Cast   # ValueError on an empty pool
+   def ssml_for(text: str, cast: Cast, engine: str = "") -> str   # only what the cast's engine accepts
+   def source_fingerprint() -> str                        # digest of this module: the casting decides the audio too
+   ENGINE_SSML: dict[str, frozenset[str]]                 # engine → {"pitch","rate","vtl"} subset
+   def billable_chars(text: str) -> int                   # the words, not the markup
+   STANDARD_ENGLISH: tuple[Voice, ...]                    # fallback roster, read 2026-09-04
+
+   # tts/cache.py
+   def cache_key(*parts: str) -> str                      # sha256 hex
+   class AudioCache:
+       def __init__(self, root: str, max_bytes: int = 512*1024*1024)
+       def get(key) -> bytes | None ; def put(key, data) -> None ; def prune() -> int
+
+   # tts/client.py
+   PRICE_USD_PER_MILLION_CHARS = {"standard": 4.0, "neural": 16.0, "long-form": 100.0, "generative": 30.0}
+   class TTSError(RuntimeError)
+   @dataclass
+   class TTSResult: audio: bytes; cast: Cast; chars: int; usd: float; cached: bool; key: str
+   class PollyTTS:
+       def __init__(self, cache: AudioCache, *, client=None, region="", engine="neural",
+                    monster_engine="standard", language="en-US", dm_voice="Brian", max_chars=400)
+       def engine_for(self, key: str) -> str              # monsters keep `monster_engine`
+       def available(self) -> bool                        # False = no boto3, or no credentials
+       def voices(self, engine="") -> tuple[Voice, ...]   # DescribeVoices once per engine, else STANDARD_ENGLISH
+       def cached(self, ckey: str) -> bytes | None        # a clip already paid for
+       def exclusive(self, ckey: str)                     # contextmanager: the one-synthesis-per-line gate
+       def render(self, key, text, gender="") -> TTSResult   # synthesize; caller holds `exclusive`
+       def ssml(self, text: str, cast: Cast) -> str       # `ssml_for` at this instance's engine
+       def config_id(self) -> str                         # 12 hex over engine|language|dm_voice|roster|voices.py source
+       def cast(self, key: str, gender: str = "") -> Cast
+       def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
+       def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
+   def from_env(cache_dir: str) -> PollyTTS | None
+   ```
+
+   `client=` is injectable so every path is testable without an AWS account
+   (`tests/tts/`). boto3 is imported lazily and its absence is `available() is
+   False`, never an ImportError: an install without it still runs.
+
+2. **The wording stays in the browser.** `web/static/speech.js` is unchanged and
+   still decides what is said (`phraseFor`) and who says it (`voiceKeyFor` →
+   `dm` | `<pc id>` | `npc` | `monster:<id>`). The page sends the key and the
+   words; the server deals the key a voice. That is why `hash_key` has to be the
+   browser's hash exactly — otherwise an actor changes voice depending on which
+   engine spoke. `tests/tts/test_voices.py` drives `node` to assert it.
+
+3. **Two new routes** (§5 above). `GET /api/tts` is the capability probe the
+   page asks once at start-up; it also returns `config`, a fingerprint of
+   everything process-level that decides a clip (engine, language, the DM's
+   voice, the roster `DescribeVoices` returned). `GET
+   /api/games/<id>/tts?key=&text=&v=<config>` returns `audio/mpeg` with a
+   strong `ETag` (the cache key) and a year-long immutable `Cache-Control`,
+   plus `X-Dnd-Voice`. `v` is a cache-buster the server ignores: the rest of
+   the URL names only the game, the seat and the words, so without it a
+   reconfigured server would leave every browser replaying the old voice out of
+   its own cache for a year. The fingerprint covers `tts/voices.py`'s own source
+   as well as the settings — the casting and the SSML decide the audio too, and
+   a deployment that changes them moves nothing else. Digested rather than a
+   hand-bumped constant, because a constant is correct only for as long as
+   someone remembers it. The page carries whatever the probe gave it. Refusals are JSON the page can fall back from,
+   never a hang: **402** budget spent, **404** no such game, **400** nothing
+   sayable or over `max_chars`, **502** Polly failed, **503** no service (or a
+   mock game without `DND_TTS=1`).
+
+4. **Narration is charged to `budget_usd`.** `Ledger.add_usd(role, usd,
+   **counters)` is new (§2 above) and takes a cost that is not a model call;
+   the web layer calls it as `add_usd("narrator", usd, clips=1, chars=n)`, so
+   `by_role["narrator"]` (the role name TTS-COSTS.md §3 asks for, and the right
+   one: `by_role` holds seats at the table, not technologies)
+   sits beside the model rows and the orchestrator's existing budget check stops
+   a game whose narration has spent it. Only an actual synthesis is charged — a
+   cache hit costs nothing and is charged nothing.
+
+   The end-of-game cost line is built from `to_dict()` rather than by
+   iterating `by_role`: a charge from a request thread inserts a key, and an
+   unlocked iteration raises "dictionary changed size during iteration" — which
+   in `Game`'s `finally` would take both the final cost event and `bus.close()`
+   with it.
+
+   `add_usd` does **not** touch `calls`. `to_dict()["calls"]` and the line
+   `Game` emits at the end of a game (`"... over N model calls"`) both report
+   that figure as model calls, and a clip is by definition not one; the caller
+   counts its own units through `**counters` instead.
+
+   `Ledger` is now **locked**: it was written only by the game thread, and
+   narration is charged from Flask request threads. `Ledger.ROW` names every
+   counter a row can carry so `to_dict` can sum across rows that count
+   different things (tokens for a model, characters for a voice).
+
+   **Admission is atomic, and it happens inside the line's own gate.** The
+   check and the charge sit either side of a synthesis, and different lines are
+   different cache keys, so `PollyTTS`'s per-key gate does not serialize them: without this, N spectators asking for
+   N different lines all read the same below-budget total and all N call Polly.
+   A synthesis about to happen therefore holds its own cost against the game
+   (`_RESERVED` in `web/routes/tts.py`, under one process-wide lock) until it
+   is charged or abandoned, and a clip that WOULD take the game over is refused
+   before the call. In-process is sufficient because `instances: 1` is a hard
+   ceiling. A **cache hit skips the budget entirely**: it is not spend, and a
+   game that has run out of money stays listenable. Two details the shape
+   depends on:
+
+   - **The charge lands inside the reservation.** Releasing one before making
+     the other leaves a gap in which a waiting request reads a ledger that does
+     not yet know about the clip just synthesized, and reserves money already
+     spent.
+   - **The reservation is taken inside `PollyTTS.exclusive(ckey)`**, which is
+     why that gate is public rather than private to `synthesize`. Two tabs
+     after the SAME line would otherwise each reserve the cost of it, and the
+     second be refused for a clip the first is a moment from making free —
+     which the page reads as a settled refusal and gives up on server voices
+     for the whole game. `render()` is `synthesize()` without the gate or the
+     cache read, for a caller that holds both. The gate entry is
+     reference-counted rather than popped on exit: retiring it while a queued
+     holder still owns that lock lets the next arrival mint a second one and
+     render alongside them, which is now a duplicate charge rather than merely
+     a duplicate clip.
+
+   **A charge is persisted where it is made.** A `GameEntry` lives in the
+   registry for the life of the process but its monitor thread returns at the
+   first terminal status — so for a finished game, which is exactly the game
+   people replay, nothing else would write after that and the charge would sit
+   in memory until a restart handed the budget back.
+
+   **`persist_snapshot` writes an absolute total, so every writer of it
+   serializes** — on a lock that belongs to `GameEntry`, not to the narration
+   route, because there are four writers: the game thread every 25 events, the
+   monitor on a status change, the control routes, and a charge. New
+   `GameEntry.record_cost(charge)` applies a charge to the live ledger and
+   persists it as one step under that lock; anything else overlapping would
+   otherwise persist a total read from before the charge landed.
+
+   A game this process is no longer running has no `Ledger` to charge, so its
+   spend goes to the row instead through the new `web/db.py: Database.add_cost(
+   game_id, usd)` — an atomic `cost_usd = cost_usd + ?`, correct against
+   concurrent spectators, and safe only because nothing is writing snapshots
+   over that row any more. The budget stop applies to it either way.
+
+   **The cap is server-owned as well as game-owned.** `budget_usd` arrives in
+   the request body on a route that takes no credential (TTS-COSTS.md §1), so
+   narration stops at the lower of it and `DND_TTS_MAX_USD` (default $10.00).
+   That bounds one game and nothing more: how many games a stranger may create
+   is unbounded, and `POST /api/games/<id>/note` still feeds 2,000
+   unauthenticated characters into a `dm_note` that `speech.js` always speaks.
+   Spectator authentication is the missing piece and this amendment does not
+   add it.
+
+   **A budget that cannot be compared is not a budget.** `float()` accepts
+   `"NaN"`, and NaN compares False against everything — so a NaN `budget_usd`
+   is not a large budget, it is the absence of every budget check in the app:
+   `Game._check_budget`'s `total_usd >= budget_usd` never fires either. It is
+   refused at `create_game` (the root cause, and the reason this amendment
+   touches `web/routes/api.py` at all) and ignored by `_budget_of` in favour of
+   the default, for rows written before that check existed.
+
+   **An unknown budget is `GameConfig`'s default, never zero.** Zero is a real
+   value — `Game._check_budget` halts at `total_usd >= budget_usd`, so a zero
+   budget is a game already over — and a game created through the API without
+   `budget_usd` persists a config that never had the key, so after a restart
+   there is nothing in the row to read. Answering that with zero, and treating
+   zero as "no ceiling", would have removed the cap from exactly the games that
+   never set one. `_budget_of` falls back to `GameConfig().budget_usd` and
+   `_admission` has no `budget > 0` escape.
+
+5. **A party member may state a `gender`, and it decides which voices that
+   character can be cast from.** New optional key in the party spec —
+   `{"id","name","race","klass","level",…,"gender": "female"|"male"}` — read by
+   the web layer out of the game's own config (live entry or DB row), never
+   from the request: this endpoint spends money, and a gender in the query
+   string would let a caller walk the roster a paid clip at a time. It narrows
+   the pool and nothing else; the choice within it is the same hash, so a
+   character keeps its voice for as long as its gender and the roster hold.
+
+   **This is not an engine field.** `CharacterSheet` (§1.3) is unchanged and
+   `build_character` ignores the key: gender has no rules meaning in 5e, the
+   engine stays pure, and the DM and player prompts do not see it. `dm`, `npc`
+   and `monster:<id>` have no character record and are cast from the whole pool
+   as before.
+
+   Polly reports `Gender` as exactly `Female` or `Male`, so a character who
+   states neither — or states nothing — is dealt from the **whole** pool rather
+   than pushed into one of the two; the roster's limitation is not laundered
+   into a character sheet. Where a language's voices are all one gender
+   (Korean, Swedish), a gender that cannot be answered still gets a voice: a
+   worse match, not a silence. The browser fallback ignores gender entirely —
+   `SpeechSynthesisVoice` has no gender attribute in any browser, and inferring
+   one from voice names would be a guess dressed as data.
+
+6. **Casting differs from the browser's in two ways, both because Polly is not
+   a device voice list.** There are no novelty voices, so a speaking monster is
+   an ordinary voice put through `<amazon:effect vocal-tract-length>` (never
+   0%) with pitch and rate behind it; and the pool is the same for every seat,
+   because there is nothing in it that cannot carry narration. The DM's voice is
+   chosen (`DND_TTS_DM_VOICE`, default `Brian`) rather than dealt, and no other
+   seat is given it.
+
+7. **Two engines, chosen per seat.** `DND_TTS_ENGINE` (default **`neural`**)
+   speaks the DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (default
+   **`standard`**) speaks anything cast as `monster:<id>`. The engine rides on
+   the `Cast` rather than being read from a setting at render time, so a line
+   cannot be cast for one engine and rendered on another; each engine has its
+   own `DescribeVoices` roster, its own cache namespace and its own rate in the
+   ledger — and both are load-bearing at the edges: a clip is **reserved** at
+   the rate of the engine its own seat renders on (reserving at the table's
+   refuses a monster clip the game can afford, or admits one it cannot), and
+   `/api/tts` reports unavailable unless **every** configured engine has a
+   roster (an engine without one is a 503 on its first line, which the page
+   reads as settled and uses to switch server voices off for the whole game,
+   taking the seats that were working with it).
+
+   The split exists for one tag. `<amazon:effect vocal-tract-length>` changes
+   timbre rather than pitch — a longer vocal tract is a bigger creature — and
+   it is standard-only. TTS-COSTS.md §4 concluded the novelty-voiced monsters
+   had no vendor equivalent; this is it, and it is available on exactly one
+   engine. Neural carries the rest of the table because §5 recommends it: at
+   this quality nothing can pitch-shift, so distinctness is bought as separate
+   voices, and neural's roster is larger and more accented.
+
+   Polly errors on an unsupported tag rather than ignoring it, so `ssml_for`
+   writes only what the cast's engine accepts (`ENGINE_SSML`): standard takes
+   pitch, rate and `vocal-tract-length`; `rate` survives on neural and
+   long-form; generative gets plain text, because its prosody tag is documented
+   as full-sentences-only and a chunk can be a fragment.
+
+   `STANDARD_ENGLISH` is the standard engine's **English** roster and nothing
+   else, so on another engine — or in another language — a failed
+   `DescribeVoices` leaves no roster to vouch for:
+   `voices()` comes back empty, `/api/tts` reports unavailable, and the page
+   uses the browser's voices — rather than casting a standard-only voice with
+   `Engine=neural` and reaching the same 502 loop by another route. An empty
+   pool is cached only for `EMPTY_ROSTER_TTL` (60 s): a `DescribeVoices` that
+   fails transiently is the absence of an answer rather than an answer, and
+   caching it for the life of the process would leave narration off long after
+   the outage cleared. A roster that does come back is kept for good.
+
+   Putting the whole table on one engine is a supported choice, not a special
+   case, and the cost of doing so on anything but standard is a blunter table:
+   with no pitch, two characters dealt one voice cannot be told apart. The
+   cache key is the rendered document rather than the cast, so casts an engine
+   renders identically share one clip. Billed
+   characters exclude SSML tags
+   (<https://docs.aws.amazon.com/polly/latest/dg/limits.html>), which is what
+   `billable_chars` counts.
+
+8. **Mock mode stays free.** `from_env` returns `None` under `DND_SIM_MOCK`
+   unless `DND_TTS=1`, and the route refuses a game whose own config is `mock`
+   on the same terms. "Same config + seed ⇒ byte-identical game, costing
+   nothing" is a property of this repo; paying Polly to read a mock game aloud
+   would quietly end it.
+
+The browser half — one `<audio>` element, clips prefetched a line ahead, a
+per-line fallback to `speechSynthesis` that becomes a session-long one after
+three failures or a settled refusal, and both engines armed inside the same
+unlock gesture because the fallback has to work on iOS — is UI, not contract.
+It is described in the README.

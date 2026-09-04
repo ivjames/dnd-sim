@@ -2,5 +2,10 @@
 # Ranges, not hard pins: lab980 boxes run whatever python3.11 ships.
 flask>=3.0,<4.0
 anthropic>=0.40,<1.0
+# boto3 is the fifth dependency and the only heavy one: Amazon Polly reads the
+# game aloud (tts/), and SigV4 by hand is not a thing to own. Narration falls
+# back to the browser's own voices wherever this is missing, so an install
+# without it still runs.
+boto3>=1.34,<2.0
 httpx>=0.27,<1.0
 pytest>=8.0,<10.0

@@ -34,6 +34,13 @@ class GameEntry:
         self._events_since_snapshot = 0
         self._last_status = "created"
         self._lock = threading.Lock()
+        # Every snapshot write goes through this. `persist_snapshot` reads the
+        # ledger total and writes it ABSOLUTELY, so two writers that overlap
+        # can commit out of order and leave the older figure in the row —
+        # spend that the next restart hands back. There are four writers: the
+        # game thread every 25 events, the monitor on a status change, the
+        # control routes, and a narration charge.
+        self._persist_lock = threading.Lock()
         self._monitor: threading.Thread | None = None
         self._monitor_stop = threading.Event()
 
@@ -90,6 +97,22 @@ class GameEntry:
         return {}
 
     def persist_snapshot(self) -> None:
+        with self._persist_lock:
+            self._persist_locked()
+
+    def record_cost(self, charge: Callable[[], None]) -> None:
+        """Apply `charge` to the live ledger and write it down, atomically
+        against every other snapshot writer.
+
+        The two have to be one step: persisting separately leaves a window in
+        which another writer reads a ledger that does not yet know about this
+        charge and then persists that total over it.
+        """
+        with self._persist_lock:
+            charge()
+            self._persist_locked()
+
+    def _persist_locked(self) -> None:
         snap = self.snapshot()
         status = self.status()
         led = snap.get("ledger") if isinstance(snap, dict) else None

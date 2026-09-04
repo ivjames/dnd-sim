@@ -6,8 +6,10 @@ an estimate of what it would cost to render narration on the server instead,
 through a paid TTS API — Amazon Polly, Deepgram, Smallest.ai, Cartesia or
 ElevenLabs.
 
-Nothing here is implemented. It is a costing, plus the two design facts that
-decide whether the costing holds.
+It is a costing, plus the two design facts that decide whether the costing
+holds. It was written before anything was implemented; **Amazon Polly is now
+implemented** on the strength of it — see "Amazon Polly, after the fact" at the
+bottom, which is the only part of this document written after the decision.
 
 ## 1. How much text a game speaks
 
@@ -353,3 +355,58 @@ server-owned budget cap that the submitted config cannot raise, plus
 authentication on the routes that create games and inject notes. Three separate
 findings in this document land there. Paid narration is the change that makes
 the existing gap expensive rather than merely open.
+
+## 6. What was actually built
+
+Written after §1–5 and after Polly was added to them, and the only section that
+describes something that exists rather than something costed. The pricing above
+is now the authority; this records what shipped, and one place where it
+disagrees with §5.
+
+**§4's two design facts held.** Caching is by `hash(engine, voice, ssml)` and is
+the cost model, exactly as argued. The phrasing stayed in JavaScript: the page
+sends the phrase and the voice key it already computed, which is §4's first
+option — the cheaper one, whose price was the auth question.
+
+**The perimeter is one quarter built.** §1 and §4 land three times on the same
+missing piece, and implementing narration did not finish it:
+
+- `DND_TTS_MAX_USD` (default $10.00) is a **server-owned per-game ceiling** the
+  submitted `budget_usd` cannot raise, which is the narrow half of §1's ask.
+  Narration stops at the lower of the two. A non-finite `budget_usd` is also
+  refused at game creation now — `float("NaN")` passed coercion and then
+  compared False against every check in the app, `Game._check_budget` included.
+- **Spectator authentication does not exist**, so nothing bounds how many games
+  a stranger may create, and `POST /api/games/<id>/note` still takes 2,000
+  unauthenticated characters that `speech.js` speaks as story.
+
+### The engine, settled
+
+Both engines ship, chosen per seat. `DND_TTS_ENGINE` (**neural**) speaks the
+DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (**standard**) speaks
+anything cast as `monster:<id>`. Setting them equal puts the whole table on one.
+
+§5's case carried for the table: at this quality nothing can pitch-shift, so
+distinctness is bought as separate voices, and Neural's roster is the larger and
+more accented one. What §5 did not have is that **`<amazon:effect
+vocal-tract-length>` is the vendor equivalent for the novelty-voiced monsters
+that §4 concluded had none** — it changes timbre rather than pitch, so a goblin
+and an ogre differ in how their voices are built rather than merely in which
+voice they drew. It is Standard-only, like pitch. Hence the split rather than a
+choice: the one thing Standard alone can do is the one thing only monsters
+need.
+
+Cost lands between the two rows in §3. Monsters are a small share of spoken
+characters, so a game is ~$0.45 rather than Neural's $0.48 or Standard's $0.12.
+
+Two consequences worth stating:
+
+- **Neural needs `DescribeVoices` to answer.** The built-in roster is
+  Standard's, so a failed listing leaves the table with nothing to cast from
+  and `/api/tts` reports unavailable — the page then uses the browser's voices.
+  Under the old Standard default that call failing was survivable; now it is
+  not. Monsters would still have a roster, but half a narrator is worse than a
+  clean fallback.
+- **A game crosses two rates.** `by_role.narrator` is one row and the ledger
+  charges each clip at its own engine's rate, so the per-character figure for a
+  game is a blend and not a constant.

@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable
 
@@ -211,12 +212,125 @@ def db_file(tmp_path):
     return str(tmp_path / "test.sqlite3")
 
 
+class FakeTTS:
+    """The slice of `tts.PollyTTS` that `web/routes/tts.py` uses.
+
+    Records what it was asked for, so a test can tell a cache hit from a
+    synthesis — which is the difference between a clip that costs money and one
+    that does not.
+    """
+
+    def __init__(self, *, up: bool = True, fail: str = "", price: float = 4.0) -> None:
+        self.engine = "standard"
+        self.monster_engine = "standard"
+        self.language = "en-US"
+        self.max_chars = 40
+        self.price_per_million = price
+        self.up = up
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+        self.clips: dict[str, bytes] = {}
+        self._gates: dict[str, threading.Lock] = {}
+        self._gate_lock = threading.Lock()
+
+    def available(self) -> bool:
+        return self.up
+
+    def config_id(self) -> str:
+        return "fake-config"
+
+    def rate_for(self, engine: str) -> float:
+        from tts.client import PRICE_USD_PER_MILLION_CHARS  # noqa: PLC0415
+
+        if str(engine or self.engine) == self.engine:
+            return self.price_per_million
+        return PRICE_USD_PER_MILLION_CHARS.get(str(engine), self.price_per_million)
+
+    def price_of(self, chars: int, engine: str = "") -> float:
+        return max(0, int(chars)) * self.rate_for(engine or self.engine) / 1_000_000.0
+
+    def engine_for(self, key: str) -> str:
+        from tts.voices import is_monster_key  # noqa: PLC0415
+
+        return self.monster_engine if is_monster_key(key) else self.engine
+
+    def cast(self, key: str, gender: str = ""):
+        from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
+
+        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key))
+
+    def cache_key_for(self, key: str, text: str, gender: str = ""):
+        from tts.cache import cache_key  # noqa: PLC0415
+
+        cast = self.cast(key, gender)
+        return cast, cache_key(self.engine, cast.cache_key(), text)
+
+    def cached(self, ckey: str):
+        return self.clips.get(ckey)
+
+    def voices(self, engine: str = ""):
+        from tts.voices import STANDARD_ENGLISH  # noqa: PLC0415
+
+        return STANDARD_ENGLISH if self.up else ()
+
+    @contextmanager
+    def exclusive(self, ckey: str):
+        """A real gate, because the route's correctness depends on it being one.
+
+        A no-op stub here would let identical requests through side by side and
+        quietly pass tests the real service would fail.
+        """
+        with self._gate_lock:
+            gate = self._gates.setdefault(ckey, threading.Lock())
+        with gate:
+            yield
+
+    def render(self, key: str, text: str, gender: str = ""):
+        return self.synthesize(key, text, gender)
+
+    def synthesize(self, key: str, text: str, gender: str = ""):
+        from tts.client import TTSError, TTSResult  # noqa: PLC0415
+
+        self.calls.append((key, text))
+        if self.fail:
+            raise TTSError(self.fail)
+        cast, ckey = self.cache_key_for(key, text, gender)
+        if ckey in self.clips:
+            return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
+        audio = b"\xff\xfb" + text.encode("utf-8")
+        self.clips[ckey] = audio
+        # At the seat's own engine's rate, as `PollyTTS.render` does.
+        usd = self.price_of(len(text), cast.engine)
+        return TTSResult(audio, cast, len(text), usd, False, ckey)
+
+
+@pytest.fixture()
+def tts():
+    return FakeTTS()
+
+
 @pytest.fixture()
 def app(db_file):
-    app = create_app(game_factory=fake_factory, db_path=db_file)
+    # Server voices off unless a test asks for them: `create_app` would
+    # otherwise build a real Polly service from whatever AWS variables happen
+    # to be in the environment running the suite.
+    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": None})
     app.config["TESTING"] = True
     yield app
     app.config["DND_REGISTRY"].shutdown()
+
+
+@pytest.fixture()
+def tts_app(db_file, tts):
+    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": tts})
+    app.config["TESTING"] = True
+    yield app
+    app.config["DND_REGISTRY"].shutdown()
+
+
+@pytest.fixture()
+def tts_client(tts_app):
+    return tts_app.test_client()
 
 
 @pytest.fixture()

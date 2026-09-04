@@ -16,6 +16,7 @@
       "level": 2,
       "abilities": {"STR": 16, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 9},
       "equipment": "default",
+      "gender": "male",
       "persona": "Worked this shaft before the flood and has opinions about every prop and pit in it. Wants the mine reopened, not cleared — a difference he considers important and nobody else does. Reads the roof constantly. Talks about the mine as if it can hear him, because down here that is only sensible."
     },
     {
@@ -26,6 +27,7 @@
       "level": 2,
       "abilities": {"STR": 8, "DEX": 17, "CON": 13, "INT": 14, "WIS": 12, "CHA": 13},
       "equipment": "default",
+      "gender": "female",
       "persona": "Hired as a scout, staying for the silver nobody has counted. Wants to go first, always, and resents being told to wait. Keeps a running estimate of the party's chances aloud, which is not encouraging. Terrified of spiders in a way she covers with volume."
     },
     {
@@ -37,6 +39,7 @@
       "abilities": {"STR": 12, "DEX": 11, "CON": 15, "INT": 12, "WIS": 16, "CHA": 12},
       "equipment": "default",
       "spells": "default",
+      "gender": "female",
       "persona": "Came for the eleven miners nobody recovered and considers everything else a detour. Wants bodies out before ore. Practical to the point of coldness, tender only at the moment of actual injury. Will spend her last slot on a stranger and let the party argue about it afterwards."
     },
     {
@@ -48,6 +51,7 @@
       "abilities": {"STR": 8, "DEX": 15, "CON": 13, "INT": 16, "WIS": 11, "CHA": 12},
       "equipment": "default",
       "spells": "default",
+      "gender": "female",
       "persona": "Studying how kobolds organise, which she finds more interesting than the silver and says so at unhelpful moments. Wants to talk to them before anyone stabs them. Light-obsessed: unhappy without a light source, unwise about making one in a place where being seen is the danger."
     }
   ],
