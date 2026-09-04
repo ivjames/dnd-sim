@@ -365,6 +365,11 @@ stranger picks the ceiling (`TTS-COSTS.md` §1). That bounds one game; it does
 not bound how many games a stranger may create, which needs spectator
 authentication the app does not have.
 
+A `budget_usd` that is not a finite number is refused outright at game
+creation: `float("NaN")` passes coercion and then compares False against
+everything, so a NaN budget is not a large budget — it is the absence of every
+budget check in the app, `Game._check_budget` included.
+
 A game that states no `budget_usd` gets `GameConfig`'s default rather than a
 blank cheque, and a zero or negative budget refuses everything — the
 orchestrator halts at `total_usd >= budget_usd`, so zero is a game already over
@@ -387,8 +392,9 @@ end of its transcript.
 Every clip is cached on disk under `data/tts`, keyed by the voice and the exact
 SSML document sent, so a line is paid for once however many times it is replayed — which matters,
 because the playhead is designed to be run backwards. Deleting the cache is
-safe and costs only the re-synthesis. Clip URLs carry the probe's `config`
-fingerprint, so changing the engine, the language or the DM's voice retires the
+safe and costs only the re-synthesis. Clip URLs carry the probe's `config` fingerprint — the engine, the language,
+the DM's voice, the roster, and a digest of `tts/voices.py` itself, since the
+casting and the SSML decide the audio too — so changing any of them retires the
 copies in every browser rather than leaving them to be replayed for a year.
 `DND_TTS=0` switches server voices off entirely; mock games never use them unless `DND_TTS=1` says so, because mock
 mode is the mode that costs nothing.

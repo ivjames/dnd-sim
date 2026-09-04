@@ -905,6 +905,7 @@ with the browser's voices kept as a real fallback rather than deleted.
    def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
    def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast   # ValueError on an empty pool
    def ssml_for(text: str, cast: Cast, engine: str = "standard") -> str   # only what `engine` accepts
+   def source_fingerprint() -> str                        # digest of this module: the casting decides the audio too
    ENGINE_SSML: dict[str, frozenset[str]]                 # engine → {"pitch","rate","vtl"} subset
    def billable_chars(text: str) -> int                   # the words, not the markup
    STANDARD_ENGLISH: tuple[Voice, ...]                    # fallback roster, read 2026-09-04
@@ -926,8 +927,10 @@ with the browser's voices kept as a real fallback rather than deleted.
        def available(self) -> bool                        # False = no boto3, or no credentials
        def voices(self) -> tuple[Voice, ...]              # DescribeVoices once, else STANDARD_ENGLISH
        def cached(self, ckey: str) -> bytes | None        # a clip already paid for
+       def exclusive(self, ckey: str)                     # contextmanager: the one-synthesis-per-line gate
+       def render(self, key, text, gender="") -> TTSResult   # synthesize; caller holds `exclusive`
        def ssml(self, text: str, cast: Cast) -> str       # `ssml_for` at this instance's engine
-       def config_id(self) -> str                         # 12 hex over engine|language|dm_voice|roster
+       def config_id(self) -> str                         # 12 hex over engine|language|dm_voice|roster|voices.py source
        def cast(self, key: str, gender: str = "") -> Cast
        def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
        def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
@@ -954,7 +957,11 @@ with the browser's voices kept as a real fallback rather than deleted.
    plus `X-Dnd-Voice`. `v` is a cache-buster the server ignores: the rest of
    the URL names only the game, the seat and the words, so without it a
    reconfigured server would leave every browser replaying the old voice out of
-   its own cache for a year. The page carries whatever the probe gave it. Refusals are JSON the page can fall back from,
+   its own cache for a year. The fingerprint covers `tts/voices.py`'s own source
+   as well as the settings — the casting and the SSML decide the audio too, and
+   a deployment that changes them moves nothing else. Digested rather than a
+   hand-bumped constant, because a constant is correct only for as long as
+   someone remembers it. The page carries whatever the probe gave it. Refusals are JSON the page can fall back from,
    never a hang: **402** budget spent, **404** no such game, **400** nothing
    sayable or over `max_chars`, **502** Polly failed, **503** no service (or a
    mock game without `DND_TTS=1`).
@@ -973,23 +980,39 @@ with the browser's voices kept as a real fallback rather than deleted.
    counter a row can carry so `to_dict` can sum across rows that count
    different things (tokens for a model, characters for a voice).
 
-   **Admission is atomic.** The check and the charge sit either side of a
-   synthesis, and different lines are different cache keys, so `PollyTTS`'s
-   per-key lock does not serialize them: without this, N spectators asking for
+   **Admission is atomic, and it happens inside the line's own gate.** The
+   check and the charge sit either side of a synthesis, and different lines are
+   different cache keys, so `PollyTTS`'s per-key gate does not serialize them: without this, N spectators asking for
    N different lines all read the same below-budget total and all N call Polly.
    A synthesis about to happen therefore holds its own cost against the game
    (`_RESERVED` in `web/routes/tts.py`, under one process-wide lock) until it
    is charged or abandoned, and a clip that WOULD take the game over is refused
    before the call. In-process is sufficient because `instances: 1` is a hard
    ceiling. A **cache hit skips the budget entirely**: it is not spend, and a
-   game that has run out of money stays listenable.
+   game that has run out of money stays listenable. Two details the shape
+   depends on:
+
+   - **The charge lands inside the reservation.** Releasing one before making
+     the other leaves a gap in which a waiting request reads a ledger that does
+     not yet know about the clip just synthesized, and reserves money already
+     spent.
+   - **The reservation is taken inside `PollyTTS.exclusive(ckey)`**, which is
+     why that gate is public rather than private to `synthesize`. Two tabs
+     after the SAME line would otherwise each reserve the cost of it, and the
+     second be refused for a clip the first is a moment from making free —
+     which the page reads as a settled refusal and gives up on server voices
+     for the whole game. `render()` is `synthesize()` without the gate or the
+     cache read, for a caller that holds both.
 
    **A charge is persisted where it is made.** A `GameEntry` lives in the
    registry for the life of the process but its monitor thread returns at the
    first terminal status — so for a finished game, which is exactly the game
    people replay, nothing else would write after that and the charge would sit
    in memory until a restart handed the budget back. `_charge` calls
-   `entry.persist_snapshot()` on the ledger path.
+   `entry.persist_snapshot()` on the ledger path, and does both **under one
+   lock per game**: that call reads the ledger total and writes it ABSOLUTELY,
+   so two charges landing at once can commit out of order and the older figure
+   land last.
 
    A game this process is no longer running has no `Ledger` to charge, so its
    spend goes to the row instead through the new `web/db.py: Database.add_cost(
@@ -1005,6 +1028,14 @@ with the browser's voices kept as a real fallback rather than deleted.
    unauthenticated characters into a `dm_note` that `speech.js` always speaks.
    Spectator authentication is the missing piece and this amendment does not
    add it.
+
+   **A budget that cannot be compared is not a budget.** `float()` accepts
+   `"NaN"`, and NaN compares False against everything — so a NaN `budget_usd`
+   is not a large budget, it is the absence of every budget check in the app:
+   `Game._check_budget`'s `total_usd >= budget_usd` never fires either. It is
+   refused at `create_game` (the root cause, and the reason this amendment
+   touches `web/routes/api.py` at all) and ignored by `_budget_of` in favour of
+   the default, for rows written before that check existed.
 
    **An unknown budget is `GameConfig`'s default, never zero.** Zero is a real
    value — `Game._check_budget` halts at `total_usd >= budget_usd`, so a zero
@@ -1054,8 +1085,15 @@ with the browser's voices kept as a real fallback rather than deleted.
    rather than ignoring it, so `ssml_for` takes the engine and writes only what
    that engine accepts (`ENGINE_SSML`): `rate` survives on neural and
    long-form; generative gets plain text, because its prosody tag is documented
-   as full-sentences-only and a chunk can be a fragment. The cost of the others
-   is not an error but a blunter table — with no pitch, two characters dealt
+   as full-sentences-only and a chunk can be a fragment.
+
+   `STANDARD_ENGLISH` is the standard engine's roster and nothing else, so on
+   another engine a failed `DescribeVoices` leaves no roster to vouch for:
+   `voices()` comes back empty, `/api/tts` reports unavailable, and the page
+   uses the browser's voices — rather than casting a standard-only voice with
+   `Engine=neural` and reaching the same 502 loop by another route.
+
+   The cost of the others is not an error but a blunter table — with no pitch, two characters dealt
    one voice cannot be told apart, and a monster is only a voice rather than a
    big one. The cache key is therefore the rendered document rather than the
    cast, so casts an engine renders identically share one clip. Billed
