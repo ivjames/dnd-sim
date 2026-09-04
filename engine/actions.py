@@ -1301,9 +1301,20 @@ def _lucky_reroll(rng: RNG, attacker: Combatant, roll: RollResult, mode: str, bo
 
 
 def _resolve_attack(new: GameState, events: list[Event], rng: RNG, attacker: Combatant,
-                    target: Combatant, spec: dict, *, opportunity: bool = False) -> dict:
-    """Roll one attack and apply everything that follows from it."""
+                    target: Combatant, spec: dict, *, opportunity: bool = False,
+                    provoke: tuple[tuple[int, int], tuple[int, int]] | None = None) -> dict:
+    """Roll one attack and apply everything that follows from it.
+
+    `provoke` is the step that triggered an opportunity attack. It is named in
+    the event because the move event that follows reports only where the mover
+    started and where it was stopped — never the square it was leaving when the
+    reaction fired — and a reader who assumes those are the same thing reads a
+    legal opportunity attack as an illegal one.
+    """
     mode, reasons = _attack_mode(new, attacker, target, spec)
+    if provoke is not None:
+        (ax, ay), (bx, by) = provoke
+        reasons = list(reasons) + [f"leaving reach ({ax},{ay})→({bx},{by})"]
     cover = 0 if spec.get("ignore_cover") else _cover_bonus(new.grid.cover_between(_pos(attacker), _pos(target)))
     ac = target.effective_ac() + cover
     roll = rng.roll_d20(int(spec["bonus"]), mode)
@@ -1585,7 +1596,9 @@ def _heal(new: GameState, events: list[Event], target: Combatant, amount: int, s
     healed = target.hp - before
     txt = f"{target.name} regains {healed} HP from {source_name}"
     if roll is not None:
-        txt += f" ({_roll_text(roll)})"
+        # The modifier belongs in the text: "1d4 -> 1" beside "regains 7 HP"
+        # reads as a bug in the engine rather than as Wisdom plus Disciple of Life.
+        txt += f" ({_roll_text(roll)}{f' + {mod}' if mod else ''})"
     txt += f" ({before} → {target.hp} HP)"
     _ev(new, events, "heal", txt, source_id or target.id, target=target.id, amount=healed,
         hp_before=before, hp_after=target.hp, source=source_name)
@@ -2161,6 +2174,28 @@ def reactions_for(state: GameState, trigger: dict) -> list[ActionTemplate]:
     return out
 
 
+def threat_map(state: GameState, mover: Combatant) -> dict[tuple[int, int], frozenset[str]]:
+    """Squares where standing costs the mover a hit if they step out of them.
+
+    Same predicate as `reactions_for`, evaluated square by square instead of
+    edge by edge, so `Grid.path` can prefer an equally short route that walks
+    around a threatened square rather than through it.
+    """
+    if mover.has_condition("invisible") or mover.flags.get("disengaged"):
+        return {}
+    out: dict[tuple[int, int], set[str]] = {}
+    for e in state.combatants.values():
+        if not _hostile(e, mover) or not _can_react(e) or _best_melee_spec(e) is None:
+            continue
+        ex, ey = _pos(e)
+        span = e.reach_ft() // 5
+        for x in range(ex - span, ex + span + 1):
+            for y in range(ey - span, ey + span + 1):
+                if state.grid.in_bounds((x, y)):
+                    out.setdefault((x, y), set()).add(e.id)
+    return {sq: frozenset(ids) for sq, ids in out.items()}
+
+
 def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tpl: ActionTemplate, params: dict) -> None:
     waypoints = _parse_path(params.get("path"))
     if not waypoints:
@@ -2174,6 +2209,7 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         actor.remove_condition("prone")
         _ev(new, events, "condition_remove", f"{actor.name} stands up ({cost} ft).", actor.id, condition="prone")
     budget = int(actor.turn.get("movement_left", 0))
+    threat = threat_map(new, actor)
     full: list[tuple[int, int]] = []
     pos = _pos(actor)
     spent = 0
@@ -2181,7 +2217,7 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         wp = (int(wp[0]), int(wp[1]))
         if wp == pos:
             continue
-        seg = grid.path(new, pos, wp, budget - spent, mover_id=actor.id)
+        seg = grid.path(new, pos, wp, budget - spent, mover_id=actor.id, threat=threat)
         if seg is None:
             raise IllegalAction(f"{actor.name} cannot reach ({wp[0]},{wp[1]}) with {budget - spent} ft left")
         full.extend(seg)
@@ -2201,7 +2237,7 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
             if spec is None:
                 continue
             e.turn["reaction"] = True
-            _resolve_attack(new, events, rng, e, actor, spec, opportunity=True)
+            _resolve_attack(new, events, rng, e, actor, spec, opportunity=True, provoke=(prev, sq))
             if not _can_act(actor):
                 stopped = True
                 break

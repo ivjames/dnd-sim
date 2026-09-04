@@ -374,12 +374,20 @@ class Grid:
         return out
 
     def path(self, state: "GameState", start: tuple[int, int], goal: tuple[int, int],
-             max_ft: int, mover_id: str | None = None) -> list[tuple[int, int]] | None:
+             max_ft: int, mover_id: str | None = None,
+             threat: dict[tuple[int, int], frozenset[str]] | None = None) -> list[tuple[int, int]] | None:
         """Cheapest path from start to goal within max_ft, or None.
 
         Uniform-cost search over 8-way movement; difficult terrain costs double.
         Squares occupied by other creatures are impassable (you may not end or
         pass through them in this simplified model).
+
+        `threat` maps a square to the ids of enemies whose reach covers it. When
+        it is given, cost is compared as `(feet, opportunity attacks provoked)`:
+        the cheapest route in feet still wins, and only a tie between equally
+        long routes is settled by which one hands out fewer free hits. Without
+        it the tie went to whichever square sorted lowest, which is how a
+        creature walked into a rogue's reach and back out of it for no reason.
         """
         start = tuple(start)
         goal = tuple(goal)
@@ -390,24 +398,32 @@ class Grid:
         blocked = set(self.occupied(state, ignore=mover_id))
         if goal in blocked:
             return None
-        # Dijkstra with a small frontier list (grids are tiny).
-        dist: dict[tuple[int, int], int] = {start: 0}
+        threat = threat or {}
+
+        def provoked(a: tuple[int, int], b: tuple[int, int]) -> int:
+            """Enemies whose reach covers `a` but not `b` — they get a swing."""
+            return len(threat.get(a, frozenset()) - threat.get(b, frozenset()))
+
+        # Lexicographic Dijkstra with a small frontier list (grids are tiny):
+        # feet first, opportunity attacks as the tie-break.
+        far = (1 << 30, 1 << 30)
+        dist: dict[tuple[int, int], tuple[int, int]] = {start: (0, 0)}
         prev: dict[tuple[int, int], tuple[int, int]] = {}
-        frontier: list[tuple[int, tuple[int, int]]] = [(0, start)]
+        frontier: list[tuple[tuple[int, int], tuple[int, int]]] = [((0, 0), start)]
         while frontier:
             frontier.sort()
             cost, node = frontier.pop(0)
-            if cost > dist.get(node, 1 << 30):
+            if cost > dist.get(node, far):
                 continue
             if node == goal:
                 break
             for nxt in self.neighbors(node):
                 if nxt in blocked:
                     continue
-                nc = cost + self.cost_of(nxt)
-                if nc > max_ft:
+                nc = (cost[0] + self.cost_of(nxt), cost[1] + provoked(node, nxt))
+                if nc[0] > max_ft:
                     continue
-                if nc < dist.get(nxt, 1 << 30):
+                if nc < dist.get(nxt, far):
                     dist[nxt] = nc
                     prev[nxt] = node
                     frontier.append((nc, nxt))
