@@ -65,13 +65,22 @@
   --difficult:  #8c6f2e;
 
   --radius: 9px;
-  /* The height of one quadrant of the board. A length rather than a colour, so
-     it is declared once here and re-declared only by the two size queries at
-     the foot of the file. In vh so that the board and the transcript divide a
-     tall screen between them rather than the board taking a fixed slab of a
-     short one; clamped at both ends because a quadrant below ~190px shows two
-     cards and above ~300px is empty space on a 4K display. */
-  --quad-h: clamp(190px, 25vh, 300px);
+  /* The height of one quadrant of the board, and — because the map's column is
+     that wide — the side of the square the map is drawn in. A length rather
+     than a colour, so it is declared once here and re-declared only by the two
+     size queries at the foot of the file. In vh so that the board and the
+     transcript divide a tall screen between them rather than the board taking
+     a fixed slab of a short one.
+
+     The middle term is the arithmetic of that split: 500px is what the page
+     owes everything that is not the board — the top bar, the padding and the
+     gaps, the row of narration and controls, and the transcript's own 220px
+     floor — and each of the board's two rows takes half of what is left. So a
+     quadrant grows with the viewport exactly as fast as it can without pushing
+     the transcript under its floor and the page into a scroll. Clamped at both
+     ends because a quadrant below ~200px shows two cards, and above ~340px the
+     board is eating a transcript that has better uses for the height. */
+  --quad-h: clamp(200px, calc((100vh - 500px) / 2), 340px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -234,7 +243,7 @@ body {
 
 /* ---------- layout ----------
    Two bands down the page. The BOARD is the four things you glance at, two by
-   two: map top left, party top right, enemies bottom left, initiative bottom
+   two: map top left, enemies top right, party bottom left, initiative bottom
    right. Every one of them is a FIXED height — a fight with nine combatants
    and a party of six used to lengthen those panels until the transcript
    started below the fold — so each scrolls inside itself instead.
@@ -250,9 +259,17 @@ body {
   min-height: 0;
 }
 
+/* The left column is the height of a row, so the map is drawn in a square and
+   fills it rather than sitting as a letterboxed strip in a half-width panel —
+   the squares themselves come out the same size in both directions. The other
+   column takes what is left, which is more than half the board: the party, the
+   enemies and the initiative order are rows of text and would rather be wide.
+   Below 260px the map stops shrinking with the row and takes the width it
+   needs; the panel is then wider than it is tall, which is the way round that
+   costs nothing. */
 .board {
   display: grid; gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(260px, var(--quad-h)) minmax(0, 1fr);
   flex: 0 0 auto;
 }
 /* The fixed height is on the panel rather than on the grid row: the two
@@ -461,12 +478,14 @@ body {
   display: block; margin: 0 auto;
   background: var(--bg-sunken); border-radius: 6px; touch-action: manipulation;
 }
+/* Tight, because every line it wraps to is a line the map does not get: the
+   canvas takes the height the quadrant has left after the title and this. */
 .legend {
   flex: 0 0 auto;
-  display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px;
-  font-size: 11px; color: var(--ink-dim); font-family: var(--mono);
+  display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 6px;
+  font-size: 10.5px; color: var(--ink-dim); font-family: var(--mono);
 }
-.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
 .sw.party { background: var(--party); } .sw.enemy { background: var(--enemy); }
 .sw.neutral { background: var(--neutral); } .sw.diff { background: var(--difficult); }
 .sw.wall { background: var(--wall); }
@@ -668,13 +687,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
    column, and on a phone the transcript comes first: four fixed panels plus a
    narration bar before the first line of the story is not a story. */
 @media (max-width: 900px) {
-  :root { --quad-h: clamp(180px, 30vh, 260px); }
+  .board { grid-template-columns: minmax(230px, var(--quad-h)) minmax(0, 1fr); }
 }
 /* A laptop is short, not narrow: 768px of viewport is the common case, and at
    the desktop sizes the board and the transcript floor together came to more
    than it had, so the narration bar and the controls hung under the fold. */
 @media (max-height: 820px) {
-  :root { --quad-h: clamp(168px, 23vh, 300px); }
+  /* Under this there is nothing left to split — the floors alone come to more
+     than the viewport — so the quadrants take a fixed slice of it and the page
+     scrolls the last of the controls rather than squeezing the map away. */
+  :root { --quad-h: clamp(168px, 23vh, 340px); }
+  .board { grid-template-columns: minmax(230px, 22vw) minmax(0, 1fr); }
   .feed .panel-fill { min-height: 200px; }
 }
 @media (max-width: 640px) {
