@@ -11,9 +11,64 @@ from engine.dice import RNG, average_of
 
 __all__ = ["CharacterSheet", "build_character", "monster_to_combatant",
            "pc_to_combatant", "starting_resources", "fresh_turn",
-           "CharacterBuildError", "ability_mod"]
+           "CharacterBuildError", "ability_mod",
+           "normalize_pronouns", "PRONOUNS", "GENDER_PRONOUNS", "DEFAULT_PRONOUNS"]
 
 ABILITIES = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
+
+#: The pronoun sets a config may name, keyed by every spelling of each one it
+#: is reasonable to write. A set is stored in its two-form shape — subject and
+#: object — because that is what a narrator needs and what fits on a line the
+#: DM reads on every turn; the possessive is not ambiguous once those two are
+#: known.
+PRONOUNS: dict[str, str] = {
+    "she": "she/her", "her": "she/her", "hers": "she/her",
+    "she/her": "she/her", "she/hers": "she/her", "she/her/hers": "she/her",
+    "he": "he/him", "him": "he/him", "his": "he/him",
+    "he/him": "he/him", "he/his": "he/him", "he/him/his": "he/him",
+    "they": "they/them", "them": "they/them", "theirs": "they/them",
+    "they/them": "they/them", "they/theirs": "they/them", "they/them/theirs": "they/them",
+    "it": "it/its", "its": "it/its", "it/its": "it/its",
+}
+
+#: What a stated gender implies when a character states no pronouns.
+#:
+#: The keys are exactly the spellings `tts.voices.GENDERS` accepts, because a
+#: character read aloud in a woman's voice and narrated as "they" is one
+#: character described two ways. `tests/engine/test_characters.py` holds the
+#: two vocabularies together rather than trusting this comment.
+GENDER_PRONOUNS: dict[str, str] = {
+    "f": "she/her", "female": "she/her", "woman": "she/her",
+    "m": "he/him", "male": "he/him", "man": "he/him",
+}
+
+#: A character who states neither is narrated as they/them.
+#:
+#: Not a guess at who they are — the opposite. The alternative is a DM that
+#: infers a gender from a name, which it will do confidently and sometimes
+#: wrongly, and which is the thing this field exists to stop. A config that
+#: wants something else says so; a config that says nothing gets the form that
+#: is correct for anyone.
+DEFAULT_PRONOUNS = "they/them"
+
+
+def normalize_pronouns(said: Any = "", gender: Any = "") -> str:
+    """The pronoun set to narrate a character with: stated, implied, or they/them.
+
+    An unrecognised set is kept as written rather than corrected into the
+    default — neopronouns are not a typo, and a narrator handed `ey/em` can use
+    `ey/em`. Only the shape is tidied: whitespace, case around the known sets,
+    and empty segments.
+    """
+    text = " ".join(str(said or "").split())
+    if text:
+        known = PRONOUNS.get(text.lower())
+        if known:
+            return known
+        parts = [p.strip() for p in text.split("/") if p.strip()]
+        if parts:
+            return "/".join(parts)
+    return GENDER_PRONOUNS.get(str(gender or "").strip().lower(), DEFAULT_PRONOUNS)
 
 
 class CharacterBuildError(ValueError):
@@ -46,6 +101,13 @@ class CharacterSheet:
     spellcasting_ability: str | None = None
     features: list[str] = field(default_factory=list)
     persona: str = ""
+    # Who the character is, rather than what they can do. `gender` is what the
+    # config stated and is what casts the voice (tts/voices.py); `pronouns` is
+    # what the table is told to call them, and is resolved once here — stated,
+    # else implied by the gender, else they/them — so that no reader of a sheet
+    # has to redo that reasoning and arrive somewhere else.
+    gender: str = ""
+    pronouns: str = DEFAULT_PRONOUNS
     # extras the engine consults; not part of the minimal contract signature
     expertise: list[str] = field(default_factory=list)
     inventory: list[str] = field(default_factory=list)
@@ -97,6 +159,7 @@ class CharacterSheet:
             "spell_slots": {str(k): v for k, v in self.spell_slots.items()},
             "spellcasting_ability": self.spellcasting_ability,
             "features": list(self.features), "persona": self.persona,
+            "gender": self.gender, "pronouns": self.pronouns,
             "expertise": list(self.expertise), "inventory": list(self.inventory),
             "size": self.size,
             "damage_resistances": list(self.damage_resistances),
@@ -117,6 +180,8 @@ class CharacterSheet:
             spell_slots={int(k): int(v) for k, v in (d.get("spell_slots") or {}).items()},
             spellcasting_ability=d.get("spellcasting_ability"),
             features=list(d.get("features", [])), persona=d.get("persona", ""),
+            gender=str(d.get("gender", "") or ""),
+            pronouns=normalize_pronouns(d.get("pronouns"), d.get("gender")),
             expertise=list(d.get("expertise", [])), inventory=list(d.get("inventory", [])),
             size=d.get("size", "M"),
             damage_resistances=list(d.get("damage_resistances", [])),
@@ -209,7 +274,8 @@ def _default_spells(klass_row: dict, level: int, mod_wis: int) -> list[str]:
 def build_character(spec: dict, rng: RNG) -> CharacterSheet:
     """Build a CharacterSheet from a compact spec.
 
-    spec keys: id, name, race, klass, level, abilities, equipment, spells, persona.
+    spec keys: id, name, race, klass, level, abilities, equipment, spells,
+    persona, gender, pronouns.
     HP uses the fixed average-per-level rule (deterministic); `rng` is accepted
     for signature compatibility and used only if spec["roll_hp"] is true.
     """
@@ -319,6 +385,8 @@ def build_character(spec: dict, rng: RNG) -> CharacterSheet:
         spells_known=spells_known, spell_slots=slots,
         spellcasting_ability=spellcasting_ability,
         features=features, persona=str(spec.get("persona", "")),
+        gender=str(spec.get("gender", "") or ""),
+        pronouns=normalize_pronouns(spec.get("pronouns"), spec.get("gender")),
         expertise=expertise, inventory=items, size=race_row.get("size", "M"),
         damage_resistances=list(race_row.get("damage_resistances", [])),
         save_advantages=list(race_row.get("saving_throw_advantages", [])),

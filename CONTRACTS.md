@@ -55,9 +55,12 @@ class CharacterSheet:
     spellcasting_ability: str | None
     features: list[str]                # engine-recognized feature ids: "second_wind","action_surge","sneak_attack","cunning_action","channel_divinity_turn_undead","arcane_recovery","extra_attack",...
     persona: str                       # free text; not used by engine
+    gender: str                        # as stated, or ""; casts the voice (tts/), no rules meaning
+    pronouns: str                      # resolved once: stated, else implied by gender, else "they/them"
 
 def build_character(spec: dict, rng: RNG) -> CharacterSheet
-# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str}
+# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str, "gender": str, "pronouns": str}
+def normalize_pronouns(said="", gender="") -> str   # the one place a config's answer is read
 def monster_to_combatant(name: str, cid: str, rng: RNG, roll_hp: bool=False) -> "Combatant"
 ```
 
@@ -1478,3 +1481,78 @@ listener notices it in the first sentence.
 Unchanged: the party spec (§1.3 and the age amendment), what the engine sees,
 and which traits the panel may edit — age remains the only one, for the reason
 stated there.
+
+---
+
+### 2026-09-04 — engine/ + agents/ + web/static — gender and pronouns are on the character sheet
+
+`gender` lived in the party spec and nowhere else. The two amendments that
+introduced it said so plainly — "**Not an engine field**: `CharacterSheet`
+(§1.3) is unchanged, `build_character` ignores the key, and neither the DM nor
+the players see it" — because its only job was narrowing a Polly voice pool.
+That was right about the *casting* and wrong about the *character*. Nothing the
+DM or the players ever read said whether a character was a she, a he or a they,
+so a model handed a name, a class and a persona filled the gap by inference:
+confidently, every turn, and sometimes wrongly. It is the same failure as the
+child's voice, one layer up — the casting had no idea, because there was
+nothing to ask.
+
+This reverses that "not an engine field" decision, deliberately and only for
+these two keys.
+
+1. **`CharacterSheet` gains `gender: str` and `pronouns: str`.** Both are
+   carried by `to_dict`/`from_dict`, so a game reloaded from SQLite after a
+   restart does not start misgendering its party halfway through. Neither has
+   any rules meaning: `test_pronouns_change_nothing_mechanical` asserts that
+   two sheets built from the same spec with different genders differ in
+   exactly those two fields and nothing else. The engine stays pure and stays
+   ignorant of them; it carries them the way it carries `persona`.
+
+2. **`normalize_pronouns(said, gender)` is the one place a config's answer is
+   read**, and it resolves in that order: what the character states, else what
+   its stated gender implies, else `they/them`. Resolved **once, at build
+   time** rather than at each render, so no reader of a sheet has to redo the
+   reasoning and arrive somewhere else.
+
+   An unrecognised set is kept as written, not corrected into the default —
+   neopronouns are not a typo, and a narrator handed `ey/em` can use `ey/em`.
+   Only the shape is tidied.
+
+3. **A stated gender implies a pronoun; saying nothing means they/them.** The
+   implication matters because of what is already shipped: the twenty-eight
+   characters in `examples/` state a gender wherever their persona already
+   does and pronouns nowhere, so without it every one of them — Dame, Sister,
+   Father included — would be narrated as they/them. The default matters for
+   the other five, who state no gender precisely because their persona states
+   none: they/them is not a guess about them, it is the refusal to make one,
+   and it is what stops the DM inferring from a name. **No example config
+   changed**; the derivation is the whole migration.
+
+   `engine/` may not import `tts/`, so the gender vocabulary exists in both.
+   `tests/engine/test_pronouns.py` runs every spelling `tts.voices.GENDERS`
+   accepts through `normalize_pronouns` and asserts they agree — a character
+   read aloud in a woman's voice and narrated as "they" is one character
+   described two ways.
+
+4. **A `PRONOUNS:` line in `dm_view` and `player_view`, and a pronoun in
+   `party_summary` and the player's cached system prefix.** One line listing
+   every combatant that has a sheet, not a column on the combatant table: the
+   string is identical on every turn of the game and the table rides on every
+   DM and player call, so a column would buy the same fact several thousand
+   times a session. Monsters carry no sheet (`monster_to_combatant` passes
+   `sheet=None`), so they are absent from the line rather than guessed at, and
+   are narrated exactly as they were before.
+
+   `dm_system.txt` and `player_system.txt` gain the matching rule: use the
+   pronouns you are given, never infer them from a name, a class, a title or a
+   voice.
+
+5. **The spectator card shows them**, on the identity line beside AC and class,
+   because that card is what a character sheet looks like in the UI. Monsters
+   have no sheet and so say nothing there, unchanged.
+
+Unchanged: voice casting, which still reads `gender` from the game's own
+config in `web/routes/tts.py` and not from the sheet, for the reason stated in
+the narration amendment — that endpoint spends money and must not take traits
+from a request. The sheet's copy is derived from the same spec, not a second
+source of truth.

@@ -7,7 +7,7 @@ from agents.dm import DMAgent
 from agents import player
 from agents.player import PlayerAgent
 from agents.summarizer import summarize
-from agents.views import dm_view, player_view, render_actions
+from agents.views import dm_view, party_summary, player_view, pronoun_line, render_actions
 from llm.client import LLMResponse, MockLLMClient
 from llm.cost import Ledger
 
@@ -37,11 +37,18 @@ class ScriptedClient:
 def make_state(n_enemies=5):
     rng = eng.RNG(1)
     combatants = {}
-    for i, (name, klass) in enumerate(
-        [("Thorin", "Fighter"), ("Vessa", "Rogue"), ("Marigold", "Cleric"), ("Ilbrandt", "Wizard")]
+    for i, (name, klass, who) in enumerate(
+        [
+            ("Thorin", "Fighter", {"gender": "male"}),          # implied he/him
+            ("Vessa", "Rogue", {"pronouns": "they/them"}),      # stated
+            ("Marigold", "Cleric", {"gender": "female"}),       # implied she/her
+            ("Ilbrandt", "Wizard", {}),                         # nothing said
+        ]
     ):
         sheet = eng.build_character(
-            {"id": f"pc_{i+1}", "name": name, "klass": klass, "level": 3, "persona": "brave"}, rng
+            dict({"id": f"pc_{i+1}", "name": name, "klass": klass, "level": 3,
+                  "persona": "brave"}, **who),
+            rng,
         )
         combatants[sheet.id] = eng.Combatant(
             id=sheet.id,
@@ -116,6 +123,38 @@ def test_dm_view_shows_exact_numbers_and_positions():
     view = dm_view(state, events(3), "")
     assert "7/7" in view
     assert "(9,3)" in view
+
+
+def test_both_views_say_how_to_refer_to_the_party():
+    """A model handed a name and a class infers a gender from it, confidently
+    and sometimes wrongly. Being told is the fix, and both halves of the table
+    have to be told: the DM narrates the party, and a player talks about their
+    allies."""
+    state = make_state()
+    for view in (dm_view(state, events(3), ""), player_view(state, "pc_1", events(), "")):
+        assert "PRONOUNS:" in view
+        assert "Thorin: he/him" in view
+        assert "Vessa: they/them" in view
+        assert "Marigold: she/her" in view
+        assert "Ilbrandt: they/them" in view
+
+
+def test_the_pronoun_line_is_one_line_and_not_a_column():
+    """It is the same string on every turn of the game and it rides on every
+    DM and player call — a pronoun per combatant row would buy the same fact
+    several thousand times over a session."""
+    state = make_state()
+    line = pronoun_line(state)
+    assert "\n" not in line
+    # Monsters carry no sheet, so they are absent rather than guessed at.
+    assert "Goblin" not in line
+    assert dm_view(state, events(3), "").count("he/him") == 1
+
+
+def test_the_roster_that_opens_a_scene_introduces_each_character_properly():
+    rows = party_summary(make_state()).splitlines()
+    assert rows[0].startswith("Thorin (he/him, ")
+    assert "Ilbrandt (they/them, " in "\n".join(rows)
 
 
 def test_render_actions_format():

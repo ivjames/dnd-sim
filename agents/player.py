@@ -62,7 +62,8 @@ def _sheet_summary(sheet: Any) -> str:
     abil = getattr(sheet, "abilities", {}) or {}
     abil_str = " ".join(f"{k} {v}" for k, v in abil.items())
     bits = [
-        f"{getattr(sheet, 'name', '?')}, level {getattr(sheet, 'level', 1)} "
+        f"{getattr(sheet, 'name', '?')} ({getattr(sheet, 'pronouns', '') or 'they/them'}), "
+        f"level {getattr(sheet, 'level', 1)} "
         f"{getattr(sheet, 'race', '?')} {getattr(sheet, 'klass', '?')}",
         f"AC {getattr(sheet, 'ac', 10)}, {getattr(sheet, 'max_hp', 1)} max HP, "
         f"speed {getattr(sheet, 'speed', 30)} ft",

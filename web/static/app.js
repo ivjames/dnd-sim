@@ -501,6 +501,10 @@
     var sub = [];
     if (c.ac !== undefined) sub.push('AC ' + num(c.ac));
     if (c.sheet && c.sheet.klass) sub.push(c.sheet.klass + ' ' + num(c.sheet.level));
+    // Who the character is sits on the same line as what they can do, because
+    // that is the line the card uses for identity. Monsters carry no sheet and
+    // so say nothing here, which is the same as before.
+    if (c.sheet && c.sheet.pronouns) sub.push(c.sheet.pronouns);
     var name = el('span', 'card-name', c.name || id);
     var subEl = el('span', 'card-sub', sub.join(' · '));
     if (compact) {

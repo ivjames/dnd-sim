@@ -11,7 +11,8 @@ from typing import Any, Iterable
 
 from .common import event_text
 
-__all__ = ["player_view", "dm_view", "render_actions", "hp_band", "party_summary"]
+__all__ = ["player_view", "dm_view", "render_actions", "hp_band", "party_summary",
+           "pronoun_line"]
 
 MAX_RECENT_EVENTS = 12
 # Mechanical noise the LLM does not need one line each for.
@@ -154,6 +155,33 @@ def _scene_line(state: Any) -> str:
     return line or "(no scene set)"
 
 
+def _pronouns(c: Any) -> str:
+    """How to refer to this combatant, or "" for a creature with no sheet.
+
+    Read off the sheet rather than worked out here: `build_character` resolved
+    it once, from what the character stated or what its gender implies, and a
+    second resolution in the view layer is a second chance to disagree.
+    """
+    return str(getattr(getattr(c, "sheet", None), "pronouns", "") or "")
+
+
+def pronoun_line(state: Any) -> str:
+    """`Sadi Marchetti: she/her; Adept Weylin Doss: they/them` — or "".
+
+    One line, not a column on every row of the combatant table: it is the same
+    string on every turn of the game, it is read by a model that only needs
+    telling once per prompt, and the table is sent on every DM and player call
+    of the whole game. A pronoun per row would be the same fact bought several
+    thousand times.
+    """
+    parts = [
+        f"{getattr(c, 'name', '?')}: {_pronouns(c)}"
+        for c in (getattr(state, "combatants", None) or {}).values()
+        if _pronouns(c)
+    ]
+    return "; ".join(parts)
+
+
 def party_summary(state: Any) -> str:
     """One-line-per-PC roster, used to prime the DM at scene open."""
     rows = []
@@ -163,7 +191,7 @@ def party_summary(state: Any) -> str:
         sheet = getattr(c, "sheet", None)
         if sheet is not None:
             rows.append(
-                f"{c.name} ({getattr(sheet, 'race', '?')} "
+                f"{c.name} ({_pronouns(c) or 'they/them'}, {getattr(sheet, 'race', '?')} "
                 f"{getattr(sheet, 'klass', '?')} {getattr(sheet, 'level', 1)}): "
                 f"{getattr(sheet, 'persona', '') or 'no notes'}"
             )
@@ -192,6 +220,11 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
         lines.append("YOU: " + _sheet_line(me))
         lines.append("Resources: " + _resources(me))
         lines.append("Your conditions: " + _conds(me))
+
+    pronouns = pronoun_line(state)
+    if pronouns:
+        lines.append("")
+        lines.append(f"PRONOUNS: {pronouns}")
 
     lines.append("")
     lines.append("COMBATANTS (name | side | health | dist | conditions)")
@@ -231,6 +264,10 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
     )
     if summary:
         lines.append(f"SO FAR: {' '.join(str(summary).split())}")
+
+    pronouns = pronoun_line(state)
+    if pronouns:
+        lines.append(f"PRONOUNS: {pronouns}")
 
     lines.append("")
     lines.append("COMBATANTS (id | name | side | HP | AC | pos | conditions)")

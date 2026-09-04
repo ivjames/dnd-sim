@@ -298,10 +298,17 @@ body {
 .card.is-active { border-color: var(--accent-line); box-shadow: inset 3px 0 0 var(--accent); }
 .card.is-down .card-name { color: var(--ink-dim); }
 /* Wrapping between the name and the stat line, never inside the name: a
-   three-word name broken over three lines is what a card is trying not to be. */
-.card-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+   three-word name broken over three lines is what a card is trying not to be.
+   `space-between` rather than an auto margin so that the stat line sits right
+   of the name while the two share a line and returns to the left margin when
+   it takes one of its own — an auto margin would hold it against the right
+   edge on a line where it is the only thing there. */
+.card-top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+}
 .card-name { font-weight: 600; font-size: 13.5px; }
-.card-sub { font-size: 11px; color: var(--ink-faint); margin-left: auto; font-family: var(--mono); white-space: nowrap; }
+.card-sub { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); white-space: nowrap; }
 .card-vitals { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
 .hpbar {
   flex: 1 1 auto; height: 6px; border-radius: 999px;

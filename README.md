@@ -404,6 +404,35 @@ monster through its own distortion, with a colon in the middle of the sentence
 that the engine reads as a label. The name is unchanged **on screen**: the
 transcript prints it in front of every line of dialogue as it always has.
 
+### Who a character is
+
+**A character sheet carries a gender and a pronoun set**, and both reach the
+table. `gender` is what the config states and is what casts the voice; a
+character's `"pronouns"` — `"she/her"`, `"he/him"`, `"they/them"`, or anything
+else written the same way — is what the DM and the other players are told to
+call them, and it appears on a `PRONOUNS:` line in every view they are sent.
+Neither has any rules meaning: two sheets built from the same spec with
+different genders differ in exactly those two fields.
+
+The set is resolved once, when the character is built, in this order: **what
+the character states**, else **what its stated gender implies**, else
+**they/them**. The implication is what carries the shipped parties, who state a
+gender wherever their persona already does and pronouns nowhere — without it,
+Dame Ysolde Harrower, Sister Marigold Penn and Father Bexley Crane would all be
+narrated as they/them. The default carries everyone else: a character who states no gender
+states none because their persona states none, so they/them is not a guess
+about them, it is the refusal to make one. A set nobody has listed is kept as
+written rather than corrected — neopronouns are not a typo, and a narrator
+handed `ey/em` can use `ey/em`.
+
+Before this, the sheet said nothing about any of it, and a model handed a name,
+a class and a persona filled the gap by inference — confidently, every turn,
+and sometimes wrongly. That is the same failure as the child's voice, one layer
+up. The DM and player prompts now carry the matching rule: use the pronouns you
+are given, never infer them from a name, a class, a title or a voice. Monsters
+carry no character sheet, so they are absent from the line rather than guessed
+at, and are narrated exactly as they were before.
+
 A party member may state a `"gender"` — `female` or `male` — and is then dealt
 only from the voices Polly reports as that gender. It narrows who can be cast
 and nothing else: the choice within that set is the same hash as before, so a
