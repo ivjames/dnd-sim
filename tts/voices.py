@@ -69,6 +69,10 @@ __all__ = [
     "allowed_ssml",
     "MONSTER_VTL",
     "MONSTER_SIZE",
+    "MONSTER_SIZE_BANDS",
+    "CREATURE_SIZES",
+    "DEFAULT_SIZE_BAND",
+    "normalize_creature_size",
     "MONSTER_GROWL",
     "MONSTER_CAVE",
     "MONSTER_TEMPO",
@@ -239,12 +243,57 @@ MONSTER_VTL: tuple[int, ...] = (-20, -10, 10, 20, 30, 40)
 #: positive is a longer vocal tract, a bigger creature, a lower voice. Never 0,
 #: for `MONSTER_VTL`'s reason.
 #:
-#: Narrower than VTL's spread on the negative side and wider on the positive,
-#: because this is a resample and VTL was not: it takes pitch with it, so -20%
-#: here is a squeak where -20% there was only a small skull. The ceiling is
-#: taste rather than arithmetic — +34% is about five semitones down, which is
-#: an ogre, and past it the consonants start to smear.
-MONSTER_SIZE: tuple[int, ...] = (-16, -9, 9, 16, 24, 34)
+#: **Keyed on the creature's SRD size**, one band each, because the seat is
+#: not. A voice key is `monster:mon_6` and `mon_6` is spawn order
+#: (`orchestrator/game.py: _spawn_monsters`), so a hash over the key alone
+#: knows only which slot a creature occupies — which is how, before this, an
+#: Ogre landed on +9% while a Gnoll in the same fight took +34% and sounded
+#: bigger than it. The band comes from the stat block; the hash picks within
+#: the band, so two gnolls still differ from each other and neither is ever
+#: mistaken for the ogre.
+#:
+#: Bands are monotonic and do not overlap, so "bigger creature" and "lower
+#: voice" cannot disagree. The spread is narrower on the negative side and
+#: wider on the positive because this is a resample and VTL was not: it takes
+#: pitch with it, so -20% here is a squeak where -20% there was only a small
+#: skull. `M` sits either side of the voice as recorded and never on it —
+#: a person-sized creature should sound close to the voice it was dealt,
+#: but no monster is dealt no treatment at all.
+MONSTER_SIZE_BANDS: dict[str, tuple[int, ...]] = {
+    "T": (-26, -22, -18),        # Tiny: a talking rat, a pixie
+    "S": (-16, -13, -10),        # Small: goblin, kobold
+    "M": (-8, -4, 4, 8),         # Medium: orc, gnoll, bandit, skeleton
+    "L": (12, 16, 20),           # Large: ogre, troll, worg
+    "H": (26, 30, 34),           # Huge: a giant
+    "G": (38, 44, 50),           # Gargantuan: a dragon, a kraken
+}
+
+#: What a creature whose size nothing could say is dealt.
+#:
+#: `M`'s band, because a monster that talks is usually person-shaped and
+#: because guessing wrong small is less wrong than guessing wrong huge. It is
+#: reached by a name that is not in the SRD list, and by a replay of a game
+#: whose snapshot no longer names the speaker — see `_creature_size_for` in
+#: `web/routes/tts.py`, which is also where the cost of that is written down.
+DEFAULT_SIZE_BAND = "M"
+
+#: Every size shift a monster can be dealt, which is the union of the bands.
+#: Kept as its own name because the contract tests enumerate it.
+MONSTER_SIZE: tuple[int, ...] = tuple(
+    sorted({v for band in MONSTER_SIZE_BANDS.values() for v in band})
+)
+
+#: What a stat block's `size` may say, in the two spellings anything writes it:
+#: the SRD letter and the word. Read case-insensitively; anything else is
+#: nothing said, which is `DEFAULT_SIZE_BAND`.
+CREATURE_SIZES = {
+    "t": "T", "tiny": "T",
+    "s": "S", "small": "S",
+    "m": "M", "medium": "M",
+    "l": "L", "large": "L",
+    "h": "H", "huge": "H",
+    "g": "G", "gargantuan": "G",
+}
 
 #: Saturation, per monster. Two of the five are 0: grit is a characteristic,
 #: not a uniform, and a table where every monster rasps has no rasping monster
@@ -393,6 +442,19 @@ def is_child_voice(voice) -> bool:
     return str(ident or "").strip().lower() in CHILD_VOICE_IDS
 
 
+def normalize_creature_size(size) -> str:
+    """An SRD size letter — `"T"`…`"G"` — or `""` for nothing recognised.
+
+    Takes the letter a stat block carries (`{"size": "L"}` in
+    `engine/data/monsters.json`) and the word a person would write, because
+    this is read from game state that other things also write. Anything else
+    is nothing said rather than a guess: `cast_for` answers that with
+    `DEFAULT_SIZE_BAND`, and a creature dealt the wrong band sounds wrong for
+    the life of its cached clips.
+    """
+    return CREATURE_SIZES.get(str(size or "").strip().lower(), "")
+
+
 def normalize_age(age) -> str:
     """"child", "adult", or "" for nothing said. See `AGES`.
 
@@ -427,7 +489,8 @@ def normalize_age(age) -> str:
 
 
 def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
-             engine: str = "standard", age="", monster_fx: bool = True) -> Cast:
+             engine: str = "standard", age="", monster_fx: bool = True,
+             size="") -> Cast:
     """Deal `key` a voice out of `pool`, deterministically.
 
     `pool` is any iterable of `Voice`; it is sorted by id here so the casting
@@ -444,6 +507,12 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
     be cast on the table's engine), or with the standard-only SSML that used to
     be the only way — `DND_TTS_MONSTER_FX=0`. It changes nothing for any other
     seat.
+
+    `size` is the creature's SRD size (`"L"`, `"large"`, …), and it decides
+    which band of `MONSTER_SIZE_BANDS` the size shift is dealt from — so an
+    ogre is bigger than a goblin rather than merely later in the initiative
+    order. Read for monsters and ignored for everyone else, who have no stat
+    block and are not creatures.
     """
     voices = sorted({v.id: v for v in pool}.values(), key=lambda v: v.id)
     if not voices:
@@ -516,8 +585,12 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
                 vtl_pct=MONSTER_VTL[(h >> 12) % len(MONSTER_VTL)],
                 rate_pct=90 + ((h >> 16) % 4) * 5,       # 90 … 105
             )
+        # The band is the creature's; the value within it is this creature's.
+        # Both halves matter: without the band an ogre is only a slot number,
+        # and without the hash four goblins are one goblin four times.
+        band = MONSTER_SIZE_BANDS[normalize_creature_size(size) or DEFAULT_SIZE_BAND]
         fx = MonsterFX(
-            size_pct=MONSTER_SIZE[(h >> 12) % len(MONSTER_SIZE)],
+            size_pct=band[(h >> 12) % len(band)],
             growl_pct=MONSTER_GROWL[(h >> 8) % len(MONSTER_GROWL)],
             cave_pct=MONSTER_CAVE[(h >> 20) % len(MONSTER_CAVE)],
         )

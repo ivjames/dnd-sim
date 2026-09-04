@@ -24,7 +24,7 @@ from typing import Any
 from flask import Blueprint, Response, current_app, jsonify, request
 
 from tts.client import TTSError
-from tts.voices import gender_for_pronouns
+from tts.voices import MONSTER_PREFIX, gender_for_pronouns, is_monster_key
 
 bp = Blueprint("tts", __name__, url_prefix="/api")
 
@@ -107,6 +107,44 @@ def _voice_traits_for(entry: Any, row: Any, key: str) -> tuple[str, str]:
     member = _member_for(entry, row, key)
     age = member.get("age")
     return _pool_gender_of(member), "" if age is None else str(age)
+
+
+def _creature_size_for(entry: Any, row: Any, key: str) -> str:
+    """The SRD size of the creature in this seat, or `""`.
+
+    Only a monster has one — everyone else is a character rather than a
+    creature — and it decides which band of `MONSTER_SIZE_BANDS` the size shift
+    is dealt from. Without it the shift comes off the voice key alone, and a
+    voice key is `monster:mon_6` where `mon_6` is spawn order
+    (`orchestrator/game.py: _spawn_monsters`): an Ogre sounded bigger or
+    smaller than the Gnoll beside it depending on which one rolled into the
+    fight first.
+
+    Read from the game like everything else this route decides (`_member_for`
+    makes the argument: this endpoint spends money, so a trait in the query
+    string would be a way to mint cache entries). The live `Combatant` first,
+    because it is an attribute read where `snapshot()` re-serializes the whole
+    board; the persisted snapshot second, for a game whose process is gone.
+    `size` has always been in `Combatant.to_dict`, so a row written before any
+    of this still answers.
+
+    `""` — a combatant no snapshot names — is `DEFAULT_SIZE_BAND` at the
+    casting, and the cost of it is a clip keyed and paid for twice if the same
+    line is later asked for when the creature CAN be resolved. Bounded by
+    dialogue, which is a small share of a game.
+    """
+    if not is_monster_key(key):
+        return ""
+    cid = key[len(MONSTER_PREFIX):]
+    game = getattr(entry, "game", None) if entry is not None else None
+    state = getattr(game, "state", None)
+    live = (getattr(state, "combatants", None) or {}).get(cid) if state is not None else None
+    size = getattr(live, "size", "")
+    if size:
+        return str(size)
+    combatants = (((row or {}).get("snapshot") or {}).get("state") or {}).get("combatants") or {}
+    stored = combatants.get(cid)
+    return str(stored.get("size") or "") if isinstance(stored, dict) else ""
 
 
 #: A ceiling this server owns, which the submitted config cannot raise.
@@ -481,8 +519,9 @@ def speak(game_id: str):
     # reload, two spectators hear the same line — so answer the revalidation
     # before touching the cache, let alone Polly.
     gender, age = _voice_traits_for(entry, row, key)
+    size = _creature_size_for(entry, row, key)
     try:
-        cast, ckey = svc.cache_key_for(key, text, gender, age)
+        cast, ckey = svc.cache_key_for(key, text, gender, age, size=size)
     except Exception as exc:  # a pool that cannot be cast from
         current_app.logger.warning("tts casting failed: %s", exc)
         return _err(f"{type(exc).__name__}: {exc}", 503)
@@ -516,7 +555,7 @@ def speak(game_id: str):
             # monster is not the table's: reserving at the wrong rate either
             # refuses a clip the game can afford or admits one it cannot.
             with _admission(game_id, entry, svc.price_of(len(text), cast.engine), budget):
-                result = svc.render(key, text, gender, age)
+                result = svc.render(key, text, gender, age, size=size)
                 if result.usd:
                     _charge(game_id, entry, result.chars, result.usd)
     except _NoBudget as exc:

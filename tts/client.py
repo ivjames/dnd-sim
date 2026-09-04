@@ -291,7 +291,7 @@ class PollyTTS:
             return ()
         return tuple(out)
 
-    def cast(self, key: str, gender: str = "", age="") -> Cast:
+    def cast(self, key: str, gender: str = "", age="", *, size="") -> Cast:
         """The seat `key` sits in, on the engine that will speak it.
 
         `gender` and `age` come from the character, where the game states them
@@ -300,10 +300,16 @@ class PollyTTS:
         the older `gender` key it replaced), not a fact about the character. An
         unstated age is an adult, so Polly's children's voices are dealt only
         where a character asks for one.
+
+        `size` is the creature's SRD size and applies to monsters alone: it
+        picks the band the size shift is dealt from, so an ogre is bigger than
+        a goblin rather than merely later in the initiative order. Keyword-only
+        because it is not a trait of the same kind as the other two — it
+        narrows no pool, it sets the treatment.
         """
         engine = self.engine_for(key)
         return cast_for(key, self.voices(engine), self.dm_voice, gender, engine, age,
-                        monster_fx=self.monster_fx)
+                        monster_fx=self.monster_fx, size=size)
 
     # -- synthesis -----------------------------------------------------------
 
@@ -333,11 +339,11 @@ class PollyTTS:
         return ssml_for(text, cast)      # the engine rides on the cast
 
     def cache_key_for(self, key: str, text: str, gender: str = "",
-                      age="") -> tuple[Cast, str]:
+                      age="", *, size="") -> tuple[Cast, str]:
         # Keyed on the document that will actually be sent, not on the cast it
         # came from: an engine that drops pitch makes two casts that differ
         # only in pitch the same audio, and they should be the same file.
-        cast = self.cast(key, gender, age)
+        cast = self.cast(key, gender, age, size=size)
         # Plus the treatment, which is the half of the audio the document does
         # not describe: two monsters can be dealt one voice and one rate and
         # differ entirely in what happens to the samples afterwards.
@@ -391,24 +397,26 @@ class PollyTTS:
                 else:
                     self._inflight[ckey] = (gate_now, waiting - 1)
 
-    def render(self, key: str, text: str, gender: str = "", age="") -> TTSResult:
+    def render(self, key: str, text: str, gender: str = "", age="", *,
+               size="") -> TTSResult:
         """Synthesize unconditionally, and cache it.
 
         No gate and no cache read: the caller holds `exclusive` and has already
         looked. Raises `TTSError` if it cannot be had.
         """
         text = self._check(text)
-        cast, ckey = self.cache_key_for(key, text, gender, age)
+        cast, ckey = self.cache_key_for(key, text, gender, age, size=size)
         audio = self._synthesize_now(text, cast)
         self.cache.put(ckey, audio)
         chars = billable_chars(text)
         return TTSResult(audio, cast, chars, self.price_of(chars, cast.engine), False, ckey,
                          self.media_type_for(cast))
 
-    def synthesize(self, key: str, text: str, gender: str = "", age="") -> TTSResult:
+    def synthesize(self, key: str, text: str, gender: str = "", age="", *,
+                   size="") -> TTSResult:
         """Audio for one line in one seat, from the cache or from Polly."""
         text = self._check(text)
-        cast, ckey = self.cache_key_for(key, text, gender, age)
+        cast, ckey = self.cache_key_for(key, text, gender, age, size=size)
         hit = self.cache.get(ckey)
         if hit is not None:
             return TTSResult(hit, cast, 0, 0.0, True, ckey, self.media_type_for(cast))
@@ -418,7 +426,7 @@ class PollyTTS:
             hit = self.cache.get(ckey)
             if hit is not None:
                 return TTSResult(hit, cast, 0, 0.0, True, ckey, self.media_type_for(cast))
-            return self.render(key, text, gender, age)
+            return self.render(key, text, gender, age, size=size)
 
     def _synthesize_now(self, text: str, cast: Cast) -> bytes:
         """The one request, and — for a monster — what happens to what comes back.
