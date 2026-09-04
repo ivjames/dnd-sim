@@ -46,6 +46,52 @@ def test_every_element_app_js_reaches_for_is_defined_in_the_page():
     assert used <= defined, f"ids used but not defined: {sorted(used - defined)}"
 
 
+def test_the_panel_offers_a_voice_age_per_seat():
+    """The control that answers "why is Father Bexley a child?".
+
+    Casting reads `age` off the party member; without somewhere to set it, the
+    only way to say a character is a child is to edit the scenario's JSON.
+    """
+    js, html = read(APP_JS), read(INDEX)
+    assert 'id="ng-party"' in html and "$('ng-party')" in js
+    # Rendered from the chosen preset's own party, and read back into the
+    # config that is submitted — a control that is only rendered is a decoration.
+    assert "renderPartyAges(cfg.party)" in js
+    assert "applyPartyAges(cfg.party)" in js
+    # Rows are built per seat and keyed by index, which is the same order the
+    # submitted `cfg.party` is in (it is a deep copy of the preset's).
+    assert "'ng-age-' + i" in js
+
+
+def test_choosing_adult_states_nothing_at_all():
+    """An unstated age already casts as an adult, so the panel writes only the
+    answer that changes something. Stating "adult" back into every scenario's
+    config would be writing a fact about a character that nobody chose."""
+    js = read(APP_JS)
+    m = re.search(r"function applyPartyAges\((.+?)\n  \}", js, re.S)
+    assert m, "the panel no longer writes ages back"
+    body = m.group(1)
+    assert "member.age = 'child'" in body
+    assert "delete member.age" in body
+
+
+def test_the_panels_idea_of_a_child_is_the_servers():
+    """`isChildAge` in app.js decides which way the select starts; `voices.py`
+    decides the casting. Disagreeing means a scenario that says `"age": 9` is
+    shown as an adult and then cast as a child, or the reverse — a control that
+    lies about the state it is showing."""
+    from tts.voices import AGES, CHILD_MAX_AGE      # noqa: PLC0415
+
+    js = read(APP_JS)
+    m = re.search(r"var CHILD_AGES = \{([^}]*)\}", js)
+    assert m, "the panel no longer knows which words mean a child"
+    words = set(re.findall(r"([a-z-]+):", m.group(1)))
+    assert words == {word for word, meaning in AGES.items() if meaning == "child"}
+
+    cap = re.search(r"var CHILD_MAX_AGE = (\d+);", js)
+    assert cap and int(cap.group(1)) == CHILD_MAX_AGE
+
+
 def test_the_write_controls_are_hidden_behind_the_gate():
     """Anonymous spectating is the product, so the page must not show controls
     that can only 401 — and `#ctl-note` must stay outside the hidden wrapper,

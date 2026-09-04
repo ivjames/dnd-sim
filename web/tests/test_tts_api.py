@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 import pytest
 
 from llm.cost import Ledger
-from tts.voices import STANDARD_ENGLISH, cast_for
+from tts.voices import STANDARD_ENGLISH, cast_for, is_child_voice
 from web.tests.test_api import create
 
 
@@ -229,6 +229,67 @@ def test_gender_survives_the_process_that_ran_the_game(tts_app, tts_client, samp
     assert rv.headers["X-Dnd-Voice"] in {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
 
 
+# -- age ---------------------------------------------------------------------
+
+def test_a_pc_is_only_cast_as_a_child_if_its_own_party_list_says_so(tts_client, sample_config):
+    """The report this fixes: a cleric called Father Bexley read by a
+    nine-year-old, because Polly's children's voices sat in the pool every seat
+    was dealt from."""
+    party = [
+        {"id": "pc_1", "name": "Father Bexley Crane", "race": "Dwarf (Hill)", "klass": "Cleric",
+         "level": 3, "gender": "male"},                  # no age stated: an adult
+        {"id": "pc_2", "name": "Wren", "race": "Human", "klass": "Rogue",
+         "level": 3, "gender": "female", "age": 40},
+        {"id": "pc_3", "name": "Pip", "race": "Human", "klass": "Rogue",
+         "level": 3, "gender": "female", "age": "child"},
+    ]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    def voice(key):
+        rv = tts_client.get(speak_url(game, key=key))
+        assert rv.status_code == 200
+        return rv.headers["X-Dnd-Voice"]
+
+    assert not is_child_voice(voice("pc_1"))
+    assert not is_child_voice(voice("pc_2"))
+    assert is_child_voice(voice("pc_3"))
+    # The DM, an NPC and a monster have no character record to read an age
+    # from, and are adults for the same reason an unstated seat is.
+    for key in ("dm", "npc", "monster:goblin_1"):
+        assert not is_child_voice(voice(key))
+
+
+def test_the_caller_cannot_ask_to_be_a_child(tts_client, sample_config):
+    """Age is read from the game, exactly as gender is, and for the same
+    reason: this endpoint spends money."""
+    party = [{"id": "pc_1", "name": "Father Bexley Crane", "race": "Dwarf (Hill)",
+              "klass": "Cleric", "level": 3, "gender": "male"}]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    honest = tts_client.get(speak_url(game, key="pc_1"))
+    asked = tts_client.get(speak_url(game, key="pc_1") + "&age=child")
+    assert honest.headers["X-Dnd-Voice"] == asked.headers["X-Dnd-Voice"]
+    assert honest.headers["ETag"] == asked.headers["ETag"]      # and it is the same clip
+
+
+def test_an_age_the_config_states_oddly_is_still_read(tts_client, sample_config):
+    """`normalize_age` is the only thing that decides what an answer means, so
+    the web layer passes `9`, `"9"` and `"kid"` through unchanged rather than
+    having an opinion of its own."""
+    party = [{"id": "pc_%d" % i, "name": "Pip %d" % i, "race": "Human", "klass": "Rogue",
+              "level": 3, "age": said}
+             for i, said in enumerate((9, "9", "kid", "grown-up", "", None), start=1)]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    def voice(key):
+        rv = tts_client.get(speak_url(game, key=key))
+        assert rv.status_code == 200
+        return rv.headers["X-Dnd-Voice"]
+
+    assert all(is_child_voice(voice("pc_%d" % i)) for i in (1, 2, 3))
+    assert not any(is_child_voice(voice("pc_%d" % i)) for i in (4, 5, 6))
+
+
 # -- the three things a concurrent, long-lived process gets wrong -------------
 
 def test_simultaneous_clips_cannot_walk_past_the_budget(tts_app, tts_client, tts, sample_config):
@@ -246,9 +307,9 @@ def test_simultaneous_clips_cannot_walk_past_the_budget(tts_app, tts_client, tts
 
     real = tts.synthesize
 
-    def slow(key, text, gender=""):
+    def slow(key, text, gender="", age=""):
         time.sleep(0.2)          # every other request is admitted or refused meanwhile
-        return real(key, text, gender)
+        return real(key, text, gender, age)
 
     tts.synthesize = slow
     codes = []
@@ -433,9 +494,9 @@ def test_two_tabs_after_one_line_are_one_clip_not_one_refusal(tts_app, tts_clien
 
     real = tts.render
 
-    def slow(key, body, gender=""):
+    def slow(key, body, gender="", age=""):
         time.sleep(0.2)
-        return real(key, body, gender)
+        return real(key, body, gender, age)
 
     tts.render = slow
     codes = []

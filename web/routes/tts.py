@@ -57,19 +57,33 @@ def _config_of(entry: Any, row: Any) -> dict:
     return cfg if isinstance(cfg, dict) else {}
 
 
-def _gender_for(entry: Any, row: Any, key: str) -> str:
-    """The character's gender, from the game's own party list.
+def _member_for(entry: Any, row: Any, key: str) -> dict:
+    """The party member `key` is, from the game's own party list, or `{}`.
 
     Read here rather than taken from the request on purpose: this endpoint
-    spends money, and a gender in the query string would be a way to pick any
-    voice on the roster (and to mint a fresh cache entry per pick). Only a party
-    member has a gender to state — `dm`, `npc` and `monster:<id>` have no
-    character record and are cast from the whole pool, as before.
+    spends money, and a voice trait in the query string would be a way to pick
+    any voice on the roster (and to mint a fresh cache entry per pick). Only a
+    party member has a gender or an age to state — `dm`, `npc` and
+    `monster:<id>` have no character record, and are cast as an adult of
+    unstated gender.
     """
     for member in _config_of(entry, row).get("party") or []:
         if isinstance(member, dict) and str(member.get("id") or "") == key:
-            return str(member.get("gender") or "")
-    return ""
+            return member
+    return {}
+
+
+def _voice_traits_for(entry: Any, row: Any, key: str) -> tuple[str, str]:
+    """`(gender, age)` for a seat: what the config says, or nothing.
+
+    `age` is passed through as written — `"child"`, `"adult"`, `9`, `"40"` —
+    and `tts.voices.normalize_age` is the one place that decides what a given
+    answer means. Nothing here is a default: an unstated age means an adult
+    because the casting says so, not because the web layer filled one in.
+    """
+    member = _member_for(entry, row, key)
+    age = member.get("age")
+    return str(member.get("gender") or ""), "" if age is None else str(age)
 
 
 #: A ceiling this server owns, which the submitted config cannot raise.
@@ -335,9 +349,9 @@ def speak(game_id: str):
     # An unchanged clip is the common case — the playhead goes backwards, tabs
     # reload, two spectators hear the same line — so answer the revalidation
     # before touching the cache, let alone Polly.
-    gender = _gender_for(entry, row, key)
+    gender, age = _voice_traits_for(entry, row, key)
     try:
-        cast, ckey = svc.cache_key_for(key, text, gender)
+        cast, ckey = svc.cache_key_for(key, text, gender, age)
     except Exception as exc:  # a pool that cannot be cast from
         current_app.logger.warning("tts casting failed: %s", exc)
         return _err(f"{type(exc).__name__}: {exc}", 503)
@@ -371,7 +385,7 @@ def speak(game_id: str):
             # monster is not the table's: reserving at the wrong rate either
             # refuses a clip the game can afford or admits one it cannot.
             with _admission(game_id, entry, svc.price_of(len(text), cast.engine), budget):
-                result = svc.render(key, text, gender)
+                result = svc.render(key, text, gender, age)
                 if result.usd:
                     _charge(game_id, entry, result.chars, result.usd)
     except _NoBudget as exc:

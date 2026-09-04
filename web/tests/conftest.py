@@ -270,15 +270,15 @@ class FakeTTS:
 
         return self.monster_engine if is_monster_key(key) else self.engine
 
-    def cast(self, key: str, gender: str = ""):
+    def cast(self, key: str, gender: str = "", age=""):
         from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
 
-        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key))
+        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key), age)
 
-    def cache_key_for(self, key: str, text: str, gender: str = ""):
+    def cache_key_for(self, key: str, text: str, gender: str = "", age=""):
         from tts.cache import cache_key  # noqa: PLC0415
 
-        cast = self.cast(key, gender)
+        cast = self.cast(key, gender, age)
         return cast, cache_key(self.engine, cast.cache_key(), text)
 
     def cached(self, ckey: str):
@@ -301,16 +301,16 @@ class FakeTTS:
         with gate:
             yield
 
-    def render(self, key: str, text: str, gender: str = ""):
-        return self.synthesize(key, text, gender)
+    def render(self, key: str, text: str, gender: str = "", age=""):
+        return self.synthesize(key, text, gender, age)
 
-    def synthesize(self, key: str, text: str, gender: str = ""):
+    def synthesize(self, key: str, text: str, gender: str = "", age=""):
         from tts.client import TTSError, TTSResult  # noqa: PLC0415
 
         self.calls.append((key, text))
         if self.fail:
             raise TTSError(self.fail)
-        cast, ckey = self.cache_key_for(key, text, gender)
+        cast, ckey = self.cache_key_for(key, text, gender, age)
         if ckey in self.clips:
             return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
         audio = b"\xff\xfb" + text.encode("utf-8")

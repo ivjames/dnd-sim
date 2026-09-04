@@ -217,7 +217,7 @@ class GameConfig:
     seed: int
     setting: str                     # free text world/tone
     tone: str = "classic heroic"
-    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "gender" (voice casting) — neither reaches the engine
+    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "gender"/"age" (voice casting) — none of them reaches the engine
     scenario: dict                   # {"opening": str, "encounters": [{"trigger":"scene_1", "monsters":[{"name":"Goblin","count":4}], "grid": {"width":12,"height":10,"party_start":[[1,4],[1,5],[2,4],[2,5]], "enemy_start":[[10,3],...], "difficult":[[5,5]], "walls":[]}}], "max_scenes": 3}
     dm_model: str; player_model: str; summary_model: str
     max_rounds_per_combat: int = 20
@@ -907,7 +907,11 @@ with the browser's voices kept as a real fallback rather than deleted.
    def hash_key(s: str) -> int                            # FNV-1a/32 over UTF-16 code units — the same
                                                           # number as speech.js `hashString`
    def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
-   def cast_for(key, pool, dm_voice="", gender="", engine="standard") -> Cast   # ValueError on an empty pool
+   def normalize_age(age) -> str                          # "child" | "adult" | "" ; a number is years
+   def is_child_voice(voice) -> bool                      # a `Voice` or a bare id, against CHILD_VOICE_IDS
+   CHILD_VOICE_IDS: frozenset[str]                        # {"ivy","justin","kevin"} — DescribeVoices has no age
+   CHILD_MAX_AGE: int                                     # 12; above it a stated age is an adult
+   def cast_for(key, pool, dm_voice="", gender="", engine="standard", age="") -> Cast   # ValueError on an empty pool
    def ssml_for(text: str, cast: Cast, engine: str = "") -> str   # only what the cast's engine accepts
    def source_fingerprint() -> str                        # digest of this module: the casting decides the audio too
    ENGINE_SSML: dict[str, frozenset[str]]                 # engine → {"pitch","rate","vtl"} subset
@@ -933,12 +937,12 @@ with the browser's voices kept as a real fallback rather than deleted.
        def voices(self, engine="") -> tuple[Voice, ...]   # DescribeVoices once per engine, else STANDARD_ENGLISH
        def cached(self, ckey: str) -> bytes | None        # a clip already paid for
        def exclusive(self, ckey: str)                     # contextmanager: the one-synthesis-per-line gate
-       def render(self, key, text, gender="") -> TTSResult   # synthesize; caller holds `exclusive`
+       def render(self, key, text, gender="", age="") -> TTSResult   # synthesize; caller holds `exclusive`
        def ssml(self, text: str, cast: Cast) -> str       # `ssml_for` at this instance's engine
        def config_id(self) -> str                         # 12 hex over engine|language|dm_voice|roster|voices.py source
-       def cast(self, key: str, gender: str = "") -> Cast
-       def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
-       def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
+       def cast(self, key: str, gender: str = "", age="") -> Cast
+       def cache_key_for(self, key: str, text: str, gender: str = "", age="") -> tuple[Cast, str]
+       def synthesize(self, key: str, text: str, gender: str = "", age="") -> TTSResult   # raises TTSError
    def from_env(cache_dir: str) -> PollyTTS | None
    ```
 
@@ -1350,3 +1354,68 @@ reads the environment mid-request.
    door this closes. Both remain open, and neither is a prerequisite for
    the other.
 
+### 2026-09-04 — tts/ + web/ — a character's age decides whether it is cast as a child
+
+Reported from a live game: the cleric **Father Bexley Crane** was read out in a
+child's voice. Nothing was broken — Polly's roster has children's voices in it
+(`Ivy`, `Justin`, `Kevin`), the pool every seat was dealt from held them, and
+the hash put one adventurer in eight on one. The casting had no idea they were
+children, because there is nothing to ask.
+
+1. **A party member may state an `age`, and only an age that reads as a child
+   changes the casting.** New optional key in the party spec —
+   `{"id","name",…,"age": "child" | "adult" | 9 | "40"}` — read by the web
+   layer out of the game's own config, never from the request, for the reason
+   `gender` is (the narration amendment's §5: this endpoint spends money, and a
+   trait in the query string walks the roster a paid clip at a time). `normalize_age` is the only
+   place that decides what an answer means: the words in `AGES`, or a number of
+   years against `CHILD_MAX_AGE` (12). Anything unreadable — `"old enough"`,
+   `0`, `-3`, `True` — is nothing said.
+
+   **Not an engine field**, exactly as `gender` is not: `CharacterSheet` (§1.3)
+   is unchanged, `build_character` ignores the key, and neither the DM nor the
+   players see it. Age has no rules meaning in 5e here.
+
+2. **An unstated age is an adult, and that is a behaviour change.** Every seat
+   — including `dm`, `npc` and `monster:<id>`, which have no character record —
+   is now dealt from the voices that are not children's. This is the fix: a
+   party of four at a table whose roster holds two or three children's voices
+   was casting a child by accident, reliably, and "deterministically wrong" is
+   still wrong. A character that asks for a child's voice gets one; nobody else
+   can be dealt one.
+
+   The DM's *named* voice is honoured whatever age it is (asking for `Ivy` is
+   asking for `Ivy`); the unnamed fallback — whatever sorts first — now skips
+   the children, which on the en-US roster alone was `Ivy`.
+
+3. **`CHILD_VOICE_IDS` is transcribed, not discovered.** `DescribeVoices`
+   reports `Gender` and nothing else about the speaker, so unlike the gender
+   constraint there is no live field to narrow on. The three ids are the whole
+   set Amazon's voice list annotates in any language, and
+   `tests/tts/test_polly_contract.py` holds the table against that page's
+   wording; a language with no children's voices (every one but en-US) casts a
+   stated child from the adult voices — a worse match, not a silence, as an
+   unanswerable gender already was.
+
+4. **Every seat re-casts once, and the clips are already retired.**
+   Narrowing the pool changes which voice a given hash lands on, so a table
+   that has been running sounds different after a deploy. `config_id()` covers
+   it: it hashes `voices.py`'s own source (§ narration, `source_fingerprint`),
+   so the URL a browser holds a year-long-immutable copy under changes with
+   this commit and the old audio is never replayed against the new casting.
+
+5. **The panel asks.** `web/static/index.html` gains `#ng-party`, one row per
+   seat of the chosen preset with an adult/child select
+   (`renderPartyAges` / `applyPartyAges` in `app.js`). Choosing *adult*
+   **deletes** the key rather than writing it: an unstated age already casts as
+   an adult, and stating one back into a scenario's config would be writing a
+   fact about a character nobody chose to state. Age is the only voice trait
+   editable there — the shipped-party rule for `gender` (README, *Spoken
+   narration*) is that a character states one only where its own persona
+   already does, and a dropdown inviting an operator to pick one for someone
+   else's character is the opposite of that.
+
+6. **The browser fallback cannot do any of this.** `SpeechSynthesisVoice`
+   reports no age, exactly as it reports no gender, and inferring one from
+   voice names across every OS and locale would be a guess dressed as data. A
+   session on the fallback engine casts as it always did.
