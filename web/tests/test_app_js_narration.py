@@ -42,6 +42,28 @@ def test_the_transcript_still_prints_the_speaker_name():
     assert "phraseFor" not in branch and "segmentsFor" not in branch
 
 
+def narration_branch(js: str) -> str:
+    """The transcript's own rendering of a `narration` event."""
+    m = re.search(r"ev\.kind === 'narration'\) \{(.+?)\n    \} else if", js, re.S)
+    assert m, "the transcript no longer has a narration branch"
+    return m.group(1)
+
+
+def test_a_narration_closes_the_turn_mechanics_group():
+    """So a held-back knockout lands below the paragraph, not back above it.
+
+    The orchestrator holds a turn's `down`/`dead` until its narration has been
+    said (`Game._emit_turn`), so the reveal arrives *after* this paragraph.
+    The turn's mechanics group is a node already appended above it, and the
+    mechanics branch files any line into `S.groupBody` while one is open — so
+    an open group would put the reveal back inside it, above the prose that is
+    supposed to land first, and send the playhead scrolling up to it.
+    """
+    branch = narration_branch(read())
+    assert "S.group = null" in branch
+    assert "S.groupBody = null" in branch
+
+
 def test_the_reader_takes_a_voice_per_chunk():
     js = read()
     assert "Speech.segmentsFor(" in js, "the reader no longer asks for the voiced parts"

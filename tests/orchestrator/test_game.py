@@ -80,6 +80,89 @@ def test_narration_follows_the_mechanics(cfg):
     assert any(e.kind == "narration" for e in hist[first_attack:])
 
 
+def turn_segments(hist):
+    """History split at each `turn_start`: one list of events per turn.
+
+    A turn's narration comes after its `turn_end` — the DM is asked once the
+    combatant has finished — so `turn_end` is no boundary here. The next
+    `turn_start` is.
+    """
+    out, cur = [], None
+    for e in hist:
+        if e.kind == "turn_start":
+            cur = []
+            out.append(cur)
+        elif cur is not None:
+            cur.append(e)
+    return out
+
+
+def test_a_knockout_is_announced_after_its_turn_narration(cfg):
+    """The prose lands the blow; the engine line confirms it, not the reverse.
+
+    In engine order `down`/`dead` are reported the instant the HP reaches 0 —
+    a paragraph before the DM describes the same swing. Spoken aloud that is
+    the spoiler read over the top of its own reveal, so the orchestrator holds
+    the reveal back until the narration has been said.
+    """
+    game, bus = make_game(cfg)
+    game.run()
+    checked = 0
+    for seg in turn_segments(bus.history()):
+        kinds = [e.kind for e in seg]
+        if "narration" not in kinds:
+            continue
+        last_narration = len(kinds) - 1 - kinds[::-1].index("narration")
+        for j, e in enumerate(seg):
+            if e.kind not in ("down", "dead"):
+                continue
+            assert j > last_narration, (
+                f"{e.text!r} was announced before its turn's narration"
+            )
+            checked += 1
+    assert checked, "no turn both knocked someone down and was narrated"
+
+
+def test_the_numbers_that_produced_a_knockout_stay_where_they_happened(cfg):
+    """Only the announcement waits; the evidence for it does not.
+
+    The DM's paragraph is read against the mechanics above it — "MUST NOT
+    contradict numbers" — so carrying the roll and the HP line along with the
+    beat would take that check away with them.
+    """
+    game, bus = make_game(cfg)
+    game.run()
+    checked = 0
+    for seg in turn_segments(bus.history()):
+        kinds = [e.kind for e in seg]
+        if "narration" not in kinds or not any(k in ("down", "dead") for k in kinds):
+            continue
+        narration = kinds.index("narration")
+        assert "damage" in kinds[:narration], (
+            "the damage that caused a knockout moved with the announcement"
+        )
+        checked += 1
+    assert checked, "no turn both knocked someone down and was narrated"
+
+
+def test_a_held_reveal_still_reaches_the_transcript_when_the_game_stops(cfg):
+    """`_narrate` gates and checks the budget, so a stop can land between the
+    blow and the line that says it landed. The held reveal is released on the
+    way out: a transcript that shows someone hit to 0 HP and never says they
+    fell is worse than one where the beat arrives after the closing notice.
+    """
+    game, bus = make_game(cfg)
+    held = game._event("dead", "Bandit 3 dies (reduced to 0 HP).", actor="mon_1")
+    game._pending_reveals.append(held)
+    game.stop()
+    game.run()
+    assert game.status == "stopped"
+    assert not game._pending_reveals
+    assert any(
+        e.kind == "dead" and "Bandit 3" in (e.text or "") for e in bus.history()
+    ), "a knockout held for a narration was lost when the game stopped"
+
+
 # --- dialogue --------------------------------------------------------------
 
 

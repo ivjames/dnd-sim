@@ -39,6 +39,10 @@ DEFAULT_BEATS_PER_SCENE = 2
 RECENT_EVENTS = 12
 MAX_HOLD_SECONDS = 30.0  # ceiling on one narration hold; see Game.hold
 MAX_HOLD_CLIENTS = 64  # distinct spectators that may hold at once; see Game.hold
+#: Knockouts and deaths. Held back until the turn's narration has been said —
+#: see `_emit_turn`. The engine reports them the instant the HP hits 0, which
+#: is a paragraph before the DM's prose that lands the same blow.
+REVEAL_KINDS = ("down", "dead")
 
 
 class _Stopped(Exception):
@@ -109,6 +113,7 @@ class Game:
         self._holds: dict[str, float] = {}  # client id -> monotonic deadline of its hold
         self._hold_wake = threading.Event()  # poked so a hold ends the instant it is lifted
         self._notes: list[str] = []
+        self._pending_reveals: list[Any] = []  # down/dead held for the narration
         self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
         self._thread: threading.Thread | None = None
         self.dm: DMAgent | None = None
@@ -285,8 +290,13 @@ class Game:
             except Exception:  # noqa: BLE001 - a bad sink must not kill the game
                 pass
 
-    def _emit(self, ev: Any) -> None:
-        """Renumber, publish, pace, and feed the summarizer."""
+    def _emit(self, ev: Any, *, gated: bool = True) -> None:
+        """Renumber, publish, pace, and feed the summarizer.
+
+        `gated=False` skips the tempo sleep and the pause/hold/stop gate, so
+        the event cannot be held up or swallowed by a stop already in flight.
+        Only the way out uses it — see `_flush_reveals`.
+        """
         with self._lock:
             self._seq += 1
             seq = self._seq
@@ -297,6 +307,8 @@ class Game:
         self._publish(ev)
         self._unsummarized.append(ev)
         self._events_since_summary += 1
+        if not gated:
+            return
         if self.cfg.tempo_ms:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
@@ -351,6 +363,47 @@ class Game:
     def _emit_all(self, events: list) -> None:
         for ev in events or []:
             self._emit(ev)
+
+    def _emit_turn(self, events: list) -> None:
+        """Emit a turn's events, holding its knockouts and deaths back.
+
+        `down` and `dead` are the beat the DM is about to narrate, and the
+        engine reports them the instant the HP reaches 0 — so the spectator
+        hears "Bandit 3 dies" and only then the paragraph in which the axe is
+        still in the air. The reveal is collected here and released by
+        `_flush_reveals` once the narration has been said.
+
+        Nothing else moves: the attack, the damage and the numbers that
+        produced the kill stay where they happened, because those are what the
+        prose is checked against. Only the announcement waits.
+        """
+        for ev in events or []:
+            if getattr(ev, "kind", "") in REVEAL_KINDS:
+                self._pending_reveals.append(ev)
+            else:
+                self._emit(ev)
+
+    def _flush_reveals(self, *, gated: bool = True) -> None:
+        """Release the knockouts and deaths `_emit_turn` held back.
+
+        Popped one at a time rather than drained into a local list: `_emit`
+        gates, so a stop landing mid-flush raises out of here, and whatever has
+        not been said yet has to still be in `_pending_reveals` for the way out
+        to say it. `gated=False` is that way out — `_narrate` gates and checks
+        the budget, so a stop or an exhausted budget can land between the blow
+        and the line that says it landed, and a transcript that shows someone
+        hit to 0 HP and never says they fell is worse than one where the beat
+        arrives after the closing notice.
+        """
+        while self._pending_reveals:
+            ev = self._pending_reveals.pop(0)
+            if gated:
+                self._emit(ev)
+                continue
+            try:
+                self._emit(ev, gated=False)
+            except Exception:  # noqa: BLE001 - the way out must not raise
+                pass
 
     # ------------------------------------------------------------------
     # setup
@@ -527,6 +580,7 @@ class Game:
             tb = traceback.format_exc()[-1500:]
             self._safe_emit("error", self.error, data={"traceback": tb})
         finally:
+            self._flush_reveals(gated=False)
             # From the locked snapshot, not from `by_role` directly: narration
             # is charged from request threads, and `Ledger._row` can insert a
             # key mid-iteration — which raises "dictionary changed size during
@@ -681,6 +735,10 @@ class Game:
             turn_events = self._run_turn(actor_id)
             if turn_events:
                 self._narrate(turn_events)
+            # Unconditional: `_narrate` returns early for a turn with nothing
+            # to describe and the DM can answer with nothing, and a knockout
+            # held for a narration that never comes still has to be said.
+            self._flush_reveals()
             self.state, events = eng.advance_turn(self.state)
             self._emit_all(events)
             self._maybe_summarize()
@@ -771,7 +829,7 @@ class Game:
                 except Exception as exc2:  # noqa: BLE001
                     self._emit_new("error", f"end_turn failed: {exc2}", actor=actor_id)
                     break
-            self._emit_all(events)
+            self._emit_turn(events)
             collected.extend(events)
             if self._is_end_turn(templates, action):
                 break
