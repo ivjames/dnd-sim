@@ -372,12 +372,18 @@ panel; the other column takes the rest. What the wide column does with it is
 COLUMNATE rather than stretch: a party or enemy card says its piece in about
 250px and an initiative row in rather less, so both lay out in as many columns
 as the panel has room for — one beside the map, three or six in the wide one —
-instead of one row per line with the surplus spent on gutter. How tall a quadrant is, is arithmetic rather than taste:
-the page owes about 500px to everything that is not the board — the top bar,
-the gaps, the row of narration and controls, and the transcript's own floor —
-and each of the two rows takes half of what is left, clamped so that a
-quadrant is never under 200px or over 340px. The map then fits the height it
-has as well as the width.
+instead of one row per line with the surplus spent on gutter.
+
+How tall a quadrant is, is arithmetic rather than taste: the page owes about
+500px to everything that is not the board — the top bar, the gaps, the row of
+narration and controls, and the transcript's own floor — and each of the two
+rows takes half of what is left, clamped so that a quadrant is never under
+200px or over 340px. That is an ask rather than a claim. The board is the one
+band on the page that may **shrink**, so anything the feed actually needs
+beyond the estimate — most of all the controls panel, which is 250px taller
+once a write token is in — comes out of the board rather than out of the
+bottom of the viewport. The map then fits the height it has as well as the
+width.
 
 Under them the feed: the transcript takes whatever the viewport has left and
 scrolls internally, so a running game never lengthens the page; then, in

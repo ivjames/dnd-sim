@@ -270,7 +270,18 @@ body {
 .board {
   display: grid; gap: 12px;
   grid-template-columns: minmax(260px, var(--quad-h)) minmax(0, 1fr);
-  flex: 0 0 auto;
+  /* Two rows that split whatever the board ends up being, and a flex basis
+     that asks for two quadrants' worth of it. Asks, rather than takes: the
+     board is the one band on the page that may SHRINK, so whatever the feed
+     actually needs — a transcript at its floor, and a controls panel that is
+     250px taller once a write token is in — comes out of the board rather than
+     out of the bottom of the viewport. `--quad-h` is therefore the height a
+     quadrant gets when the page can afford it, not a height the page is
+     committed to; below `min-height` the board stops giving and the page
+     scrolls. */
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  flex: 0 1 calc(var(--quad-h) * 2 + 12px);
+  min-height: 340px;
 }
 /* The fixed height is on the panel rather than on the grid row: the two
    survive the single-column reflow below, where there are four rows and not
@@ -278,7 +289,7 @@ body {
    allowed to make it taller. */
 .quad {
   display: flex; flex-direction: column;
-  height: var(--quad-h);
+  height: 100%; min-height: 0;
   overflow: hidden;
 }
 .panel-body {
@@ -287,7 +298,13 @@ body {
   padding-right: 4px;
 }
 
-.feed { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+/* Grows into a tall viewport and never shrinks: what the feed asks for is the
+   transcript's floor plus whatever the narration and controls row actually
+   comes to, and that is the ask the board gives way to. It can only ask for
+   that because the transcript panel has a definite flex basis below — with an
+   `auto` basis the feed would ask for the whole transcript, thousands of
+   pixels of it, and take the board with it. */
+.feed { flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 /* Narration and controls share the line under the transcript; with no
    narration on this game the controls take the whole of it. */
 .under { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; flex: 0 0 auto; }
@@ -427,7 +444,9 @@ body {
   min-height: 0;
   padding-right: 6px;
 }
-.feed .panel-fill { min-height: 220px; }
+/* The basis is the floor, not the content: this is what the feed asks the
+   board for, and it grows from there into whatever the viewport has spare. */
+.feed .panel-fill { flex: 1 1 220px; min-height: 220px; }
 .transcript-tools {
   display: flex; gap: 14px; align-items: center;
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -725,17 +744,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
      scrolls the last of the controls rather than squeezing the map away. */
   :root { --quad-h: clamp(168px, 23vh, 340px); }
   .board { grid-template-columns: minmax(230px, 22vw) minmax(0, 1fr); }
-  .feed .panel-fill { min-height: 200px; }
+  .feed .panel-fill { flex: 1 1 200px; min-height: 200px; }
 }
 @media (max-width: 640px) {
   /* Four stacked quadrants are taller than a phone, so the page scrolls here
      and neither band may shrink: with `flex: 1 1 auto` still on the feed it
      shrank to nothing under a board that no longer fitted, and the board drew
      straight over the transcript. */
-  .board { grid-template-columns: minmax(0, 1fr); order: 2; flex: 0 0 auto; }
+  .board {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: none;
+    order: 2; flex: 0 0 auto; min-height: 0;
+  }
+  .quad { height: var(--quad-h); }
   .feed { order: 1; flex: 0 0 auto; min-height: auto; }
   :root { --quad-h: 240px; }
-  .feed .panel-fill { max-height: none; height: 58vh; min-height: 280px; }
+  .feed .panel-fill { flex: 0 0 auto; height: 58vh; min-height: 280px; }
   .row, .row-4 { grid-template-columns: 1fr; }
   /* three columns leave a phone about 90px for the name; stack instead */
   .party-seat { grid-template-columns: 1fr 1fr; }
