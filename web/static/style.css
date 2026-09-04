@@ -65,6 +65,20 @@
   --difficult:  #8c6f2e;
 
   --radius: 9px;
+  /* How tall the board is — and, because the map's column is that wide, the
+     side of the square the map is drawn in. A length rather than a colour, so
+     it is declared once here and re-declared only by the size queries at the
+     foot of the file.
+
+     The middle term is arithmetic, not taste: 470px is what the page owes
+     everything that is not the board — the top bar, the padding and the gaps,
+     the row of narration and controls, and the transcript's own 220px floor —
+     and the board takes what is left. So it grows with the viewport exactly as
+     fast as it can without pushing the transcript under its floor and the page
+     into a scroll. Clamped at both ends because a board under ~300px is a map
+     the size of a stamp, and over ~640px the map has stopped needing the
+     height and the transcript has better uses for it. */
+  --board-h: clamp(300px, calc(100vh - 470px), 640px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -226,30 +240,65 @@ body {
 .cost-bar.over i { background: var(--danger-fill); }
 
 /* ---------- layout ----------
-   Rail down the side; map, narration and controls in a deck ABOVE the
-   transcript, so the things you glance at are not below the fold of a
-   text-heavy column. Flex and not grid on purpose: a rail spanning two grid
-   rows hands its extra height to the row above the transcript, which opened a
-   band of empty page between the deck and the first line of the story. */
+   Two bands down the page. The BOARD is the map and, beside it, the whole
+   table in initiative order — party and enemies in one list, because the order
+   is what a fight is read in and three panels of the same people sorted three
+   ways spent the width on saying so. It is FIXED in height: a fight with
+   nine combatants used to lengthen those panels until the story started below
+   the fold, and the roster scrolls inside itself instead.
+
+   Under it the FEED: the transcript, which takes what the viewport has left
+   over and scrolls internally so a live game never lengthens the page, and
+   beneath that the narrator's transport with the table controls beside it. */
 .layout {
   flex: 1 1 auto;
-  display: flex; align-items: stretch; gap: 12px;
+  display: flex; flex-direction: column; gap: 12px;
   padding: 12px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
   min-height: 0;
 }
-.rail {
-  flex: 0 0 clamp(252px, 25%, 312px); align-self: flex-start;
-  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+
+/* The map's column is as wide as the board is tall, so the map is drawn in a
+   square and fills it rather than sitting as a letterboxed strip; the roster
+   takes what is left. On a wide screen the map stops at 60% of the board so
+   the two panels stay a pair rather than a picture with a margin.
+
+   The board is also the one band on the page that may SHRINK: whatever the
+   feed actually needs — a transcript at its floor, and a controls panel that
+   is 150px taller once a write token is in — comes out of the board rather
+   than out of the bottom of the viewport, down to the floor below. */
+.board {
+  /* Painted above the feed, though the feed is written first: see the source
+     order note in index.html. */
+  order: 1;
+  display: grid; gap: 12px;
+  grid-template-columns: minmax(260px, min(var(--board-h), 60%)) minmax(0, 1fr);
+  flex: 0 1 var(--board-h);
+  min-height: 260px;
 }
-.stack { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-/* Two panels, and they do not want the same width: the map is square-ish and
-   has a natural size, the controls are a form and take what is left. */
-.deck {
-  display: grid; gap: 12px; align-items: start; min-width: 0;
-  grid-template-columns: minmax(200px, 380px) minmax(220px, 1fr);
+.quad {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  overflow: hidden;
 }
-.feed { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+.panel-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
+
+/* Grows into a tall viewport and never shrinks: what the feed asks for is the
+   transcript's floor plus whatever the narration and controls row actually
+   comes to, and that is the ask the board gives way to. It can only ask for
+   that because the transcript panel has a definite flex basis below — with an
+   `auto` basis the feed would ask for the whole transcript, thousands of
+   pixels of it, and take the board with it. */
+.feed { order: 2; flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+/* Narration and controls share the line under the transcript; with no
+   narration on this game the controls take the whole of it. */
+.under { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; flex: 0 0 auto; }
+.under > #voice-panel { flex: 3 1 380px; }
+.under > .panel-controls { flex: 1 1 300px; }
 
 .panel {
   background: var(--bg-panel);
@@ -267,36 +316,60 @@ body {
 .hint { color: var(--ink-dim); font-size: 12px; margin: 4px 0 10px; }
 .err { color: var(--danger); font-size: 13px; }
 
-/* ---------- initiative ----------
-   One tight monospace line each, so a ten-combatant order is a glance and not
-   a scroll. It caps rather than grows: past that it scrolls inside itself and
-   leaves the party below it on screen. */
-.initiative { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow-y: auto; }
-.initiative li {
-  display: flex; align-items: center; gap: 8px;
-  padding: 1px 6px; border-radius: 4px;
-  font-family: var(--mono); font-size: 12px; line-height: 1.65;
-  color: var(--ink-dim);
-  border-left: 3px solid transparent;
-}
-.initiative li.active { background: var(--bg-active); color: var(--ink); border-left-color: var(--accent); }
-.initiative li.down { text-decoration: line-through; color: var(--ink-faint); }
-.initiative .score { margin-left: auto; color: var(--ink-faint); }
-.initiative .side-party { color: var(--party); }
-.initiative .side-enemy { color: var(--enemy); }
-.initiative .side-neutral { color: var(--neutral); }
+/* ---------- the table ----------
+   One list, in initiative order: a player character's card is two lines (name
+   and sheet over bar and hit points), everything else is one, because five
+   bandits stacked four lines deep pushed everything under them off the screen.
 
-/* ---------- party cards ----------
-   Name and AC on one line, bar and hit points on the next; enemies get all of
-   it on a single line. Four party members and five bandits fit the rail
-   without pushing the map off the screen. */
-.party { display: flex; flex-direction: column; gap: 6px; }
+   It COLUMNATES rather than stretches. A card says its piece in about 300px,
+   and a panel three times that wide was answering with one card per row and a
+   line of empty gutter between the name and the hit points. Multicolumn rather
+   than a grid, so it fills each column before starting the next and the
+   initiative order still reads top to bottom; three is the ceiling, because
+   six columns of two is a puzzle. */
+.roster { columns: 300px 3; column-gap: 14px; }
+.roster > .card { break-inside: avoid; margin-bottom: 6px; }
+.roster > .empty { margin: 4px 0; }
 .card {
   border: 1px solid var(--line-soft); border-radius: 6px;
   padding: 5px 8px 6px; background: var(--bg-sunken);
 }
-.card.is-active { border-color: var(--accent-line); box-shadow: inset 3px 0 0 var(--accent); }
+/* Which side, said by the edge of the card: the roster is one list now, so
+   this is the only thing that separates the party from what it is fighting. */
+.card.side-party   { border-left: 3px solid var(--party); }
+.card.side-enemy   { border-left: 3px solid var(--enemy); }
+.card.side-neutral { border-left: 3px solid var(--neutral); }
+/* Active takes the other three edges, never the left one: the stripe is the
+   only thing saying which side a combatant is on now that the roster is one
+   list, and `border-color` would have taken it from exactly the card you are
+   looking at. The accent sits just inside it as the inset shadow. */
+.card.is-active {
+  border-top-color: var(--accent-line);
+  border-right-color: var(--accent-line);
+  border-bottom-color: var(--accent-line);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .card.is-down .card-name { color: var(--ink-dim); }
+/* Which side, in three letters, beside the stripe that says it in colour —
+   because colour on its own says nothing to a screen reader and little to a
+   reader who cannot separate those two browns. The full word is on the card
+   too, hidden, for the reader who is being read to. */
+.card-side {
+  flex: 0 0 auto; width: 3.4ch;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  color: var(--ink-faint);
+}
+.card.side-party .card-side   { color: var(--party); }
+.card.side-enemy .card-side   { color: var(--enemy); }
+.card.side-neutral .card-side { color: var(--neutral); }
+
+/* The initiative roll, as the card's first column. A fixed width so the names
+   line up down the list rather than stepping in and out by a digit. */
+.card-init {
+  flex: 0 0 auto; width: 2.4ch; text-align: right;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+}
+.card.is-active .card-init { color: var(--accent); }
 /* Wrapping between the name and the stat line, never inside the name: a
    three-word name broken over three lines is what a card is trying not to be.
    `space-between` rather than an auto margin so that the stat line sits right
@@ -307,7 +380,7 @@ body {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: 8px; flex-wrap: wrap;
 }
-.card-name { font-weight: 600; font-size: 13.5px; }
+.card-name { flex: 1 1 auto; font-weight: 600; font-size: 13.5px; }
 .card-sub { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); white-space: nowrap; }
 .card-vitals { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
 .hpbar {
@@ -344,9 +417,12 @@ body {
    Shorter than it was: it is a scroll region, not the page. Its toggles sit
    under the text — they are read once and then never again, and above the
    text they were the first thing between the reader and the story. */
-/* It takes the height the viewport has left over once the deck is placed, so
+/* It takes the height the viewport has left over once the board is placed, so
    the page itself does not scroll and the story is never a strip at the bottom
-   of a tall column.
+   of a tall column. What bounds it from above is the narration bar and the
+   controls under it: the transcript takes what the feed has left after those,
+   never their space, and the floor below is what the page scrolls for on a
+   viewport too short to hold all three.
 
    The floor for that sits on the PANEL, not on the scroll region inside it. On
    the region it was a length the region would not go below while every
@@ -361,7 +437,9 @@ body {
   min-height: 0;
   padding-right: 6px;
 }
-.feed .panel-fill { min-height: 390px; }   /* the title, 300px of story, the toggles */
+/* The basis is the floor, not the content: this is what the feed asks the
+   board for, and it grows from there into whatever the viewport has spare. */
+.feed .panel-fill { flex: 1 1 220px; min-height: 220px; }
 .transcript-tools {
   display: flex; gap: 14px; align-items: center;
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -419,18 +497,42 @@ body {
 }
 
 /* ---------- map ---------- */
-.canvas-wrap { width: 100%; overflow-x: auto; }
-/* Capped: given a whole phone's width the squares grow to an inch each and
-   the map stops being a map. */
+/* Centred where centring is safe, and pinned to the corner where it is not.
+   Below the cell floor the map is bigger than this box, and a plain `center`
+   puts half of that overflow before the scroll origin where no scroll can
+   reach it — on a short laptop a 12-row map lost the top half of its first
+   row. `safe center` is exactly the rule for that, falling back to start
+   alignment only when the item overflows.
+
+   But the fallback has to be START, not `center`: `safe` arrived in Safari
+   16.4 and this page targets iPad Safari 14 (see the header of app.js), where
+   the whole declaration is dropped. A map in the corner of a box too small for
+   it is odd-looking; a map with its first row unreachable is broken, and the
+   corner is the one of those two an old browser should get. */
+.canvas-wrap {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; align-items: flex-start; justify-content: flex-start;
+  overflow: auto;
+}
+@supports (align-items: safe center) {
+  .canvas-wrap { align-items: safe center; justify-content: safe center; }
+}
+/* Both dimensions are set by drawGrid(), which is the only thing that knows
+   how many squares there are: it fits the map to the width AND the height the
+   quadrant has, and caps the square at 48px so that a small grid on a wide
+   panel does not grow to an inch a square and stop being a map. */
 #grid {
-  width: 100%; max-width: 480px; height: auto; display: block; margin: 0 auto;
+  display: block; margin: 0 auto;
   background: var(--bg-sunken); border-radius: 6px; touch-action: manipulation;
 }
+/* Tight, because every line it wraps to is a line the map does not get: the
+   canvas takes the height the quadrant has left after the title and this. */
 .legend {
-  display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px;
-  font-size: 11px; color: var(--ink-dim); font-family: var(--mono);
+  flex: 0 0 auto;
+  display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 6px;
+  font-size: 10.5px; color: var(--ink-dim); font-family: var(--mono);
 }
-.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
 .sw.party { background: var(--party); } .sw.enemy { background: var(--enemy); }
 .sw.neutral { background: var(--neutral); } .sw.diff { background: var(--difficult); }
 .sw.wall { background: var(--wall); }
@@ -628,34 +730,40 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .party-cast:empty { display: none; }
 
 /* ---------- responsive ----------
-   Down to a tablet the deck stays above the transcript, which is the point of
-   it. On a phone one column makes that six panels of scroll before the first
-   line of the story, so there and only there the transcript comes first. */
-/* One column below this: the flex basis of every band is its own content
-   (in a column flex container `flex` sizes height, so a grow factor here
-   would squash the transcript to the leftover viewport and spill it under
-   the panels beneath). The transcript keeps a floor instead. */
-@media (max-width: 1080px) {
-  .layout { flex-direction: column; align-items: stretch; }
-  .rail {
-    flex: 0 0 auto; align-self: stretch;
-    display: grid; gap: 12px; align-items: start;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  }
-  .stack { flex: 0 0 auto; align-self: stretch; width: 100%; }
-  .feed { flex: 0 0 auto; }
-  .transcript { flex: 0 0 auto; height: 56vh; min-height: 300px; }
+   The two-by-two board holds down to a tablet. Below that it becomes one
+   column, and on a phone the transcript comes first: four fixed panels plus a
+   narration bar before the first line of the story is not a story. */
+@media (max-width: 900px) {
+  .board { grid-template-columns: minmax(230px, min(var(--board-h), 55%)) minmax(0, 1fr); }
+  .roster { columns: 260px 2; }
 }
-/* On a phone the transcript comes before the map, the controls and the
-   narration bar rather than after all three. The rail stays above it: those are
-   the lists you read the transcript against, and they are three tight panels
-   rather than a strip of instruments. */
-@media (max-width: 760px) {
-  .deck { order: 2; grid-template-columns: minmax(0, 1fr); }
-  .feed { order: 1; }
-  .rail { grid-template-columns: minmax(0, 1fr); }
-  .initiative { max-height: none; }
-  .transcript { height: 60vh; }
+/* A laptop is short, not narrow: 768px of viewport is the common case, and at
+   the desktop sizes the board and the transcript floor together came to more
+   than it had, so the narration bar and the controls hung under the fold. */
+@media (max-height: 820px) {
+  /* Under this there is nothing left to give — the floors alone come to more
+     than the viewport — so the board takes a fixed slice of it and the page
+     scrolls the last of the controls rather than squeezing the map away. */
+  :root { --board-h: clamp(260px, 40vh, 420px); }
+  .board { grid-template-columns: minmax(230px, 22vw) minmax(0, 1fr); }
+  .feed .panel-fill { flex: 1 1 200px; min-height: 200px; }
+}
+@media (max-width: 640px) {
+  /* Map over roster, both full width, and the transcript above them: neither
+     band may shrink here, because the page scrolls. With `flex: 1 1 auto`
+     still on the feed it shrank to nothing under a board that no longer
+     fitted, and the board drew straight over the transcript. */
+  /* Source order, which is already story-first: the ordering above is what is
+     dropped here, not added to. */
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    order: 0; flex: 0 0 auto; min-height: 0;
+  }
+  .quad { height: var(--board-h); }
+  .roster { columns: auto 1; }
+  .feed { order: 0; flex: 0 0 auto; min-height: auto; }
+  :root { --board-h: 300px; }
+  .feed .panel-fill { flex: 0 0 auto; height: 58vh; min-height: 280px; }
   .row, .row-4 { grid-template-columns: 1fr; }
   /* three columns leave a phone about 90px for the name; stack instead */
   .party-seat { grid-template-columns: 1fr 1fr; }

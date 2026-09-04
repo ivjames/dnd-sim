@@ -360,17 +360,42 @@ prompt-cached, and summaries are written by the cheap model.
 
 ## The spectator page
 
-One rail and one column. Initiative, the party and the enemies sit down the
-left in tight rows — one line per enemy, two per party member — so a full
-combat is a glance rather than a scroll. The battle map and the controls sit in
-a strip **above** the transcript; the transcript takes whatever height the
-viewport has left; and under it, in reading order, come its own `mechanics` and
-`follow` toggles and then the narrator's transport — the things you reach for
-because of a line you have just read, rather than something between you and the
-line. Below a phone's width the whole thing becomes one column and the
-transcript moves back above the strip, because six panels of preamble is not a
-way to read a story. The narration bar stays under the transcript at every
-width.
+A board and a feed. The board is the battle map and, beside it, **the table**:
+every combatant in one list in initiative order, party and enemies together,
+because the order is what a fight is read in and three panels of the same
+people sorted three ways spent the width on saying so. A player character's
+card is two lines — name and sheet over bar and hit points — and everything
+else is one; which side someone is on is the stripe down the edge of the card,
+and the initiative roll is its first column.
+
+The map's column is as wide as the board is tall, so the map is drawn in a
+square and fills it rather than sitting as a letterboxed strip, and it stops at
+60% of the board so the two panels stay a pair rather than a picture with a
+margin. The roster takes the rest and **columnates** rather than stretches: a
+card says its piece in about 300px, so a wide panel lays out two or three
+columns of them — multicolumn, filling each before starting the next, so the
+initiative order still reads top to bottom — instead of one card per row with
+the surplus spent on gutter.
+
+How tall the board is, is arithmetic rather than taste: the page owes about
+470px to everything that is not the board — the top bar, the gaps, the row of
+narration and controls, and the transcript's own 220px floor — and the board
+takes what is left, clamped so it is never under 300px or over 640px. That is
+an ask rather than a claim. The board is the one band on the page that may
+**shrink**, so anything the feed actually needs beyond the estimate — most of
+all the controls panel, which is 150px taller once a write token is in — comes
+out of the board rather than out of the bottom of the viewport. The map then
+fits the height it has as well as the width, and the roster scrolls inside
+itself.
+
+Under it the feed: the transcript takes whatever the viewport has left and
+scrolls internally, so a running game never lengthens the page; then, in
+reading order, its own `mechanics` and `follow` toggles, and last a row holding
+the narrator's transport with the table controls beside it — the things you
+reach for because of a line you have just read, rather than something between
+you and the line. Below a phone's width the whole thing becomes one column and
+the transcript moves back above the board, because two panels of preamble is
+not a way to read a story.
 
 **Dark or light, and the page will follow the system unless told otherwise.**
 The button in the top bar cycles `auto → light → dark`; the choice is kept in

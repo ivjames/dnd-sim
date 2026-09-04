@@ -429,8 +429,7 @@
 
   function renderAll(g) {
     setStatus(S.status, g && g.round);
-    renderInitiative();
-    renderParty();
+    renderTable();
     drawGrid();
     updateControls();
   }
@@ -471,44 +470,21 @@
     return n + ' tok';
   }
 
-  function renderInitiative() {
-    var list = $('initiative');
-    clear(list);
-    var st = gameState();
-    var init = st.initiative || [];
-    var cs = combatants();
-    var activeId = st.active_id || S.activeId;
-    if (typeof st.turn_index === 'number' && init.length) {
-      var cur = init[st.turn_index % init.length];
-      if (cur) activeId = Array.isArray(cur) ? cur[0] : (cur.id || activeId);
-    }
-    if (!init.length) {
-      list.appendChild(el('li', 'empty', 'No combat.'));
-      return;
-    }
-    init.forEach(function (row) {
-      var id = Array.isArray(row) ? row[0] : (row && row.id);
-      var score = Array.isArray(row) ? row[1] : (row && row.score);
-      var c = cs[id] || {};
-      var li = el('li');
-      if (id === activeId) li.className = 'active';
-      if (c.dead || (c.hp !== undefined && num(c.hp) <= 0)) li.className += ' down';
-      li.appendChild(el('span', 'side-' + (c.side || 'neutral'), c.name || id || '?'));
-      li.appendChild(el('span', 'score', score === undefined ? '' : String(score)));
-      list.appendChild(li);
-    });
-  }
-
   function hpClass(frac) { return frac > 0.5 ? '' : (frac > 0.25 ? 'hurt' : 'bad'); }
 
   // Two shapes, one card. The party card is two lines (name + AC over bar +
   // hit points); an enemy is one, because five bandits stacked four lines deep
   // pushed everything under them off the screen. Same nodes either way, so the
   // stylesheet — not this function — decides how tight it sits.
-  function card(c, id, compact) {
-    var st = gameState();
+  //
+  // `score` is the initiative roll, printed as the card's first column when
+  // there is one: the roster is one list in initiative order, so which side a
+  // combatant is on is said by the stripe down its edge rather than by which
+  // panel it sits in.
+  function card(c, id, compact, score, active) {
     var node = el('div', 'card' + (compact ? ' card-tight' : ''));
-    if (id === (st.active_id || S.activeId)) node.className += ' is-active';
+    node.className += ' side-' + (c.side || 'neutral');
+    if (active) node.className += ' is-active';
     var hp = num(c.hp), max = Math.max(1, num(c.max_hp, 1));
     if (c.dead || hp <= 0) node.className += ' is-down';
 
@@ -521,10 +497,30 @@
     if (c.sheet && c.sheet.pronouns) sub.push(c.sheet.pronouns);
     var name = el('span', 'card-name', c.name || id);
     var subEl = el('span', 'card-sub', sub.join(' · '));
+    var init = score === undefined || score === null
+      ? null : el('span', 'card-init', String(score));
+
+    // Which side, in words as well as in the colour of the stripe. One list
+    // means the stripe is the only thing left saying it, and a stripe says
+    // nothing to a screen reader and little to a reader who cannot separate
+    // those two browns: the short form is what a sighted reader scans, the
+    // hidden one is what gets read out.
+    var sideWord = c.side === 'party' ? 'party' : (c.side === 'enemy' ? 'enemy' : 'neutral');
+    var sideShort = c.side === 'party' ? 'pc' : (c.side === 'enemy' ? 'foe' : 'npc');
+    var sideEl = el('span', 'card-side');
+    var sideMark = el('span', '', sideShort);
+    sideMark.setAttribute('aria-hidden', 'true');
+    sideEl.appendChild(sideMark);
+    sideEl.appendChild(el('span', 'sr-only', sideWord + '. '));
+
     if (compact) {
+      if (init) node.appendChild(init);
+      node.appendChild(sideEl);
       node.appendChild(name);
     } else {
       var top = el('div', 'card-top');
+      if (init) top.appendChild(init);
+      top.appendChild(sideEl);
       top.appendChild(name);
       top.appendChild(subEl);
       node.appendChild(top);
@@ -580,19 +576,69 @@
     return node;
   }
 
-  function renderParty() {
-    var partyBox = $('party'), enemyBox = $('enemies');
-    clear(partyBox); clear(enemyBox);
+  // Whose turn it is, or nothing. An initiative order OUTLIVES the fight it was
+  // rolled for — `combat_end` sets the mode back to exploration and leaves the
+  // order in the state — so both the order and the turn pointer are only ever
+  // read while the mode says combat. Read them after, and the roster spends the
+  // next scene sorted by a finished fight with a ring around whoever happened
+  // to be acting when it ended.
+  function inCombat() {
+    var st = gameState();
+    return st.mode === 'combat' && (st.initiative || []).length > 0;
+  }
+
+  function activeCombatantId() {
+    if (!inCombat()) return null;
+    var st = gameState();
+    var init = st.initiative || [];
+    if (typeof st.turn_index === 'number' && init.length) {
+      var cur = init[st.turn_index % init.length];
+      if (cur) return Array.isArray(cur) ? cur[0] : (cur.id || null);
+    }
+    return st.active_id || S.activeId || null;
+  }
+
+  // The table: everyone at it, in initiative order, in one list. Three panels
+  // of the same people sorted three ways is what this replaces — the order is
+  // the thing you read a fight in, and a combatant's side, hit points and
+  // conditions belong on the row you are already looking at.
+  //
+  // Out of combat there is no order to keep, so it is the party and then
+  // whoever else is on the board, which is the order the game builds them in.
+  function renderTable() {
+    var box = $('roster');
+    clear(box);
     var cs = combatants();
-    var ids = Object.keys(cs);
-    var nParty = 0, nEnemy = 0;
-    ids.forEach(function (id) {
-      var c = cs[id] || {};
-      if (c.side === 'party') { partyBox.appendChild(card(c, id, false)); nParty++; }
-      else { enemyBox.appendChild(card(c, id, true)); nEnemy++; }
+    var init = inCombat() ? (gameState().initiative || []) : [];
+    var activeId = activeCombatantId();
+
+    // In initiative order where there is one, and anyone the order has not
+    // heard of (a monster that walked in mid-round) after it, never dropped.
+    var seen = {}, rows = [];
+    init.forEach(function (row) {
+      var id = Array.isArray(row) ? row[0] : (row && row.id);
+      if (!id || seen[id] || !cs[id]) return;
+      seen[id] = 1;
+      rows.push({ id: id, score: Array.isArray(row) ? row[1] : (row && row.score) });
     });
-    if (!nParty) partyBox.appendChild(el('p', 'empty', S.gameId ? 'Party not built yet.' : 'No game loaded.'));
-    if (!nEnemy) enemyBox.appendChild(el('p', 'empty', '—'));
+    var rest = Object.keys(cs).filter(function (id) { return !seen[id]; });
+    rest.sort(function (a, b) {
+      var sa = (cs[a] || {}).side === 'party' ? 0 : 1;
+      var sb = (cs[b] || {}).side === 'party' ? 0 : 1;
+      return sa - sb;
+    });
+    rest.forEach(function (id) { rows.push({ id: id, score: undefined }); });
+
+    if (!rows.length) {
+      box.appendChild(el('p', 'empty', S.gameId ? 'Party not built yet.' : 'No game loaded.'));
+      return;
+    }
+    rows.forEach(function (r) {
+      var c = cs[r.id] || {};
+      // A player character carries a sheet worth two lines; everything else is
+      // a name, a bar and an AC, and says it on one.
+      box.appendChild(card(c, r.id, c.side !== 'party', r.score, r.id === activeId));
+    });
   }
 
   // ---------- grid canvas ----------
@@ -638,12 +684,24 @@
     var grid = st.grid || {};
     var w = Math.max(1, num(grid.width, 12)), h = Math.max(1, num(grid.height, 10));
 
-    var cssW = canvas.clientWidth || 480;
-    var cell = Math.max(14, Math.floor(cssW / w));
+    // The map lives in a fixed-height quadrant, so the square has to fit the
+    // height it has as well as the width — sizing on width alone is what let a
+    // 10-row grid run out of the bottom of the panel. Both dimensions are then
+    // written back as CSS pixels: the canvas is no longer stretched to the
+    // panel by the stylesheet, so nothing else knows how big it should be.
+    var wrap = canvas.parentElement;
+    var cssW = (wrap && wrap.clientWidth) || canvas.clientWidth || 480;
+    var availH = (wrap && wrap.clientHeight) || 0;
+    var cell = Math.floor(cssW / w);
+    if (availH > 0) cell = Math.min(cell, Math.floor(availH / h));
+    // The floor keeps a big grid readable (the panel scrolls instead); the
+    // ceiling stops a small one growing to an inch a square.
+    cell = Math.max(10, Math.min(48, cell));
     var cssH = cell * h;
     var dpr = window.devicePixelRatio || 1;
     canvas.width = Math.floor(cell * w * dpr);
     canvas.height = Math.floor(cssH * dpr);
+    canvas.style.width = (cell * w) + 'px';
     canvas.style.height = cssH + 'px';
     var ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -686,7 +744,7 @@
     }
 
     var cs = combatants();
-    var activeId = st.active_id || S.activeId;
+    var activeId = activeCombatantId();
     Object.keys(cs).forEach(function (id) {
       var c = cs[id] || {};
       var pos = c.position;
@@ -2318,6 +2376,22 @@
       transcriptEl().classList.toggle('hide-mech', !this.checked);
     });
     window.addEventListener('resize', function () { drawGrid(); });
+    // The canvas is sized in pixels by drawGrid, so it goes stale whenever its
+    // box changes without the window doing anything — and the box changes a
+    // lot: unlocking the write controls or a TTS probe revealing the narration
+    // bar grows the feed, and the board gives that height up out of the map.
+    // The observer is the general answer; the guard is because a redraw can
+    // itself change the box by a scrollbar's width, and that must not loop.
+    if (window.ResizeObserver) {
+      var wrap = $('grid').parentElement;
+      var lastW = 0, lastH = 0;
+      new ResizeObserver(function () {
+        var w = wrap.clientWidth, h = wrap.clientHeight;
+        if (w === lastW && h === lastH) return;
+        lastW = w; lastH = h;
+        drawGrid();
+      }).observe(wrap);
+    }
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) {
         // Backgrounded synthesis is suspended and comes back garbled, so stop —
