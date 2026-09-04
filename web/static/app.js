@@ -27,6 +27,7 @@
     events: [],         // every REVEALED event in arrival order; the playhead indexes it
     queue: [],          // received, not yet revealed — see "the reveal gate"
     revealing: false,   // re-entrancy guard: revealing an event pumps the narrator
+    jumping: false,     // ... and while jumping to live, revealing must not START one
     endBanner: null,    // the stream has ended; the banner waits for the narrator
     game: null,         // last /api/games/<id> body (config, ledger, …)
     snapshot: null,
@@ -40,6 +41,7 @@
     snapTimer: null,
     pollTimer: null,
     loadGen: 0,         // bumped per selectGame; a stale load must not finish
+    snapGen: 0,         // ... and per snapshot request; a stale board must not land
     castToken: 0,       // bumped per cast preview; a stale answer must not land
     presets: [],
     // Write access. Reading a game, listing games and the stream are anonymous
@@ -551,7 +553,17 @@
     // which seq answered; status, ledger and cost stay live either way.
     var url = '/api/games/' + encodeURIComponent(S.gameId);
     if (revealGated() && S.lastSeq >= 0) url += '?at_seq=' + S.lastSeq;
+    // Only the newest answer may land, the same rule `loadGen` enforces for a
+    // game load. Four callers ask for this — the 700 ms debounce, an encounter
+    // spawn, the 5 s poll, and every control — each pinning a different
+    // `at_seq`, and they overtake each other: an older answer landing last
+    // would walk the hit points, the positions and the initiative BACKWARDS on
+    // screen, and a pinned answer landing after voice was turned off would put
+    // the delayed board back over the live one.
+    var gen = ++S.snapGen;
+    var forGame = S.gameId;
     return api(url).then(function (g) {
+      if (gen !== S.snapGen || forGame !== S.gameId) return;
       S.game = g;
       S.snapshot = g.snapshot || null;
       setGameStatus(g.status);
@@ -1318,10 +1330,20 @@
 
   function voiceJumpLive() {
     if (!voiceUsable()) return;
-    voiceStopCurrent(false);
-    V.resumeChunk = null;
-    revealAll();      // the queue is the rest of "live"; being at the live edge means seeing it
-    V.cursor = S.events.length;
+    // `revealAll` renders, and rendering pumps the narrator — which, with the
+    // playhead still back where it was, would start reading the very backlog
+    // this button exists to skip, and then run the cursor off the end of the
+    // transcript when that line finished. So the pump is held off until the
+    // playhead has been moved to the edge the reveal creates.
+    S.jumping = true;
+    try {
+      voiceStopCurrent(false);
+      V.resumeChunk = null;
+      revealAll();    // the queue is the rest of "live": being at the live edge means seeing it
+      V.cursor = S.events.length;
+    } finally {
+      S.jumping = false;
+    }
     voiceSavePos();
     voiceResyncRead();
     voiceHoldRelease();
@@ -1362,7 +1384,7 @@
 
   // ---- the reader ----
   function voicePump() {
-    if (V.current || !voiceArmed()) { voiceRenderControls(); return; }
+    if (V.current || !voiceArmed() || S.jumping) { voiceRenderControls(); return; }
     while (V.cursor < S.events.length) {
       var ev = S.events[V.cursor];
       var chunks = voiceChunks(ev);
@@ -2132,6 +2154,7 @@
     // transcript already cleared it files seq 0, which would make the new game
     // replay from its first line — and would leave the old game held.
     voiceReset();
+    S.snapGen++;        // an answer for the outgoing game must not land on this one
     S.gameId = id;
     S.activeId = null;
     S.status = 'idle';   // clears the terminal latch: a different game may be live

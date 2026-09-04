@@ -114,6 +114,7 @@ class Game:
         self._hold_wake = threading.Event()  # poked so a hold ends the instant it is lifted
         self._notes: list[str] = []
         self._pending_reveals: list[Any] = []  # down/dead held for the narration
+        self._batch_left = 0   # events of the resolved action still to publish
         self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
         self._thread: threading.Thread | None = None
         self.dm: DMAgent | None = None
@@ -360,9 +361,33 @@ class Game:
         self._emit_new("dialogue", text, actor=actor_id, data={"speaker": name})
         return True
 
+    def board_settled(self) -> bool:
+        """Is the state a reader can see now final for the event just published?
+
+        An engine action resolves in **full** and hands back a list of events,
+        which are then published one at a time — so between them the state is
+        already the state after the *last* of them. Anything that archives the
+        board per event (`GameEntry._record_board`, for the spectator page's
+        `?at_seq=`) has to skip the ones in between, or it files a hit point
+        loss against the line before the one that caused it: the map and the
+        bars would move on the attack roll and the narration would explain it
+        afterwards, which is the thing that archive exists to stop.
+
+        True for a single-event emit, which is every emit this class makes on
+        its own account, and for the last event of a resolved action.
+        """
+        return self._batch_left <= 0
+
     def _emit_all(self, events: list) -> None:
-        for ev in events or []:
-            self._emit(ev)
+        evs = list(events or [])
+        try:
+            for i, ev in enumerate(evs):
+                self._batch_left = len(evs) - i - 1
+                self._emit(ev)
+        finally:
+            # A stop or a budget landing mid-batch raises out of `_emit`; the
+            # next thing published must not inherit this batch's count.
+            self._batch_left = 0
 
     def _emit_turn(self, events: list) -> None:
         """Emit a turn's events, holding its knockouts and deaths back.
@@ -377,11 +402,20 @@ class Game:
         produced the kill stay where they happened, because those are what the
         prose is checked against. Only the announcement waits.
         """
-        for ev in events or []:
-            if getattr(ev, "kind", "") in REVEAL_KINDS:
-                self._pending_reveals.append(ev)
-            else:
+        evs = list(events or [])
+        # The reveals are held back, so they are not part of this batch: what
+        # settles the board is the last event actually published here.
+        left = sum(1 for ev in evs if getattr(ev, "kind", "") not in REVEAL_KINDS)
+        try:
+            for ev in evs:
+                if getattr(ev, "kind", "") in REVEAL_KINDS:
+                    self._pending_reveals.append(ev)
+                    continue
+                left -= 1
+                self._batch_left = left
                 self._emit(ev)
+        finally:
+            self._batch_left = 0
 
     def _flush_reveals(self, *, gated: bool = True) -> None:
         """Release the knockouts and deaths `_emit_turn` held back.
@@ -748,12 +782,17 @@ class Game:
             "party": "the party won the fight",
             "enemy": "the party was defeated",
         }.get(winner or "", "the fight ended inconclusively")
+        # Before the event, not after. Anything reading the state as this
+        # event goes out — the spectator page's per-event board archive does —
+        # would otherwise file the end of the fight against a board still in
+        # `combat`, and go on drawing the roster in initiative order with a
+        # ring round whoever happened to be acting when it ended.
+        self.state.mode = "exploration"
         self._emit_new(
             "combat_end",
             f"Combat ends: {self.outcome}.",
             data={"winner": winner},
         )
-        self.state.mode = "exploration"
 
     def _place_party(self, grid_spec: dict | None) -> None:
         starts = [tuple(p) for p in (grid_spec or {}).get("party_start", [])]

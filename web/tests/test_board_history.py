@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from web.db import Database
-from web.registry import BOARD_HISTORY, BOARD_SKIP_KINDS, GameEntry
+from web.registry import BOARD_HISTORY, GameEntry
 
 
 class StepGame:
@@ -26,6 +26,10 @@ class StepGame:
 
     `FakeGame` in conftest returns one constant snapshot, which cannot tell a
     board pinned to a seq from a board read live.
+
+    `batch_left` stands in for a resolved engine action still being published,
+    the way `Game._emit_all` sets it: the state is already final for the last
+    of those events while the earlier ones are still going out.
     """
 
     def __init__(self) -> None:
@@ -33,6 +37,11 @@ class StepGame:
         self.status = "running"
         self.hp = 30
         self.round = 1
+        self.mode = "combat"
+        self.batch_left = 0
+
+    def board_settled(self) -> bool:
+        return self.batch_left <= 0
 
     def snapshot(self) -> dict:
         return {
@@ -41,7 +50,14 @@ class StepGame:
             "ledger": {"total_usd": 0.5},
             "state": {
                 "round": self.round,
-                "combatants": {"pc_1": {"id": "pc_1", "name": "Thorin", "hp": self.hp}},
+                "mode": self.mode,
+                # Churn the page never draws: it must not, on its own, be
+                # enough to archive a board.
+                "rng": {"calls": self.hp},
+                "event_seq": 1000 - self.hp,
+                "combatants": {"pc_1": {"id": "pc_1", "name": "Thorin", "hp": self.hp,
+                                        "turn": {"movement_left": self.hp},
+                                        "flags": {"n": self.hp}}},
             },
         }
 
@@ -85,22 +101,65 @@ def test_the_board_is_kept_as_it_stood_at_each_event(entry):
     assert entry.snapshot()["state"]["combatants"]["pc_1"]["hp"] == 4
 
 
-def test_prose_is_not_archived_but_answers_with_the_state_it_was_written_about(entry):
-    """A paragraph moves nothing, so it keeps no board of its own.
+def test_an_event_that_moves_nothing_keeps_no_board_of_its_own(entry):
+    """A paragraph, a die roll or a cost line moves nothing on the board.
 
     It still has to *answer* — the page asks at the last line it revealed, and
-    that line is very often the narration — and the answer is the state at the
-    event before it, which is exactly the state the paragraph describes.
+    that line is very often the narration — and the answer is the board before
+    it, which is exactly the board the paragraph describes. What it must not do
+    is fill the archive: prose is most of a transcript. The dice generator and
+    the event counter churn under every one of these, which is why they are not
+    part of what makes a board worth keeping.
     """
     entry.on_event(Ev(1, "turn_start"))
     entry.game.hp = 21
     entry.on_event(Ev(2, "damage"))
-    for seq, kind in enumerate(sorted(BOARD_SKIP_KINDS), start=3):
+    quiet = ["narration", "dialogue", "cost", "roll", "dm_note", "save", "error"]
+    for seq, kind in enumerate(quiet, start=3):
         entry.on_event(Ev(seq, kind))
     assert set(entry._boards) == {1, 2}
-    last = 2 + len(BOARD_SKIP_KINDS)
+    last = 2 + len(quiet)
     assert hp_at(entry, last) == 21
     assert entry.board_at(last)["seq"] == 2
+
+
+def test_an_action_settles_before_its_board_is_filed(entry):
+    """The finding this guards: one engine action, several events.
+
+    `engine.actions.apply` resolves the whole action and hands back the list —
+    so at the moment the *attack* line is published the goblin's hit points
+    have already gone, and an archive taken per event would file that loss
+    against the attack. The page reveals a spoken line at a time, so it would
+    show the damage while the narrator was still on the roll. Only the last
+    event of the batch settles the board; the ones before it are answered by
+    the board from before the action, which is what was true when they were
+    said.
+    """
+    entry.on_event(Ev(1, "turn_start"))          # settled: 30 hp on the board
+    # One action: [attack, damage], resolved in full before either goes out.
+    entry.game.hp = 21
+    entry.game.batch_left = 1
+    entry.on_event(Ev(2, "attack"))
+    entry.game.batch_left = 0
+    entry.on_event(Ev(3, "damage"))
+
+    assert hp_at(entry, 2) == 30, "the attack was filed against the damage it had not caused yet"
+    assert hp_at(entry, 3) == 21
+    assert set(entry._boards) == {1, 3}
+
+
+def test_a_game_that_does_not_say_is_taken_at_its_word(db_file):
+    """`board_settled` is optional: a fake, or another implementation of the
+    Game interface, settles every event. Losing the batch filter must not lose
+    the archive with it."""
+    class Silent(StepGame):
+        board_settled = None      # not callable: the attribute is there and is not a method
+
+    e = GameEntry("g_quiet", Database(db_file), {"seed": 1}, "Board archive")
+    e.game = Silent()
+    e.game.hp = 17
+    e.on_event(Ev(1, "damage"))
+    assert hp_at(e, 1) == 17
 
 
 def test_asking_before_the_archive_starts_gets_the_oldest_it_has(entry):

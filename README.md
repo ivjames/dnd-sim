@@ -698,7 +698,12 @@ So the page asks for the board **as of** the line it has just revealed —
 `GET /api/games/<id>?at_seq=<seq>` — and the server answers from a small
 per-event archive of board states (`BOARD_HISTORY` in `web/registry.py`, the
 newest one at or before the seq asked for; `snapshot_seq` in the reply says
-which it actually is). Status, cost and the ledger stay live in that answer:
+which it actually is). A board is only filed where the game says it has
+**settled** — an engine action resolves in full and returns all its events at
+once, so between them the state is already the state after the last of them,
+and filing per event would drop the hit points on the attack roll — and only
+where it differs from the last one kept, which is why a paragraph or a die roll
+keeps no board of its own. Status, cost and the ledger stay live in that answer:
 money and whether the game is still running are facts about the table, not
 things anyone narrates.
 

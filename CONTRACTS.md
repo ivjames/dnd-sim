@@ -1885,13 +1885,31 @@ the *game*; this is the other half, and it is about the *screen*.
    non-integer `at_seq` is a 400.
 
 3. **`GameEntry` keeps that archive** (`web/registry.py`): `_record_board` runs
-   on the game thread from `on_event`, so what it stores is the state the event
-   was emitted against, and `board_at(seq)` reads it back. Bounded by
-   `BOARD_HISTORY = 128` entries, and skipped for `BOARD_SKIP_KINDS` — prose,
-   money, rolls and errors move nothing, so the state at the event before is
-   still the state, and skipping them roughly halves what is kept. A small
-   combat's state serializes to ~25 KB, so the ceiling is a few MB per live
-   game. `system` is deliberately not in that set: a mid-game encounter spawn
-   arrives on it.
+   on the game thread from `on_event`, and `board_at(seq)` reads back the
+   newest board at or before that seq. Bounded by `BOARD_HISTORY = 128`; a
+   small combat's state serializes to ~25 KB, so the ceiling is a few MB per
+   live game. Two filters, both about never filing a board *ahead* of the
+   event it is under: the game must say the board has settled (below), and the
+   board must differ from the last one kept — compared on what the page draws,
+   which is the state minus `BOARD_NOISE` (`rng`, `event_seq`) and
+   `COMBATANT_NOISE` (`turn`, `flags`). Prose, rolls and cost lines move
+   nothing and so keep no board; the one before them goes on answering.
 
-Nothing in `engine/`, `agents/`, `llm/` or `orchestrator/` changed.
+4. **`Game.board_settled() -> bool`** (`orchestrator/game.py`) — is the state a
+   reader can see now final for the event just published? `engine.actions.apply`
+   resolves an action **in full** and returns the whole list of events, which
+   `_emit_all`/`_emit_turn` then publish one at a time, so between them the
+   state is already the state after the last of them. Per-event archiving
+   without this files a hit point loss against the attack roll, and the page
+   shows it while the narrator is still reading that roll. `_batch_left` counts
+   the events of the resolved action still to publish (reset in a `finally`, so
+   a stop landing mid-batch cannot leave it set); a single emit is always
+   settled. `GameEntry` treats a game without the method as settling every
+   event, so other implementations and the test fakes are unaffected.
+
+5. **`combat_end` is published after `state.mode` flips to `exploration`**, not
+   before. It read as the end of a fight on a board still in combat, which the
+   archive then pinned — roster in initiative order, a ring round whoever was
+   acting when it ended, until the next thing moved.
+
+Nothing in `engine/`, `agents/` or `llm/` changed.

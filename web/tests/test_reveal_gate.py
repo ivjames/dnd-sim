@@ -143,3 +143,47 @@ def test_turning_the_voice_off_lets_everything_go_at_once():
     js = read()
     fn = re.search(r"function voiceDisable\(\) \{(.+?)\n  \}", js, re.S)
     assert fn and "revealAll()" in fn.group(1)
+
+
+def test_live_moves_the_playhead_before_it_reveals_the_backlog():
+    """Pressing LIVE must skip the queue, not read it.
+
+    `revealAll` renders, and every render pumps the narrator — so with the
+    playhead still back where it was, the first queued line (or the one the
+    jump had just interrupted) was started immediately, and finishing it ran
+    `V.cursor` past the end of the transcript. The pump is held off for the
+    length of the jump instead.
+    """
+    js = read()
+    fn = re.search(r"function voiceJumpLive\(\) \{(.+?)\n  \}", js, re.S)
+    assert fn, "app.js no longer has voiceJumpLive"
+    body = fn.group(1)
+    assert "S.jumping = true" in body and "S.jumping = false" in body
+    # ... and the guard is honoured where lines are actually started.
+    pump = re.search(r"function voicePump\(\) \{(.+?)\n", js, re.S)
+    assert pump and "S.jumping" in pump.group(1)
+    # The reveal and the cursor move are both inside the held window.
+    held = re.search(r"S\.jumping = true;(.+?)S\.jumping = false", body, re.S)
+    assert held and "revealAll()" in held.group(1) and "V.cursor = S.events.length" in held.group(1)
+
+
+def test_only_the_newest_board_answer_may_land():
+    """Four callers ask for the board, each pinning a different `at_seq`, and
+    they overtake each other: the 700 ms debounce, an encounter spawn, the 5 s
+    poll and every control. An older answer landing last would walk the hit
+    points and the initiative backwards on screen, and a pinned answer landing
+    after voice was turned off would put the delayed board back over the live
+    one. Same generation rule the game load already uses.
+    """
+    js = read()
+    fn = re.search(r"function refreshSnapshot\(\) \{(.+?)\n  \}", js, re.S)
+    assert fn, "app.js no longer has refreshSnapshot"
+    body = fn.group(1)
+    assert "++S.snapGen" in body
+    assert "gen !== S.snapGen" in body and "forGame !== S.gameId" in body
+    # The check has to come before anything is written, not after.
+    guard = body.index("gen !== S.snapGen")
+    assert guard < body.index("S.game = g"), "a stale answer is already writing state"
+    # Switching games invalidates whatever is still in flight for the old one.
+    sel = re.search(r"function selectGame\(id\) \{(.+?)\n    var gen = ", js, re.S)
+    assert sel and "S.snapGen++" in sel.group(1)
