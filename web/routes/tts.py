@@ -293,7 +293,11 @@ def capability():
             "monster_engine": svc.monster_engine,
             "language": svc.language,
             "max_chars": svc.max_chars,
-            "price_per_million_chars": svc.price_per_million,
+            # Two engines, two rates. Advertising only the table's would
+            # describe a game's spend wrongly wherever monsters do much of the
+            # talking, which is a per-game difference of several times.
+            "price_per_million_chars": svc.rate_for(svc.engine),
+            "monster_price_per_million_chars": svc.rate_for(svc.monster_engine),
             # The page puts this in every clip URL. A clip's bytes depend on
             # process-level settings the URL does not otherwise name — engine,
             # language, the DM's voice, the roster Polly reported — and the

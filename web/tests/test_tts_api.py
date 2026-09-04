@@ -43,6 +43,13 @@ def test_the_probe_says_what_the_page_needs_to_know(tts_client, tts):
     assert body["engine"] == "standard" and body["language"] == "en-US"
     assert body["max_chars"] == tts.max_chars
     assert body["price_per_million_chars"] == 4.0
+    # Two engines, two rates: advertising only the table's describes a game's
+    # spend wrongly wherever monsters do much of the talking.
+    tts.engine, tts.monster_engine = "neural", "standard"
+    tts.price_per_million = 16.0
+    rates = tts_client.get("/api/tts").get_json()
+    assert rates["price_per_million_chars"] == 16.0
+    assert rates["monster_price_per_million_chars"] == 4.0
 
     tts.up = False
     off = tts_client.get("/api/tts").get_json()

@@ -272,7 +272,7 @@ GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>
 POST /api/games/<id>/pause | /resume | /stop
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
-GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","config"} — can this server render voices?
+GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.

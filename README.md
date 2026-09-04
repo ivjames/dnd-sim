@@ -269,7 +269,7 @@ GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on f
 POST /api/games/<id>/pause|resume|stop  → 202
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
-GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, config}
+GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
