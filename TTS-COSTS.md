@@ -65,10 +65,25 @@ mechanics, ~2,000 of narration at 6.5–7.3 turns a round), plus ~1,000 for
 scene-setting and the epilogue. That reproduces both measured games to within
 2%, and it is the number to plan with.
 
-The configs cap combat at `max_rounds_per_combat` — 20 for goblin_ambush, 25
-for crypt — against the 13 and 7 rounds actually observed. A game that runs to
-its cap is **58,000–75,000 characters**, roughly 2.5× the central figure. That
-is the ceiling the budget has to survive, not the average.
+The cap is `max_rounds_per_combat`, and it is enforced **per combat**
+(`orchestrator/game.py:661`), not per game. goblin_ambush has one encounter and
+a cap of 20; crypt has two and a cap of 25 — its observed 7 rounds are already
+4 + 3 across two fights. So the configured ceilings are 20 and 50 rounds
+against the 13 and 7 observed:
+
+| | encounters × cap | rounds | chars at cap |
+|---|---|---|---|
+| goblin_ambush | 1 × 20 | 20 | ~59,000 |
+| crypt | 2 × 25 | 50 | ~146,000 |
+
+That is 2× and 6× the central figure. And it is not even a hard ceiling: a DM
+`start_combat` ruling (`game.py:615`) can open a fight that is in no encounter
+list, up to one per beat, which at `max_scenes × beats_per_scene = 4` would put
+crypt at 150 rounds and ~436,000 characters.
+
+The honest conclusion is that the round caps do not bound the bill. Once
+narration is in the ledger, `budget_usd` does — which is the argument for
+putting it there before turning any of this on, not after.
 
 ## 2. Rates
 
@@ -107,8 +122,10 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 | ElevenLabs Flash | $1.50 | $1.10 | $2.61 |
 | ElevenLabs v3 | $3.00 | $2.20 | $5.22 |
 
-A game that runs to its round cap (58,000–75,000 chars, §1) costs 2–2.5× the
-first column: $0.87–$1.13 on Aura-1, $5.80–$7.50 on ElevenLabs v3.
+At the configured round ceilings (§1) the same games cost far more: 59,000
+chars for goblin_ambush is $0.89 on Aura-1 and $5.90 on ElevenLabs v3;
+crypt's 146,000 is **$2.19 and $14.60**. Budget for the ceiling, not the
+average.
 
 Monthly, at 30,000 chars/game:
 
