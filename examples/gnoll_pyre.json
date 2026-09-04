@@ -16,6 +16,7 @@
       "level": 4,
       "abilities": {"STR": 17, "DEX": 14, "CON": 16, "INT": 10, "WIS": 12, "CHA": 11},
       "equipment": "default",
+      "gender": "male",
       "persona": "Grew up two steads over and knows the names on the fence posts. Wants to catch the band, not chase it, and pushes the party to move before it is ready. Goes quiet when angry, which is most of this. Will not be talked out of a charge once he has started walking."
     },
     {
@@ -26,6 +27,7 @@
       "level": 4,
       "abilities": {"STR": 10, "DEX": 18, "CON": 14, "INT": 13, "WIS": 14, "CHA": 12},
       "equipment": "default",
+      "gender": "female",
       "persona": "Tracked this band for a bounty and would rather nobody knew the bounty is on one specific gnoll. Wants the leader alive long enough to be sure. Cold, exact, and openly impatient with grief as a use of daylight. Refuses to explain herself twice."
     },
     {
@@ -37,6 +39,7 @@
       "abilities": {"STR": 13, "DEX": 10, "CON": 16, "INT": 11, "WIS": 18, "CHA": 13},
       "equipment": "default",
       "spells": "default",
+      "gender": "female",
       "persona": "Rode out with the survivors and has been awake for two days doing it. Wants the living moved south before anything else, and will spend the party's momentum to do it. Says exactly what she thinks of Ranulf's charges, at volume, afterwards. Prays out loud, briskly, mid-fight."
     },
     {

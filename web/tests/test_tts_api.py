@@ -342,3 +342,35 @@ def test_reconfiguring_the_server_retires_the_browsers_copies(tts_client, tts):
     assert svc(engine="neural").config_id() != base
     assert svc(dm_voice="Joanna").config_id() != base
     assert svc(language="en-GB").config_id() != base
+
+
+def test_the_shipped_parties_state_a_gender_only_where_their_persona_does():
+    """The rule the examples follow, kept honest.
+
+    Inventing a gender for a character whose persona states none would be
+    writing a fact into someone else's character; leaving one off a character
+    whose persona says "she" would be ignoring what is already written.
+    """
+    import glob
+    import json
+    import os
+    import re
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    said = re.compile(r"\b(she|her|herself|hers)\b|^(Dame|Sister|Mother) ", re.I)
+    his = re.compile(r"\b(he|him|himself|his)\b|^(Brother|Father) ", re.I)
+
+    seen = 0
+    for path in sorted(glob.glob(os.path.join(root, "examples", "*.json"))):
+        for member in json.load(open(path, encoding="utf-8"))["party"]:
+            seen += 1
+            text = member["name"] + " " + member.get("persona", "")
+            female, male = bool(said.search(text)), bool(his.search(text))
+            stated = member.get("gender", "")
+            if female and not male:
+                assert stated == "female", (path, member["name"])
+            elif male and not female:
+                assert stated == "male", (path, member["name"])
+            elif not female and not male:
+                assert not stated, (path, member["name"], "persona states no gender")
+    assert seen >= 28

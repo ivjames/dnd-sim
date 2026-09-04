@@ -305,8 +305,17 @@ would be a way to walk the whole roster a paid clip at a time.
 Polly's roster is `Female` and `Male`; there is no third kind of voice on it.
 So a character who states neither, or states nothing at all, is dealt from the
 **whole** pool rather than pushed into one of the two — the roster's limitation
-is not something to launder into a character sheet. `Crick` in
-`examples/crypt.json` is left that way on purpose. Where a language ships
+is not something to launder into a character sheet.
+
+The shipped parties follow one rule, and it is worth stating because it decides
+what a stranger's config should look like too: **a character states a gender
+only where their own persona already does** — an explicit pronoun, or a
+gendered form of address (`Dame`, `Sister`, `Brother`, `Father`, `Mother`).
+Where the persona says nothing, the config says nothing, and that character is
+dealt from the whole pool. Five of the twenty-eight in `examples/` are like
+that — Crick, Vessa Quill, Ilbrandt Ash, Pib Underbough, Ozric Talleyrand — and
+so are two of the four in the built-in preset. Choosing for them would be
+writing a fact into someone else's character. Where a language ships
 voices of only one gender (Korean and Swedish each ship one), a stated gender
 that cannot be answered gets a voice anyway: a worse match, not a silence.
 

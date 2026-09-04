@@ -16,6 +16,7 @@
       "level": 5,
       "abilities": {"STR": 18, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 13},
       "equipment": "default",
+      "gender": "female",
       "persona": "Took the fen contract because nobody else would and has begun to suspect why. Wants a clean fight on ground she has chosen, and gets increasingly blunt as the fen refuses to give her one. Distrusts fire in a peat bog and will argue the point mid-combat, being wrong."
     },
     {
@@ -26,6 +27,7 @@
       "level": 5,
       "abilities": {"STR": 10, "DEX": 18, "CON": 15, "INT": 13, "WIS": 13, "CHA": 14},
       "equipment": "default",
+      "gender": "male",
       "persona": "Fen-born, and the only one here who calls the thing under the ford by a name rather than a species. Wants to pay it off the old way and is serious about this. Superstitious, quick, and a little smug when the old ways work. Keeps something in his coat he has not shown the party."
     },
     {
@@ -37,6 +39,7 @@
       "abilities": {"STR": 14, "DEX": 10, "CON": 17, "INT": 11, "WIS": 18, "CHA": 11},
       "equipment": "default",
       "spells": "default",
+      "gender": "male",
       "persona": "Holds that a thing that eats travellers is a thing to be put down, not bargained with, and holds it loudly at Ferris. Wants the ford consecrated before the party leaves. Immovable in argument, generous in a fight, and the first to admit afterwards when he was wrong — much later, quietly."
     },
     {
@@ -48,6 +51,7 @@
       "abilities": {"STR": 8, "DEX": 14, "CON": 14, "INT": 18, "WIS": 12, "CHA": 10},
       "equipment": "default",
       "spells": "default",
+      "gender": "female",
       "persona": "Knows precisely what stops a troll knitting itself back together and has been waiting most of her career to use it. Wants the kill and the notes. Impatient with negotiation, contemptuous of superstition, and prone to acting on her own initiative a round before the party is ready."
     }
   ],

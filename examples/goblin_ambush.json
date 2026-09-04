@@ -26,7 +26,6 @@
       "level": 3,
       "abilities": {"STR": 8, "DEX": 17, "CON": 14, "INT": 12, "WIS": 13, "CHA": 14},
       "equipment": "default",
-      "gender": "female",
       "persona": "A former ledger clerk who discovered that stealing is just accounting with better hours. Narrates the fight like an auditor: cheerful, precise, faintly disappointed in everyone's technique. Always angling for flanking position, always claims the killing blow was 'load-bearing'."
     },
     {
@@ -50,7 +49,6 @@
       "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 17, "WIS": 12, "CHA": 10},
       "equipment": "default",
       "spells": "default",
-      "gender": "male",
       "persona": "An academy dropout who left because the syllabus was too slow, not because it was too hard. Insufferably confident, genuinely brilliant, physically frail and aware of it. Announces spells like lecture titles. Will absolutely burn a slot to look impressive, then regret it in round four."
     }
   ],

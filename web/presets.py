@@ -38,7 +38,6 @@ BUILTIN: list[dict[str, Any]] = [
                     "level": 3,
                     "abilities": "standard_array",
                     "equipment": "default",
-                    "gender": "male",
                     "persona": "Gruff dwarven veteran. Speaks in short sentences. Guards the squishy ones.",
                 },
                 {
@@ -49,7 +48,6 @@ BUILTIN: list[dict[str, Any]] = [
                     "level": 3,
                     "abilities": "standard_array",
                     "equipment": "default",
-                    "gender": "male",
                     "persona": "Cheerful halfling thief. Loves flanking, hates being noticed.",
                 },
                 {
