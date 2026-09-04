@@ -283,6 +283,22 @@ def test_the_exact_table_document_on_each_engine():
         '<speak><prosody pitch="-5%">I go left.</prosody></speak>'
 
 
+def test_no_monster_is_dealt_no_treatment_at_all():
+    """`MONSTER_VTL` holds no 0, and that is load-bearing twice over.
+
+    CONTRACTS.md §6 puts it as "never 0%": a monster whose only treatment
+    rounded to no treatment is a goblin that sounds like the barmaid. It is
+    also what lets a reader — and `tools/polly_check.py`, which checks the
+    document it sent without re-casting — conclude "on standard" ⇒ "carries
+    the effect". A 0 in this tuple would make one monster in six silently
+    untreated and that inference wrong.
+    """
+    assert 0 not in MONSTER_VTL
+    for cast in every_reachable_monster_cast():
+        assert cast.vtl_pct != 0
+        assert "vocal-tract-length" in ssml_for("Fee fi.", cast, "standard")
+
+
 @pytest.mark.parametrize("engine", sorted(DOCUMENTED_ENGINE_SSML))
 def test_every_monster_a_game_can_deal_is_documented_ssml(engine):
     """The cross product of the monster branch's three spreads, on every
