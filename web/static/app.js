@@ -460,14 +460,15 @@
   var V = {
     supported: false,
     synth: null,
-    settings: { enabled: false, rate: 'normal', muteMechanics: false },
+    settings: { enabled: false, rate: 'normal', muteMechanics: false, profiles: {} },
     unlocked: false,       // a user gesture has started speech on this page
     sinceSeq: Infinity,    // speak only events with seq > this
     caughtUp: false,       // history replay rendered; until then sinceSeq stays Infinity
     queue: [],             // [{ ev, phrase, key }] in seq order
     current: null,         // { item, chunks, idx, node, timer, utt }
     voices: [],
-    profiles: {},
+    profiles: {},          // computed {voice, pitch, rate} per key, cache
+    labOpen: false,        // voice lab is up: hold the queue, samples have the floor
     heldUtt: null          // keeps the unlock utterance referenced until it ends
   };
 
@@ -484,6 +485,7 @@
         V.settings.enabled = !!o.enabled;
         V.settings.rate = VOICE_RATES[o.rate] ? o.rate : 'normal';
         V.settings.muteMechanics = !!o.muteMechanics;
+        V.settings.profiles = (o.profiles && typeof o.profiles === 'object') ? o.profiles : {};
       }
     } catch (e) { /* private mode or junk */ }
   }
@@ -501,7 +503,7 @@
     if (!V.voices.length) voiceRefreshVoices();    // Safari: no voiceschanged, voices just appear
     if (!V.profiles[key]) {
       var lang = document.documentElement.lang || navigator.language || 'en';
-      V.profiles[key] = Speech.voiceProfileFor(key, V.voices, lang);
+      V.profiles[key] = Speech.voiceProfileFor(key, V.voices, lang, V.settings.profiles);
     }
     return V.profiles[key];
   }
@@ -546,7 +548,7 @@
   }
 
   function voicePump() {
-    if (V.current || !V.queue.length || !voiceArmed()) return;
+    if (V.current || !V.queue.length || !voiceArmed() || V.labOpen) return;
     var item = V.queue.shift();
     var chunks = Speech.chunksFor(item.phrase);
     if (!chunks.length) { voicePump(); return; }
@@ -654,6 +656,188 @@
     $('voice-skip').disabled = !voiceArmed();
   }
 
+  // ---------- voice lab ----------
+  // Why this exists: the automatic pick can only work with the voices the
+  // machine happens to ship, and on a lot of them every role comes out sounding
+  // like the same person — which makes a monster's line indistinguishable from
+  // a PC's. The lab puts each role's voice, pitch and rate under a control you
+  // can hear immediately, and saves the result with the rest of the voice
+  // settings, so the narration uses it. Clearing a row returns it to the
+  // automatic pick rather than freezing today's default into storage.
+
+  var VOICE_SAMPLES = {
+    dm: 'The passage narrows. Somewhere ahead, water drips onto stone.',
+    npc: 'You should not have come down here, little thing.'
+  };
+  var VOICE_SAMPLE_PC = 'Stand behind me. I have seen worse than this.';
+
+  function voiceLang() { return document.documentElement.lang || navigator.language || 'en'; }
+
+  function voiceLabRoles() {
+    var roles = [
+      { key: 'dm', label: 'DM / narrator' },
+      { key: 'npc', label: 'Monsters & NPCs' }
+    ];
+    var party = voiceParty(), names = voiceNames();
+    Object.keys(party).sort().forEach(function (id) {
+      roles.push({ key: id, label: names[id] || id, pc: true });
+    });
+    return roles;
+  }
+
+  function voiceSampleFor(role) {
+    return VOICE_SAMPLES[role.key] || VOICE_SAMPLE_PC;
+  }
+
+  // Patch one role's override. A field set to null (or '') is removed, and a
+  // role left with nothing drops out entirely — that is what "auto" means.
+  function voiceSetOverride(key, patch) {
+    if (!V.settings.profiles || typeof V.settings.profiles !== 'object') V.settings.profiles = {};
+    var all = V.settings.profiles;
+    var cur = all[key] || {};
+    Object.keys(patch).forEach(function (f) {
+      if (patch[f] === null || patch[f] === '') delete cur[f]; else cur[f] = patch[f];
+    });
+    if (Object.keys(cur).length) all[key] = cur; else delete all[key];
+    V.profiles = {};              // recompute against the new override
+    voiceSaveSettings();
+  }
+
+  // Speak a sample in a role's voice. The click is itself the user gesture
+  // browsers require, so the lab works before voice has ever been ticked on.
+  function voiceSample(role) {
+    if (!V.supported) return;
+    V.unlocked = true;
+    voiceFinishCurrent();
+    try { V.synth.cancel(); } catch (e) { /* ignore */ }
+    var prof = voiceProfile(role.key);
+    var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
+    var text = voiceSampleFor(role);
+    // iOS drops a speak() issued synchronously after cancel().
+    setTimeout(function () {
+      var u = new SpeechSynthesisUtterance(text);
+      if (prof.voice) { u.voice = prof.voice; u.lang = prof.voice.lang || u.lang; }
+      u.pitch = prof.pitch || 1;
+      u.rate = rate;
+      V.heldUtt = u;
+      u.onend = u.onerror = function () { if (V.heldUtt === u) V.heldUtt = null; };
+      try { if (V.synth.paused) V.synth.resume(); } catch (e) { /* ignore */ }
+      try { V.synth.speak(u); } catch (e) { /* ignore */ }
+    }, 80);
+  }
+
+  function voiceLabSlider(label, min, max, value, onInput, onChange) {
+    var wrap = el('label', 'vl-slider');
+    wrap.appendChild(el('span', 'vl-slabel', label));
+    var input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min); input.max = String(max); input.step = '0.05';
+    input.value = String(value);
+    var out = el('span', 'vl-val', Number(value).toFixed(2));
+    input.addEventListener('input', function () {
+      out.textContent = Number(input.value).toFixed(2);
+      onInput(Number(input.value));
+    });
+    input.addEventListener('change', function () { onChange(Number(input.value)); });
+    wrap.appendChild(input);
+    wrap.appendChild(out);
+    return wrap;
+  }
+
+  function voiceLabRow(role) {
+    var ov = (V.settings.profiles && V.settings.profiles[role.key]) || {};
+    var auto = Speech.defaultProfileFor(role.key, V.voices, voiceLang());
+    var prof = voiceProfile(role.key);
+    var resetBtn = null;
+
+    var row = el('div', 'vl-row');
+    var head = el('div', 'vl-head');
+    head.appendChild(el('span', 'vl-name', role.label));
+    var tag = el('span', 'pill pill-quiet vl-tag', 'custom');
+    head.appendChild(tag);
+    var test = el('button', 'btn btn-small', 'test');
+    test.type = 'button';
+    test.addEventListener('click', function () { voiceSample(role); });
+    head.appendChild(test);
+    row.appendChild(head);
+
+    // The "custom" tag and the auto button track this row's override as it is
+    // edited, so a slider drag can be undone without reopening the lab.
+    function refreshState() {
+      var cur = (V.settings.profiles && V.settings.profiles[role.key]) || null;
+      var on = !!(cur && Object.keys(cur).length);
+      tag.hidden = !on;
+      if (resetBtn) resetBtn.disabled = !on;
+    }
+
+    var sel = el('select', 'vl-voice');
+    sel.setAttribute('aria-label', role.label + ' voice');
+    var autoOpt = el('option', null, 'auto — ' + (auto.voice ? auto.voice.name : 'browser default'));
+    autoOpt.value = '';
+    sel.appendChild(autoOpt);
+    V.voices.forEach(function (v) {
+      var o = el('option', null, v.name + (v.lang ? ' · ' + v.lang : ''));
+      o.value = v.name;
+      sel.appendChild(o);
+    });
+    sel.value = (ov.voice && Speech.findVoice(V.voices, ov.voice)) ? ov.voice : '';
+    sel.addEventListener('change', function () {
+      voiceSetOverride(role.key, { voice: sel.value || null });
+      refreshState();
+      voiceSample(role);
+    });
+    row.appendChild(sel);
+
+    var sliders = el('div', 'vl-sliders');
+    sliders.appendChild(voiceLabSlider('pitch', 0.5, 2, prof.pitch,
+      function (v) { voiceSetOverride(role.key, { pitch: v }); refreshState(); },
+      function () { voiceSample(role); }));
+    sliders.appendChild(voiceLabSlider('rate', 0.6, 1.6, prof.rate,
+      function (v) { voiceSetOverride(role.key, { rate: v }); refreshState(); },
+      function () { voiceSample(role); }));
+    row.appendChild(sliders);
+
+    resetBtn = el('button', 'btn btn-small vl-auto', 'auto');
+    resetBtn.type = 'button';
+    resetBtn.title = 'Back to the automatic pick for this role';
+    resetBtn.addEventListener('click', function () {
+      voiceSetOverride(role.key, { voice: null, pitch: null, rate: null });
+      voiceLabRender();                 // sliders jump back to the computed values
+    });
+    row.appendChild(resetBtn);
+    refreshState();
+    return row;
+  }
+
+  function voiceLabRender() {
+    var host = $('vl-rows');
+    clear(host);
+    var roles = voiceLabRoles();
+    roles.forEach(function (role) { host.appendChild(voiceLabRow(role)); });
+    $('vl-empty').hidden = roles.length > 2;
+    $('vl-novoices').hidden = V.voices.length > 0;
+  }
+
+  function voiceLabOpen() {
+    if (!V.supported) return;
+    V.labOpen = true;                 // the queue keeps filling; nothing is spoken over the samples
+    voiceFinishCurrent();
+    try { V.synth.cancel(); } catch (e) { /* ignore */ }
+    voiceRefreshVoices();             // Safari fills the list late — opening is a fair moment to re-ask
+    voiceLabRender();
+    $('voicelab').hidden = false;
+  }
+
+  function voiceLabClose() {
+    $('voicelab').hidden = true;
+    V.labOpen = false;
+    voiceFinishCurrent();
+    try { V.synth.cancel(); } catch (e) { /* ignore */ }
+    voiceTrimQueue();                 // a long tuning session should not read the backlog out
+    setTimeout(voicePump, 80);
+    voiceRenderControls();
+  }
+
   function voiceInit() {
     var synth = window.speechSynthesis;
     if (!synth || typeof window.SpeechSynthesisUtterance !== 'function' || !Speech) {
@@ -681,6 +865,17 @@
       if (this.checked) V.queue = V.queue.filter(function (q) { return !Speech.isMechanic(q.ev); });
     });
     $('voice-skip').addEventListener('click', voiceSkip);
+    $('voice-lab').addEventListener('click', voiceLabOpen);
+    $('vl-close').addEventListener('click', voiceLabClose);
+    $('vl-reset').addEventListener('click', function () {
+      V.settings.profiles = {};
+      V.profiles = {};
+      voiceSaveSettings();
+      voiceLabRender();
+    });
+    $('voicelab').addEventListener('click', function (e) {
+      if (e.target === this) voiceLabClose();      // click the backdrop to leave
+    });
 
     // Voice was on last time. It cannot start without a gesture, so the toggle
     // shows "tap to start" and the first tap anywhere on the page unlocks it.

@@ -211,18 +211,35 @@ DM's narration, scene openings, the epilogue, every line of dialogue and any DM
 note from the table are spoken as they arrive — never the replayed transcript.
 Mechanics are spoken too, but shaped into a short line ("Goblin 2 hits Thorin
 for 6", "Round 3", "Vessa moves 30 feet") rather than the dice string, and
-**mute mechanics** silences them entirely. The DM has one voice; each PC gets
-its own, picked deterministically from the voices the browser has, with a
-pitch/rate nudge when there are too few to go round (an iPad often has one or
-two). The rate has three steps, **skip** drops the line being read, and the
-transcript line being spoken is highlighted.
+**mute mechanics** silences them entirely. The DM has one voice; monsters and
+NPCs share a second one; each PC gets its own, picked deterministically from
+the voices the browser has, with a pitch/rate nudge when there are too few to
+go round (an iPad often has one or two). The rate has three steps, **skip**
+drops the line being read, and the transcript line being spoken is highlighted.
+
+The monster voice is reserved out of the pool the PCs draw from and is pitched
+below any of them, because the automatic pick alone could not be relied on to
+make a monster sound unlike a person — on a machine with few voices every role
+came out as the same speaker with a pitch nudge too small to hear.
+
+**voices…** opens the voice lab: one row per role (DM, monsters and NPCs, and
+each PC in the loaded game) with the voice list, a pitch slider and a rate
+slider, and a **test** button that speaks a sample in that voice. Moving a
+slider takes effect immediately, **auto** returns a row to the automatic pick,
+and the choices are saved in `localStorage` alongside the other voice settings
+and used by the narration from then on. The top bar's slow/normal/fast still
+multiplies each role's rate. While the lab is open the queue is held rather
+than dropped, so the samples are not spoken over.
 
 This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
-the device and it costs nothing, so voice quality is whatever the OS ships.
+the device and it costs nothing, so voice quality (and how many distinct voices
+there are to hand out) is whatever the OS ships.
 Server-rendered voices (Amazon Polly, Cartesia and the like) would be a later,
 paid option. Selection and wording live in `web/static/speech.js`, a
-dependency-free module that `node` can exercise directly; the queue and the
-speech calls are in `app.js`.
+dependency-free module that `node` can exercise directly
+(`web/tests/speech_test.js`, run from pytest by `web/tests/test_speech_js.py`
+and skipped where node is absent); the queue, the lab and the speech calls are
+in `app.js`.
 
 ## Deployment
 
