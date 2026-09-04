@@ -2017,3 +2017,69 @@ the *game*; this is the other half, and it is about the *screen*.
    acting when it ended, until the next thing moved.
 
 Nothing in `engine/`, `agents/` or `llm/` changed.
+
+
+### 2026-09-04 — tts/ + web/ — how big a monster sounds is the creature, not the slot
+
+The treatment shipped that morning dealt its size shift from a hash of the
+voice key, and a voice key is `monster:mon_6` where `mon_6` is spawn order
+(`orchestrator/game.py: _spawn_monsters`). So the shift meant "which slot this
+creature took", not "how big it is". In `gnoll_pyre` that put the **Ogre** at
++9% and a **Gnoll** in the same fight at +34%; in `goblin_ambush` four
+identical Goblins spanned −16% to +34%, and the Goblin Boss came out smaller
+than one of his own minions. The old `vocal-tract-length` arrangement was dealt
+from the same hash of the same key and had the identical property, so this is
+not a regression — it is a thing that has never worked, made visible by
+describing the effect as "a longer vocal tract is a bigger creature".
+
+1. **`MONSTER_SIZE_BANDS`** maps each SRD size to its own band of shifts —
+   `T (-26…-18)`, `S (-16…-10)`, `M (-8…8)`, `L (12…20)`, `H (26…34)`,
+   `G (38…50)`. Monotonic and non-overlapping, so "bigger creature" and "lower
+   voice" cannot disagree; none contains 0, so no monster is dealt no
+   treatment; `M` sits either side of the voice as recorded. `MONSTER_SIZE` is
+   now the union of the bands, which is what the contract tests enumerate.
+
+2. **`cast_for(..., size="")`** takes the creature's SRD size and picks the
+   band; the hash picks within it. Both halves are load-bearing — without the
+   band an ogre is a slot number, and without the hash four goblins are one
+   goblin four times. `normalize_creature_size` reads the letter a stat block
+   carries and the word a person writes, and answers `""` for anything else,
+   which `cast_for` reads as `DEFAULT_SIZE_BAND` (`M`). Ignored for every
+   non-monster seat: a PC has a stat sheet, not a stat block.
+
+3. **Every monster stays audibly one.** The bands reintroduced the barmaid
+   problem by another door: they must be monotonic and non-overlapping, and
+   `M` straddles zero because a person-sized creature *is* the size of the
+   voice it was dealt — so a Medium creature's shift can only ever be small,
+   and about one in four was then dealt no grit and no room on top of it. An
+   ordinary voice reading a monster's lines, at the commonest size for a
+   creature that talks. Where `abs(size_pct) < AUDIBLE_SIZE_PCT` (10, roughly
+   a semitone and a half) and nothing else was dealt, the cast takes a growl
+   from `MONSTER_GROWL_ALWAYS` off its own slice of the hash. It fills a gap
+   rather than painting everyone: a creature big enough to say "creature" on
+   its own keeps whatever it was dealt, including nothing.
+
+4. **`size` is keyword-only through `PollyTTS.cast`, `cache_key_for`, `render`
+   and `synthesize`**, because it is not a trait of the same kind as `gender`
+   and `age` — those narrow the voice pool, this sets the treatment.
+
+5. **`web/routes/tts.py: _creature_size_for`** resolves it from the game, not
+   from the request — `_member_for`'s argument, since this route spends money
+   and a trait in the query string is a way to mint cache entries. The live
+   `Combatant`'s `size` attribute first (an attribute read, where `snapshot()`
+   re-serializes the whole board), the persisted snapshot second.
+   `Combatant.to_dict` has always carried `size`, so **a row written before any
+   of this still answers** and a replay does not re-cast or re-pay. A combatant
+   no snapshot names falls to `DEFAULT_SIZE_BAND`; the cost of that is one clip
+   keyed twice if the same line is later asked for when the creature can be
+   resolved, bounded by dialogue.
+
+Monster clips are re-keyed once more by this, which the `MonsterFX` token
+handles as before. `tests/tts/test_voices.py` pins the bands, the monotonicity,
+the default, that no creature of any size is left sounding like a person, and
+— walking every creature in every shipped scenario — that no two monsters in
+one game are dealt the same voice, size, grit, room and tempo together. The
+last two are the properties the bands could plausibly have broken, since
+narrowing the size shift to a species takes distinctness out of it and takes
+the smallest species' shift down to almost nothing. Both fail when the rule
+they pin is removed.

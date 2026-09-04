@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 import pytest
@@ -116,6 +117,68 @@ def test_a_monster_is_served_as_a_wav_and_a_cache_hit_agrees(tts_client, tts, ga
     tts.monster_fx = False
     tts.clips.clear()
     assert tts_client.get(url).mimetype == "audio/mpeg"
+
+
+def test_a_monsters_size_comes_from_the_creature_not_the_slot(tts_app, tts_client, tts, game):
+    """The seat says which slot a creature took; the stat block says how big it
+    is. Without the second an Ogre and a Gnoll in one fight were told apart by
+    spawn order alone, and the gnoll could come out the bigger of the two."""
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    # What a running game has: live `Combatant`s carrying their SRD size.
+    entry.game.state = SimpleNamespace(combatants={
+        "mon_1": SimpleNamespace(size="L"),          # an ogre
+        "mon_2": SimpleNamespace(size="S"),          # a goblin
+    })
+
+    text = "You will not leave this cave alive."
+    ogre = tts_client.get(speak_url(game, key="monster:mon_1", text=text))
+    goblin = tts_client.get(speak_url(game, key="monster:mon_2", text=text))
+    assert ogre.status_code == goblin.status_code == 200
+
+    # The clip is keyed on the cast, so the ETag is what proves the size
+    # reached it: the ogre's is the key for a Large, and not the key it would
+    # have had if the route had said nothing about the creature.
+    assert ogre.headers["ETag"] == '"%s"' % tts.cache_key_for(
+        "monster:mon_1", text, size="L")[1]
+    assert ogre.headers["ETag"] != '"%s"' % tts.cache_key_for("monster:mon_1", text)[1]
+    assert goblin.headers["ETag"] == '"%s"' % tts.cache_key_for(
+        "monster:mon_2", text, size="S")[1]
+
+    # And the one thing a listener would notice.
+    assert tts.cast("monster:mon_1", size="L").fx.size_pct > \
+        tts.cast("monster:mon_2", size="S").fx.size_pct
+
+
+def test_a_creature_the_game_cannot_name_is_cast_rather_than_refused(tts_app, tts_client,
+                                                                     tts, game):
+    """A combatant no snapshot holds is `DEFAULT_SIZE_BAND`, not a 500 and not
+    a silence: the line still has to be spoken."""
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.state = SimpleNamespace(combatants={})
+    rv = tts_client.get(speak_url(game, key="monster:mon_9"))
+    assert rv.status_code == 200
+    assert rv.headers["ETag"] == '"%s"' % tts.cache_key_for(
+        "monster:mon_9", "The cart still smoulders.")[1]
+
+
+def test_the_size_is_read_from_the_row_when_the_process_no_longer_has_the_game(tts_app):
+    """A finished game replayed after a restart has only its persisted
+    snapshot. `size` has always been in `Combatant.to_dict`, so a row written
+    before any of this still answers — which is what keeps a replay from
+    re-casting and re-paying for every monster line."""
+    from web.routes.tts import _creature_size_for  # noqa: PLC0415
+
+    row = {"snapshot": {"state": {"combatants": {"mon_4": {"size": "H"}}}}}
+    assert _creature_size_for(None, row, "monster:mon_4") == "H"
+    assert _creature_size_for(None, row, "monster:mon_5") == ""
+    assert _creature_size_for(None, row, "dm") == ""          # not a creature
+    assert _creature_size_for(None, {"snapshot": None}, "monster:mon_4") == ""
+
+    # The live combatant wins, being an attribute read where the snapshot is a
+    # re-serialization of the whole board.
+    entry = SimpleNamespace(game=SimpleNamespace(
+        state=SimpleNamespace(combatants={"mon_4": SimpleNamespace(size="S")})))
+    assert _creature_size_for(entry, row, "monster:mon_4") == "S"
 
 
 def test_what_it_refuses(tts_client, tts, game):
@@ -398,9 +461,9 @@ def test_simultaneous_clips_cannot_walk_past_the_budget(tts_app, tts_client, tts
 
     real = tts.synthesize
 
-    def slow(key, text, gender="", age=""):
+    def slow(key, text, gender="", age="", *, size=""):
         time.sleep(0.2)          # every other request is admitted or refused meanwhile
-        return real(key, text, gender, age)
+        return real(key, text, gender, age, size=size)
 
     tts.synthesize = slow
     codes = []
@@ -590,9 +653,9 @@ def test_two_tabs_after_one_line_are_one_clip_not_one_refusal(tts_app, tts_clien
 
     real = tts.render
 
-    def slow(key, body, gender="", age=""):
+    def slow(key, body, gender="", age="", *, size=""):
         time.sleep(0.2)
-        return real(key, body, gender, age)
+        return real(key, body, gender, age, size=size)
 
     tts.render = slow
     codes = []
