@@ -731,7 +731,10 @@ emitted — but a turn is a beat at the table, not a speech per die roll.
    `FUZZY_MIN_WORDS` (4) content words or more — when the Jaccard overlap is
    ≥ `SELF_REPEAT` (0.5) for the same speaker or ≥ `ECHO_REPEAT` (0.7) for a
    different one. `_line_key` decides what "content" means: function words out
-   (`_STOPWORDS`), everything else in, length no test of meaning.
+   (`_STOPWORDS`), everything else in, length no test of meaning, words
+   tokenized as Unicode so a game played in Cyrillic or CJK is judged on its
+   words rather than on the empty set an ASCII-only pattern leaves. A line
+   with no words at all (pure punctuation) is never suppressed.
 
    Two rules exist because a word-overlap heuristic reads wording, not sense,
    and the failures are asymmetric — a false repeat silences a real
