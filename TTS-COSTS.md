@@ -60,10 +60,13 @@ combat round, across both configs:
 | goblin_ambush | 13 | 85 | 882 | 1.04 |
 | crypt | 7 | 51 | 905 | 1.04 |
 
-So **~2,900 characters per combat round** with everything spoken (~890 of
-mechanics, ~2,000 of narration at 6.5–7.3 turns a round), plus ~1,000 for
-scene-setting and the epilogue. That reproduces both measured games to within
-2%, and it is the number to plan with.
+Turns are the better unit — turns per round depend on how many creatures are
+alive, so a per-round figure quietly bakes in this party's size and this
+fight's attrition. Per turn it is **~420 characters** with everything spoken
+(425 for goblin_ambush, 415 for crypt), plus ~1,000 a game for scene-setting
+and the epilogue. That reproduces both measured games to within 2%, and it is
+the number to plan with. Per round, at the 6.5–7.3 turns these two averaged,
+it works out at ~2,900.
 
 The cap is `max_rounds_per_combat`, and it is enforced **per combat**
 (`orchestrator/game.py:661`), not per game. crypt's observed 7 rounds are
@@ -79,16 +82,31 @@ can add another. Note the ceiling does not require a configured encounter:
 goblin_ambush lists one, for scene 1, but a `start_combat` ruling in scene 2
 would still open a second fight.
 
-| | max_scenes × cap | rounds | chars at cap |
-|---|---|---|---|
-| goblin_ambush | 2 × 20 | 40 | ~117,000 |
-| crypt | 2 × 25 | 50 | ~146,000 |
+A combat ends at whichever of two limits binds first: `max_rounds_per_combat`,
+or `MAX_TURNS_PER_COMBAT = 400` (`game.py:37`). Which one that is depends on
+how many creatures are in the fight, and *that* is not bounded anywhere —
+`DMAgent.adjudicate()` requires a `start_combat` encounter to name monsters
+(`agents/dm.py:272`) but never checks how many.
 
-Against 13 and 7 rounds observed, that is 3–5× the central figure — a static
-ceiling, but not a reassuring one. It is the argument for putting narration in
-the ledger before turning any of this on rather than after: `budget_usd` is
-what stops a long game costing $15 of ElevenLabs, and today it cannot see the
-spend at all.
+The configured encounters are 9–10 combatants, so for them the round cap binds
+first, and nobody dying is the worst case:
+
+| | combats | turns at cap | chars |
+|---|---|---|---|
+| goblin_ambush | 2 × 20 rounds × 9 | 360 | ~152,000 |
+| crypt | 2 × 25 rounds × 9–10 | 475 | ~201,000 |
+| either, DM-created encounter | 2 × 400 turns | 800 | ~340,000 |
+
+The last row is the real structural ceiling: a DM-created fight of ~16–20
+creatures hits the 400-turn cap before its round cap, and `max_scenes` is all
+that stops there being a third. **~340,000 characters is $5.10 on Aura-1 and
+$34 on ElevenLabs v3.**
+
+Against 30,000 measured, that is a 5–11× spread between a typical game and a
+permitted one. Which is the argument for putting narration in the ledger before
+turning any of this on rather than after: `budget_usd` is the only thing in the
+system that would stop it, and today it cannot see character-priced spend at
+all.
 
 ## 2. Rates
 
@@ -127,9 +145,10 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 | ElevenLabs Flash | $1.50 | $1.10 | $2.61 |
 | ElevenLabs v3 | $3.00 | $2.20 | $5.22 |
 
-At the configured ceilings (§1) the same games cost far more: goblin_ambush's
-117,000 chars is $1.76 on Aura-1 and $11.70 on ElevenLabs v3; crypt's 146,000
-is **$2.19 and $14.60**. Budget for the ceiling, not the average.
+At the ceilings in §1 the same games cost far more: goblin_ambush's 152,000
+chars is $2.28 on Aura-1 and $15.20 on ElevenLabs v3, crypt's 201,000 is $3.02
+and $20.10, and a DM-created fight running to the 400-turn cap in both scenes
+is **$5.10 and $34.00**. Budget for the ceiling, not the average.
 
 Monthly, at 30,000 chars/game:
 
