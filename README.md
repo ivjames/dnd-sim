@@ -360,17 +360,21 @@ prompt-cached, and summaries are written by the cheap model.
 
 ## The spectator page
 
-One rail and one column. Initiative, the party and the enemies sit down the
-left in tight rows — one line per enemy, two per party member — so a full
-combat is a glance rather than a scroll. The battle map and the controls sit in
-a strip **above** the transcript; the transcript takes whatever height the
-viewport has left; and under it, in reading order, come its own `mechanics` and
-`follow` toggles and then the narrator's transport — the things you reach for
-because of a line you have just read, rather than something between you and the
-line. Below a phone's width the whole thing becomes one column and the
-transcript moves back above the strip, because six panels of preamble is not a
-way to read a story. The narration bar stays under the transcript at every
-width.
+A board and a feed. The board is the four things you glance at, two by two
+**above** the transcript: the battle map top left, the party top right, the
+enemies bottom left and the initiative order bottom right. Each quadrant is a
+**fixed height** and scrolls inside itself — a fight with nine combatants used
+to lengthen those panels until the story started below the fold, and the map
+now fits the height it has as well as the width.
+
+Under them the feed: the transcript takes whatever the viewport has left and
+scrolls internally, so a running game never lengthens the page; then, in
+reading order, its own `mechanics` and `follow` toggles, and last a row holding
+the narrator's transport with the table controls beside it — the things you
+reach for because of a line you have just read, rather than something between
+you and the line. Below a phone's width the whole thing becomes one column and
+the transcript moves back above the board, because four panels of preamble is
+not a way to read a story.
 
 **Dark or light, and the page will follow the system unless told otherwise.**
 The button in the top bar cycles `auto → light → dark`; the choice is kept in

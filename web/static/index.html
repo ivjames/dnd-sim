@@ -58,27 +58,13 @@
 
 <main class="layout">
 
-  <!-- RAIL: initiative, party, enemies -->
-  <section class="rail" aria-label="Party and initiative">
-    <div class="panel">
-      <h2 class="panel-title">Initiative</h2>
-      <ol id="initiative" class="initiative"><li class="empty">No combat.</li></ol>
-    </div>
-    <div class="panel">
-      <h2 class="panel-title">Party</h2>
-      <div id="party" class="party"><p class="empty">No game loaded.</p></div>
-    </div>
-    <div class="panel">
-      <h2 class="panel-title">Enemies</h2>
-      <div id="enemies" class="party party-compact"><p class="empty">&mdash;</p></div>
-    </div>
-  </section>
+  <!-- BOARD: the four things you glance at, two by two and fixed in height —
+       map top left, the party top right, the enemies below the map and the
+       initiative order beside them. Fixed so that a long fight cannot grow
+       them and push the transcript off the screen. -->
+  <section class="board" aria-label="Battle map, party, enemies and initiative">
 
-  <div class="stack">
-
-  <!-- DECK: map and controls — above the transcript, not below it -->
-  <section class="deck" aria-label="Battle map and controls">
-    <div class="panel">
+    <div class="panel quad quad-map">
       <h2 class="panel-title">Battle map</h2>
       <div class="canvas-wrap">
         <canvas id="grid" width="480" height="400" role="img" aria-label="Battle grid"></canvas>
@@ -91,30 +77,34 @@
         <span><i class="sw wall"></i>wall</span>
       </div>
     </div>
-    <div class="panel">
-      <h2 class="panel-title">Controls</h2>
-      <p id="ctl-note" class="ctl-note" hidden></p>
-      <p id="write-locked" class="hint" hidden></p>
-      <div id="write-controls" hidden>
-        <div class="controls">
-          <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
-          <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
-          <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
-        </div>
-        <form id="note-form" class="note-form">
-          <label class="lbl" for="note-text">DM note from the table</label>
-          <textarea id="note-text" rows="2" maxlength="2000"
-                    placeholder="A raven lands on the cart&hellip;"></textarea>
-          <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
-        </form>
+
+    <div class="panel quad">
+      <h2 class="panel-title">Party</h2>
+      <div class="panel-body">
+        <div id="party" class="party"><p class="empty">No game loaded.</p></div>
       </div>
-      <p id="conn" class="conn conn-off">stream: offline</p>
     </div>
+
+    <div class="panel quad">
+      <h2 class="panel-title">Enemies</h2>
+      <div class="panel-body">
+        <div id="enemies" class="party party-compact"><p class="empty">&mdash;</p></div>
+      </div>
+    </div>
+
+    <div class="panel quad">
+      <h2 class="panel-title">Initiative</h2>
+      <div class="panel-body">
+        <ol id="initiative" class="initiative"><li class="empty">No combat.</li></ol>
+      </div>
+    </div>
+
   </section>
 
-  <!-- FEED: the transcript, its toggles under the text, and the narrator's
-       transport under both -->
-  <section class="feed" aria-label="Transcript and narration">
+  <!-- FEED: the transcript, capped so that new lines scroll inside it rather
+       than lengthening the page, and under it the narrator's transport with
+       the table controls beside it. -->
+  <section class="feed" aria-label="Transcript, narration and controls">
     <div class="panel panel-fill">
       <h2 class="panel-title">Transcript</h2>
       <div id="transcript" class="transcript" tabindex="0">
@@ -126,36 +116,57 @@
       </div>
     </div>
 
-    <div id="voice-panel" class="panel" hidden>
-      <h2 class="panel-title">Narration</h2>
-      <div class="transport">
-        <button id="vt-back" class="btn btn-transport" type="button" disabled
-                aria-label="Read the previous line again" title="Back one line">&#9198;</button>
-        <button id="vt-play2" class="btn btn-transport" type="button" disabled
-                aria-label="Play the narration" title="Play / pause">&#9654;</button>
-        <button id="vt-skip" class="btn btn-transport" type="button" disabled
-                aria-label="Skip this line" title="Skip this line">&#9197;</button>
-        <button id="vt-live" class="btn btn-transport btn-live" type="button" disabled
-                aria-label="Jump to the newest line" title="Jump to the newest line">live</button>
+    <div class="under">
+      <div id="voice-panel" class="panel" hidden>
+        <h2 class="panel-title">Narration</h2>
+        <div class="transport">
+          <button id="vt-back" class="btn btn-transport" type="button" disabled
+                  aria-label="Read the previous line again" title="Back one line">&#9198;</button>
+          <button id="vt-play2" class="btn btn-transport" type="button" disabled
+                  aria-label="Play the narration" title="Play / pause">&#9654;</button>
+          <button id="vt-skip" class="btn btn-transport" type="button" disabled
+                  aria-label="Skip this line" title="Skip this line">&#9197;</button>
+          <button id="vt-live" class="btn btn-transport btn-live" type="button" disabled
+                  aria-label="Jump to the newest line" title="Jump to the newest line">live</button>
+        </div>
+        <p id="vt-now" class="vt-now">voice off</p>
+        <p id="vt-src" class="vt-src" hidden></p>
+        <div class="vt-settings">
+          <label class="chk" for="voice-rate">rate</label>
+          <select id="voice-rate" aria-label="Speech rate" title="Speech rate">
+            <option value="slow">slow</option>
+            <option value="normal" selected>normal</option>
+            <option value="fast">fast</option>
+          </select>
+          <label class="chk" title="Speak only narration and dialogue">
+            <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
+          <label class="chk disabled" title="Turn voice on: with no narration there is nothing to hold the game for.">
+            <input type="checkbox" id="voice-hold" checked disabled> hold the game for the narrator</label>
+        </div>
       </div>
-      <p id="vt-now" class="vt-now">voice off</p>
-      <p id="vt-src" class="vt-src" hidden></p>
-      <div class="vt-settings">
-        <label class="chk" for="voice-rate">rate</label>
-        <select id="voice-rate" aria-label="Speech rate" title="Speech rate">
-          <option value="slow">slow</option>
-          <option value="normal" selected>normal</option>
-          <option value="fast">fast</option>
-        </select>
-        <label class="chk" title="Speak only narration and dialogue">
-          <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
-        <label class="chk disabled" title="Turn voice on: with no narration there is nothing to hold the game for.">
-          <input type="checkbox" id="voice-hold" checked disabled> hold the game for the narrator</label>
+
+      <div class="panel panel-controls">
+        <h2 class="panel-title">Controls</h2>
+        <p id="ctl-note" class="ctl-note" hidden></p>
+        <p id="write-locked" class="hint" hidden></p>
+        <div id="write-controls" hidden>
+          <div class="controls">
+            <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
+            <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
+            <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
+          </div>
+          <form id="note-form" class="note-form">
+            <label class="lbl" for="note-text">DM note from the table</label>
+            <textarea id="note-text" rows="2" maxlength="2000"
+                      placeholder="A raven lands on the cart&hellip;"></textarea>
+            <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
+          </form>
+        </div>
+        <p id="conn" class="conn conn-off">stream: offline</p>
       </div>
     </div>
   </section>
 
-  </div>
 </main>
 
 <!-- UNLOCK PANEL -->

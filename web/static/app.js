@@ -638,12 +638,24 @@
     var grid = st.grid || {};
     var w = Math.max(1, num(grid.width, 12)), h = Math.max(1, num(grid.height, 10));
 
-    var cssW = canvas.clientWidth || 480;
-    var cell = Math.max(14, Math.floor(cssW / w));
+    // The map lives in a fixed-height quadrant, so the square has to fit the
+    // height it has as well as the width — sizing on width alone is what let a
+    // 10-row grid run out of the bottom of the panel. Both dimensions are then
+    // written back as CSS pixels: the canvas is no longer stretched to the
+    // panel by the stylesheet, so nothing else knows how big it should be.
+    var wrap = canvas.parentElement;
+    var cssW = (wrap && wrap.clientWidth) || canvas.clientWidth || 480;
+    var availH = (wrap && wrap.clientHeight) || 0;
+    var cell = Math.floor(cssW / w);
+    if (availH > 0) cell = Math.min(cell, Math.floor(availH / h));
+    // The floor keeps a big grid readable (the panel scrolls instead); the
+    // ceiling stops a small one growing to an inch a square.
+    cell = Math.max(10, Math.min(48, cell));
     var cssH = cell * h;
     var dpr = window.devicePixelRatio || 1;
     canvas.width = Math.floor(cell * w * dpr);
     canvas.height = Math.floor(cssH * dpr);
+    canvas.style.width = (cell * w) + 'px';
     canvas.style.height = cssH + 'px';
     var ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
