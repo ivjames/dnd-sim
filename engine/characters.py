@@ -101,12 +101,17 @@ class CharacterSheet:
     spellcasting_ability: str | None = None
     features: list[str] = field(default_factory=list)
     persona: str = ""
-    # Who the character is, rather than what they can do. `gender` is what the
-    # config stated and is what casts the voice (tts/voices.py); `pronouns` is
-    # what the table is told to call them, and is resolved once here — stated,
-    # else implied by the gender, else they/them — so that no reader of a sheet
-    # has to redo that reasoning and arrive somewhere else.
+    #: What the character's own spec says it is, verbatim ("female", "m", ""),
+    #: or "" where it says nothing. Inert: nothing in the rules reads it. It is
+    #: here so the one authored answer reaches both the readers that want it —
+    #: `tts.voices` for casting and `agents.views` for the pronouns the DM
+    #: narrates in — instead of each inventing its own.
     gender: str = ""
+    #: What the table is told to call them: what the character stated, else
+    #: what its gender implies, else they/them. Resolved once, here, so that a
+    #: spec may say `they/them` for someone whose voice is cast from `female`
+    #: — the two questions are not the same question — and so that no reader of
+    #: a sheet redoes the reasoning and arrives somewhere else.
     pronouns: str = DEFAULT_PRONOUNS
     # extras the engine consults; not part of the minimal contract signature
     expertise: list[str] = field(default_factory=list)

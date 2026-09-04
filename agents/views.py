@@ -11,12 +11,73 @@ from typing import Any, Iterable
 
 from .common import event_text
 
-__all__ = ["player_view", "dm_view", "render_actions", "hp_band", "party_summary",
-           "pronoun_line"]
+__all__ = [
+    "player_view",
+    "dm_view",
+    "render_actions",
+    "hp_band",
+    "party_summary",
+    "pronouns_for",
+    "PRONOUNS",
+    "DEFAULT_PRONOUNS",
+]
 
 MAX_RECENT_EVENTS = 12
 # Mechanical noise the LLM does not need one line each for.
 _SKIP_KINDS = {"roll", "turn_start", "turn_end", "round_start", "system", "cost"}
+
+
+#: How a character's stated gender is read as pronouns for narration.
+#:
+#: The spellings are exactly those `tts.voices.GENDERS` accepts, and
+#: `tests/orchestrator/test_narration_attribution.py` runs the two against each other
+#: so they cannot drift apart: one authored answer on a party spec should not
+#: cast a voice one way and narrate a character the other. It is not imported
+#: from there — `agents/` sits under `orchestrator/` in the layering and `tts/`
+#: is the web layer's, so the table is copied and pinned rather than reached
+#: across for.
+PRONOUNS = {
+    "f": "she/her", "female": "she/her", "woman": "she/her",
+    "m": "he/him", "male": "he/him", "man": "he/him",
+}
+
+#: Everything else, and that is the answer far more often than not.
+#:
+#: A monster gets this always. `monster_to_combatant` builds from an SRD stat
+#: block, which states a size and a type and no gender, so there is nothing
+#: authored to read — and the fix for a Bandit Captain who is "she" in round 2
+#: and "he" in round 5 is not to deal her a gender out of the dice, it is to
+#: stop the question being open. Singular "they" is what English already does
+#: for a referent whose gender is not established, it is stable because it is
+#: the same for every monster in every game rather than drawn per instance, and
+#: it invents nothing about a creature nobody wrote. The same goes for a party
+#: member whose own spec is silent: unstated stays unstated.
+DEFAULT_PRONOUNS = "they/them"
+
+
+def pronouns_for(c: Any) -> str:
+    """The pronouns narration should use for `c` — from its sheet, or the default.
+
+    Only a character sheet can carry an answer, and only where the party spec
+    that built it stated one. Nothing is inferred from a name, a class or a
+    stat block.
+
+    A sheet that already resolved the question is believed rather than second-
+    guessed: `build_character` reads a spec's own `pronouns` first and only
+    then falls back to what its `gender` implies, so a character may be
+    they/them while its voice is cast from `female` — the two are not the same
+    question, and re-deriving here would overrule the answer the character
+    gave. The gender table below stays live underneath for a sheet built by
+    something that does not resolve it (an injected engine, a row persisted
+    before the field existed), which is the same reason everything in this
+    module is duck-typed.
+    """
+    sheet = getattr(c, "sheet", None)
+    resolved = str(getattr(sheet, "pronouns", "") or "").strip()
+    if resolved:
+        return resolved
+    stated = str(getattr(sheet, "gender", "") or "").strip().lower()
+    return PRONOUNS.get(stated, DEFAULT_PRONOUNS)
 
 
 # --- small helpers ---------------------------------------------------------
@@ -70,6 +131,22 @@ def _distance_ft(state: Any, a: Any, b: Any) -> int:
 
 def _active(c: Any) -> bool:
     return not getattr(c, "dead", False)
+
+
+def _active_id(state: Any) -> str | None:
+    """The combatant whose turn it is, or None outside combat.
+
+    Duck-typed like everything else here: a state object that cannot answer
+    (a test fake, a snapshot dict) simply has no turn to report.
+    """
+    fn = getattr(state, "active_id", None)
+    if not callable(fn):
+        return None
+    try:
+        cid = fn()
+    except Exception:  # noqa: BLE001 - a view must never be the thing that fails
+        return None
+    return str(cid) if cid else None
 
 
 def _sheet_line(c: Any) -> str:
@@ -155,33 +232,6 @@ def _scene_line(state: Any) -> str:
     return line or "(no scene set)"
 
 
-def _pronouns(c: Any) -> str:
-    """How to refer to this combatant, or "" for a creature with no sheet.
-
-    Read off the sheet rather than worked out here: `build_character` resolved
-    it once, from what the character stated or what its gender implies, and a
-    second resolution in the view layer is a second chance to disagree.
-    """
-    return str(getattr(getattr(c, "sheet", None), "pronouns", "") or "")
-
-
-def pronoun_line(state: Any) -> str:
-    """`Sadi Marchetti: she/her; Adept Weylin Doss: they/them` — or "".
-
-    One line, not a column on every row of the combatant table: it is the same
-    string on every turn of the game, it is read by a model that only needs
-    telling once per prompt, and the table is sent on every DM and player call
-    of the whole game. A pronoun per row would be the same fact bought several
-    thousand times.
-    """
-    parts = [
-        f"{getattr(c, 'name', '?')}: {_pronouns(c)}"
-        for c in (getattr(state, "combatants", None) or {}).values()
-        if _pronouns(c)
-    ]
-    return "; ".join(parts)
-
-
 def party_summary(state: Any) -> str:
     """One-line-per-PC roster, used to prime the DM at scene open."""
     rows = []
@@ -191,7 +241,7 @@ def party_summary(state: Any) -> str:
         sheet = getattr(c, "sheet", None)
         if sheet is not None:
             rows.append(
-                f"{c.name} ({_pronouns(c) or 'they/them'}, {getattr(sheet, 'race', '?')} "
+                f"{c.name} ({pronouns_for(c)}, {getattr(sheet, 'race', '?')} "
                 f"{getattr(sheet, 'klass', '?')} {getattr(sheet, 'level', 1)}): "
                 f"{getattr(sheet, 'persona', '') or 'no notes'}"
             )
@@ -221,13 +271,8 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
         lines.append("Resources: " + _resources(me))
         lines.append("Your conditions: " + _conds(me))
 
-    pronouns = pronoun_line(state)
-    if pronouns:
-        lines.append("")
-        lines.append(f"PRONOUNS: {pronouns}")
-
     lines.append("")
-    lines.append("COMBATANTS (name | side | health | dist | conditions)")
+    lines.append("COMBATANTS (name | pronouns | side | health | dist | conditions)")
     for cid, c in combatants.items():
         if not _active(c):
             continue
@@ -241,7 +286,8 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
             dist = f"{_distance_ft(state, me, c)}ft" if me is not None else "?"
             tag = ""
         lines.append(
-            f"{cid} {getattr(c, 'name', '?')}{tag} | {side} | {health} | {dist} | {_conds(c)}"
+            f"{cid} {getattr(c, 'name', '?')}{tag} | {pronouns_for(c)} | "
+            f"{side} | {health} | {dist} | {_conds(c)}"
         )
 
     events = _event_lines(recent)
@@ -265,12 +311,19 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
     if summary:
         lines.append(f"SO FAR: {' '.join(str(summary).split())}")
 
-    pronouns = pronoun_line(state)
-    if pronouns:
-        lines.append(f"PRONOUNS: {pronouns}")
+    # Whose turn it is, said outright. The DM used to have to infer it from
+    # which name happened to lead the event list, and that is wrong whenever a
+    # turn opens with someone else's reaction — an opportunity attack on the
+    # mover goes first in the list about half the time — which is how a turn
+    # belonging to a PC gets narrated as the monster's, and how the DM ends up
+    # acting for a player character it was told not to act for.
+    actor_id = _active_id(state)
+    if actor_id is not None:
+        actor = combatants.get(actor_id)
+        lines.append(f"TURN: {actor_id} {getattr(actor, 'name', '?')}")
 
     lines.append("")
-    lines.append("COMBATANTS (id | name | side | HP | AC | pos | conditions)")
+    lines.append("COMBATANTS (id | name | pronouns | side | HP | AC | pos | conditions)")
     for cid, c in combatants.items():
         status = ""
         if getattr(c, "dead", False):
@@ -279,7 +332,8 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
             status = " DOWN"
         pos = _pos(c)
         lines.append(
-            f"{cid} | {getattr(c, 'name', '?')} | {getattr(c, 'side', '?')} | "
+            f"{cid} | {getattr(c, 'name', '?')} | {pronouns_for(c)} | "
+            f"{getattr(c, 'side', '?')} | "
             f"{getattr(c, 'hp', 0)}/{getattr(c, 'max_hp', 0)} | AC {getattr(c, 'ac', 10)} | "
             f"({pos[0]},{pos[1]}) | {_conds(c)}{status}"
         )

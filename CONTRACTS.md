@@ -1432,6 +1432,170 @@ children, because there is nothing to ask.
    voice names across every OS and locale would be a guess dressed as data. A
    session on the fallback engine casts as it always did.
 
+### 2026-09-04 — orchestrator/ + web/ — a knockout is announced after its narration
+
+The loop in §4 publishes a turn's engine events and *then* asks the DM to
+narrate it. That is right for everything the engine says except the two lines
+that are the reveal: `down` and `dead` are reported the instant the HP reaches
+0, which is a paragraph before the prose describing the same swing. On the page
+it merely reads oddly. Spoken — and `speech.js` classes both kinds as STORY, so
+they are read aloud even with *mute mechanics* on — it is the spoiler said over
+the top of its own reveal: "Bandit 3 dies", and then, seconds later, the axe is
+still in the air.
+
+1. **`Game._emit_turn` holds them; `Game._flush_reveals` releases them.** The
+   per-turn emission in `_run_turn` now routes through `_emit_turn`, which
+   diverts events whose kind is in `REVEAL_KINDS = ("down", "dead")` into
+   `_pending_reveals` and emits everything else unchanged. `_run_combat`
+   flushes after `_narrate` and before `advance_turn`, so the reveal lands
+   inside its own turn, after the paragraph, ahead of `turn_end`/`round_start`.
+
+   The flush is **unconditional**: `_narrate` returns early for a turn with
+   nothing worth describing, and the DM may answer with nothing at all. A
+   knockout held for a narration that never comes still has to be said.
+
+2. **The order is the only thing that changes.** The attack, the damage and
+   the HP line stay where they happened — §6 requires the narration not to
+   contradict the numbers, and moving the numbers with the beat would take
+   that check away with them. `dm.narrate` is still handed the turn's *whole*
+   event list, reveals included, so the DM writes from the same facts as
+   before. A mock run at a fixed seed emits an identical multiset of events;
+   only the position of the `down`/`dead` lines differs.
+
+3. **Reveals held at the end of a game are released on the way out.**
+   `_narrate` gates and checks the budget, so a stop or an exhausted budget can
+   land between the blow and the line that says it landed. `run()`'s `finally`
+   calls `_flush_reveals(gated=False)` — `_emit` gained that keyword, which
+   skips the tempo sleep and the pause/hold/stop gate — before the closing cost
+   event. A transcript in which someone is hit to 0 HP and nothing ever says
+   they fell is worse than one where the beat arrives late. `_flush_reveals`
+   pops one at a time for the same reason: a stop raised mid-flush must leave
+   the rest still pending for that last pass to find.
+
+4. **The transcript closes the mechanics group at a narration.** In `app.js`
+   the `narration` branch now clears `S.group`/`S.groupBody`. A turn's
+   mechanics group is a node already appended *above* the paragraph, and the
+   mechanics branch files any line into `S.groupBody` while one is open — so
+   leaving it open would put the released reveal back inside the group, above
+   the prose it is meant to follow, and send the playhead scrolling up to it.
+   Nothing else lands there today: `turn_end` already closed the group for the
+   end-of-turn ticks that follow it.
+
+Deaths from failed death saves are untouched. `advance_turn` rolls them
+between turns, where there is no narration for them to wait behind.
+
+### 2026-09-04 — web — `api()` errors carry their status; the hold latches only on one
+
+The spectator page's narration hold is a lease renewed every 4 s (the
+2026-09-04 amendment above). `voiceHoldSend`'s rejection handler latched
+`V.holdBroken = true` — stop asking for the rest of this game — on **any**
+rejection, its comment naming 404/409/501 as though those were the only ones
+possible. They are not: `api()` rejects on a dropped connection, a 502 while
+nginx restarts under a deploy, any 5xx. One of those ended holding for the rest
+of the page's life, and nothing re-armed it short of switching games or
+reloading; the game then ran on at `tempo_ms` and the narrator fell arbitrarily
+far behind, silently. A spectator reported 43 lines.
+
+1. **`api()` attaches the status to the error it throws**: `err.status =
+   r.status`, alongside the unchanged message. Additive — every existing catch
+   reads `err.message` and is untouched — and deliberately absent when `fetch`
+   itself rejects, so no `status` means "no server answered" rather than some
+   code standing in for one. It is the only way a caller can tell a refusal
+   from a blip: the message is the server's own words whenever there are any,
+   and carries no code.
+
+2. **The hold gives up only on 404 / 409 / 501** — the three `hold()` in
+   `web/routes/api.py` returns that mean this game cannot be held (no such
+   game, running in another process, a game object without the method). Not the
+   400 for a non-numeric `seconds`, which is the page's own bug, and not a 5xx.
+
+3. **Anything else is retried, with a bounded back-off.** The hold stays wanted
+   and the next tick asks again, delayed by one `HOLD_TICK` per consecutive
+   failure up to `HOLD_RETRY_MAX` (60 s), cleared by a success and by
+   `voiceReset`. So a blip costs one tick and a genuinely dead endpoint is
+   asked once a minute rather than every four seconds forever. This is the one
+   qualification on "the client renews every 4 s" in the amendment above.
+
+Client-side only: no route, no payload and no `Game` method changes.
+`voiceOnGameEnd` still sets `holdBroken` outright — the game is over, there is
+nothing left to hold — and a backgrounded tab still drops its lease, which is a
+separate deliberate rule and not this bug.
+
+### 2026-09-04 — agents + engine — the DM is told whose turn it is, and what to call everyone
+
+The DM's per-turn narration was mechanically faithful and repeatedly wrong
+about attribution: it acted for player characters on a monster's turn, gave the
+actor's own blow to its target, asserted knockouts the engine never reported,
+and swapped a monster's gender between rounds. `dm_narrate.txt` already said
+"Do not act for player characters" and was ignored, because the prompt never
+established the two facts those errors need — who is acting, and what each
+creature is called.
+
+Measured over `examples/tollhouse.json` at seed 23 (62 narrations): **34 of
+them (55%) handed the DM an event list naming more than one creature**, and one
+of them opened with `Bandit 2 makes an opportunity attack on Captain Isolde
+Rooke …` on *Rooke's* turn. Inferring the actor from whichever name leads the
+list is the only thing the prompt allowed, and that is the inference that fails.
+
+**`dm_view` output changes in two ways** (§3; the `dm_view` and `DMAgent`
+signatures do not change):
+
+1. A `TURN: <id> <name>` line, above the combatants table, whenever
+   `state.active_id()` answers. It is absent outside combat and absent for a
+   state that cannot answer — the views stay duck-typed.
+2. The combatants table gains a pronouns column:
+   `id | name | pronouns | side | HP | AC | pos | conditions`.
+
+`dm_narrate.txt` gains one paragraph tying the two together — everything in the
+list other than the TURN creature is a reaction, pronouns come from the table
+and do not change, and a creature is bloodied/down/dead only where a line says
+so — and loses the now-redundant "Do not act for player characters".
+
+**`CharacterSheet` gains `gender: str = ""`** (§1.3), read by `build_character`
+from `spec["gender"]`, serialized both ways. Inert: no rule reads it. It exists
+so the one authored answer already on a party spec — `tts/voices.py` has read it
+for casting since 2026-09-04 — also reaches narration, instead of each reader
+inventing its own.
+
+**Pronouns are not dealt.** `agents/views.py` maps a *stated* gender to
+`she/her` / `he/him` on exactly the spellings `tts.voices.GENDERS` accepts
+(pinned against each other by a test, since `agents/` cannot import `tts/`), and
+everything else — every monster, and any party member whose spec is silent —
+gets `they/them`.
+
+That is a deliberate reading of the rule the `tts/` amendments set down. A
+shipped party character states a gender only where its own persona already
+does; the same principle says a `Bandit 3` built from an SRD stat block, which
+records a size and a type and no gender, has nothing to state. So nothing is
+inferred from a name and nothing is drawn from the dice — a pronoun out of the
+RNG is a pronoun that can drift, which is the bug. Singular *they* is what
+English already does for an unestablished referent, it is stable because it is
+the same for every monster in every game rather than per-instance, and it
+invents nothing about a creature nobody wrote.
+
+**No TTS consequence.** `web/routes/tts.py: _voice_traits_for` reads the game
+*config's* party list keyed by the voice key, and a monster's key is
+`monster:<id>`, which never matches a `pc_N` id. Monsters were cast as an adult
+of unstated gender before this and still are; `pronouns_for` lives in `agents/`
+and nothing in `tts/` reads it.
+
+**Frugality.** `orchestrator/game.py: _narrate` now builds its view with no
+`recent`. It was passing the turn's own events, so the view's RECENT block
+reprinted, line for line, the events block directly beneath it — across all 62
+narrations of that game every RECENT line was already in the events block,
+costing ~3.7k tokens a game for a second copy. Netting that against the TURN
+line, the pronouns column and the new paragraph, one full tollhouse game's
+accounted spend moves **$1.1082 → $1.1188, +1.0%**, and the game itself is
+unchanged: same 328 model calls, same events, same round 11.
+
+*Determinism:* nothing added draws from anything. A pronoun is a pure function
+of an authored string, and the turn's actor is state the engine already holds.
+`--mock --seed 23` is byte-identical across runs, and
+`tests/orchestrator/test_narration_attribution.py` asserts the narration
+prompts themselves are identical across two runs of one seed.
+
+---
+
 ---
 
 ### 2026-09-04 — tts/ + web/ — the panel says who will read each seat
@@ -1484,75 +1648,60 @@ stated there.
 
 ---
 
-### 2026-09-04 — engine/ + agents/ + web/static — gender and pronouns are on the character sheet
+---
 
-`gender` lived in the party spec and nowhere else. The two amendments that
-introduced it said so plainly — "**Not an engine field**: `CharacterSheet`
-(§1.3) is unchanged, `build_character` ignores the key, and neither the DM nor
-the players see it" — because its only job was narrowing a Polly voice pool.
-That was right about the *casting* and wrong about the *character*. Nothing the
-DM or the players ever read said whether a character was a she, a he or a they,
-so a model handed a name, a class and a persona filled the gap by inference:
-confidently, every turn, and sometimes wrongly. It is the same failure as the
-child's voice, one layer up — the casting had no idea, because there was
-nothing to ask.
+### 2026-09-04 — engine/ + agents/ — a character's pronouns are their own, not their gender's
 
-This reverses that "not an engine field" decision, deliberately and only for
-these two keys.
+Lands on top of "the DM is told whose turn it is, and what to call everyone",
+which arrived on `main` while this was being written and fixed the same bug
+from the other end. That amendment reads pronouns off `CharacterSheet.gender`
+at render time through `agents.views.pronouns_for`, which is right for every
+character in `examples/` and cannot express one that is not there: a party spec
+has exactly one place to say who someone is, and it is the field that also
+picks a Polly voice. A character who is they/them, or whose pronouns are not
+the ones their voice implies, has nowhere to say so.
 
-1. **`CharacterSheet` gains `gender: str` and `pronouns: str`.** Both are
-   carried by `to_dict`/`from_dict`, so a game reloaded from SQLite after a
-   restart does not start misgendering its party halfway through. Neither has
-   any rules meaning: `test_pronouns_change_nothing_mechanical` asserts that
-   two sheets built from the same spec with different genders differ in
-   exactly those two fields and nothing else. The engine stays pure and stays
-   ignorant of them; it carries them the way it carries `persona`.
+1. **`CharacterSheet.pronouns`**, alongside the `gender` that amendment added,
+   and a `"pronouns"` key on the party spec to fill it.
+   `engine.characters.normalize_pronouns(said, gender)` resolves it **once, at
+   build time**, in that order: what the character states, else what its stated
+   gender implies, else `they/them`. Carried by `to_dict`/`from_dict`, so a
+   game reloaded from SQLite after a restart does not start misgendering its
+   party halfway through; a row persisted before the field existed resolves
+   the same way a fresh build would.
 
-2. **`normalize_pronouns(said, gender)` is the one place a config's answer is
-   read**, and it resolves in that order: what the character states, else what
-   its stated gender implies, else `they/them`. Resolved **once, at build
-   time** rather than at each render, so no reader of a sheet has to redo the
-   reasoning and arrive somewhere else.
+   An unrecognised set is kept as written rather than corrected into the
+   default — neopronouns are not a typo, and a narrator handed `ey/em` can use
+   `ey/em`. Still inert: `test_pronouns_change_nothing_mechanical` asserts that
+   two sheets from one spec with different genders differ in exactly `gender`
+   and `pronouns`.
 
-   An unrecognised set is kept as written, not corrected into the default —
-   neopronouns are not a typo, and a narrator handed `ey/em` can use `ey/em`.
-   Only the shape is tidied.
+2. **`pronouns_for` believes a sheet that has already answered**, and keeps the
+   gender table underneath for one that has not (an injected engine, an old
+   row). One reader, one presentation: the pronouns **column** that amendment
+   put on the DM's combatant table is the right shape and stays — better than
+   the single roster line this change first had, because a column answers for
+   the monsters too, and pinning a Bandit Captain to they/them on every row is
+   exactly what stopped her drifting between rounds. `player_view` gains the
+   same column: a player talks about their allies and the monsters both.
 
-3. **A stated gender implies a pronoun; saying nothing means they/them.** The
-   implication matters because of what is already shipped: the twenty-eight
-   characters in `examples/` state a gender wherever their persona already
-   does and pronouns nowhere, so without it every one of them — Dame, Sister,
-   Father included — would be narrated as they/them. The default matters for
-   the other five, who state no gender precisely because their persona states
-   none: they/them is not a guess about them, it is the refusal to make one,
-   and it is what stops the DM inferring from a name. **No example config
-   changed**; the derivation is the whole migration.
+3. **Also told: the scene-open roster, the player's cached system prefix, and
+   both system prompts** — use the pronouns you are given, never infer them
+   from a name, a class, a title or a voice.
 
-   `engine/` may not import `tts/`, so the gender vocabulary exists in both.
-   `tests/engine/test_pronouns.py` runs every spelling `tts.voices.GENDERS`
-   accepts through `normalize_pronouns` and asserts they agree — a character
-   read aloud in a woman's voice and narrated as "they" is one character
-   described two ways.
+4. **`agents.views.PRONOUNS` and `engine.characters.GENDER_PRONOUNS` are the
+   same six spellings in two layers**, because `engine/` may not import
+   `agents/` and `agents/` may not import `tts/`. Both are pinned against
+   `tts.voices.GENDERS` by their own tests, so all three agree transitively: a
+   character read aloud in a woman's voice and narrated as "they" is one
+   character described two ways.
 
-4. **A `PRONOUNS:` line in `dm_view` and `player_view`, and a pronoun in
-   `party_summary` and the player's cached system prefix.** One line listing
-   every combatant that has a sheet, not a column on the combatant table: the
-   string is identical on every turn of the game and the table rides on every
-   DM and player call, so a column would buy the same fact several thousand
-   times a session. Monsters carry no sheet (`monster_to_combatant` passes
-   `sheet=None`), so they are absent from the line rather than guessed at, and
-   are narrated exactly as they were before.
+**No example config changed.** Twenty-three of the twenty-eight characters in
+`examples/` state a gender and none state pronouns, so the implication carries
+them; the other five state no gender because their persona states none, and
+they/them there is the refusal to guess rather than a guess.
 
-   `dm_system.txt` and `player_system.txt` gain the matching rule: use the
-   pronouns you are given, never infer them from a name, a class, a title or a
-   voice.
+The spectator card shows both on the line it already uses for identity.
 
-5. **The spectator card shows them**, on the identity line beside AC and class,
-   because that card is what a character sheet looks like in the UI. Monsters
-   have no sheet and so say nothing there, unchanged.
-
-Unchanged: voice casting, which still reads `gender` from the game's own
-config in `web/routes/tts.py` and not from the sheet, for the reason stated in
-the narration amendment — that endpoint spends money and must not take traits
-from a request. The sheet's copy is derived from the same spec, not a second
-source of truth.
+Unchanged: voice casting, which still reads `gender` from the game's own config
+in `web/routes/tts.py` and never from a request.

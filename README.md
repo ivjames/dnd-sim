@@ -410,9 +410,11 @@ transcript prints it in front of every line of dialogue as it always has.
 table. `gender` is what the config states and is what casts the voice; a
 character's `"pronouns"` — `"she/her"`, `"he/him"`, `"they/them"`, or anything
 else written the same way — is what the DM and the other players are told to
-call them, and it appears on a `PRONOUNS:` line in every view they are sent.
-Neither has any rules meaning: two sheets built from the same spec with
-different genders differ in exactly those two fields.
+call them, and it is a column on the combatant table in every view they are
+sent. The two are not the same question, which is why there are two fields: a
+character may be they/them and still be read aloud in a woman's voice. Neither
+has any rules meaning — two sheets built from the same spec with different
+genders differ in exactly those two fields.
 
 The set is resolved once, when the character is built, in this order: **what
 the character states**, else **what its stated gender implies**, else
@@ -429,9 +431,11 @@ Before this, the sheet said nothing about any of it, and a model handed a name,
 a class and a persona filled the gap by inference — confidently, every turn,
 and sometimes wrongly. That is the same failure as the child's voice, one layer
 up. The DM and player prompts now carry the matching rule: use the pronouns you
-are given, never infer them from a name, a class, a title or a voice. Monsters
-carry no character sheet, so they are absent from the line rather than guessed
-at, and are narrated exactly as they were before.
+are given, never infer them from a name, a class, a title or a voice. A monster
+has no character sheet — an SRD stat block records a size and a type and no
+gender — so it gets they/them on its own row, every row, every turn: the fix
+for a Bandit Captain who is "she" in round 2 and "he" in round 5 is not to deal
+her a gender, it is to close the question.
 
 A party member may state a `"gender"` — `female` or `male` — and is then dealt
 only from the voices Polly reports as that gender. It narrows who can be cast
@@ -640,6 +644,16 @@ catches up, when playback is paused, when the tab goes to the background, or
 when the game ends. It deliberately leaves `status` alone: holding is the
 narration keeping step, the table's own pause is something else, and the two
 stay separately controllable.
+
+A renewal that fails is not the same as one that is refused. Three answers mean
+this game will never take a hold — no such game (404), one another process is
+running (409), one that does not support it (501) — and those turn the option
+off for that game, with the tooltip saying so. Anything else is the wire
+failing rather than the game answering: a dropped connection, a 502 while nginx
+restarts under a deploy. The page keeps asking through those, backing off one
+heartbeat per consecutive failure up to a minute. Giving up on them instead is
+what used to leave a listener tens of lines behind with nothing on screen to
+say why.
 
 The checkbox is a *setting*, and the UI keeps that apart from whether anything
 is being held right now. It is disabled where the option cannot apply to this

@@ -7,7 +7,7 @@ from agents.dm import DMAgent
 from agents import player
 from agents.player import PlayerAgent
 from agents.summarizer import summarize
-from agents.views import dm_view, party_summary, player_view, pronoun_line, render_actions
+from agents.views import dm_view, party_summary, player_view, pronouns_for, render_actions
 from llm.client import LLMResponse, MockLLMClient
 from llm.cost import Ledger
 
@@ -125,30 +125,30 @@ def test_dm_view_shows_exact_numbers_and_positions():
     assert "(9,3)" in view
 
 
-def test_both_views_say_how_to_refer_to_the_party():
-    """A model handed a name and a class infers a gender from it, confidently
-    and sometimes wrongly. Being told is the fix, and both halves of the table
-    have to be told: the DM narrates the party, and a player talks about their
-    allies."""
+def test_a_stated_pronoun_beats_the_gender_that_casts_the_voice():
+    """The two are not the same question. A spec has one field for who someone
+    is only because nobody had added the other one; a character may be
+    they/them and still be read aloud in a woman's voice."""
     state = make_state()
-    for view in (dm_view(state, events(3), ""), player_view(state, "pc_1", events(), "")):
-        assert "PRONOUNS:" in view
-        assert "Thorin: he/him" in view
-        assert "Vessa: they/them" in view
-        assert "Marigold: she/her" in view
-        assert "Ilbrandt: they/them" in view
+    assert pronouns_for(state.combatants["pc_1"]) == "he/him"      # implied by gender
+    assert pronouns_for(state.combatants["pc_2"]) == "they/them"   # stated outright
+    assert pronouns_for(state.combatants["pc_3"]) == "she/her"     # implied by gender
+    assert pronouns_for(state.combatants["pc_4"]) == "they/them"   # nothing said
 
 
-def test_the_pronoun_line_is_one_line_and_not_a_column():
-    """It is the same string on every turn of the game and it rides on every
-    DM and player call — a pronoun per combatant row would buy the same fact
-    several thousand times over a session."""
-    state = make_state()
-    line = pronoun_line(state)
-    assert "\n" not in line
-    # Monsters carry no sheet, so they are absent rather than guessed at.
-    assert "Goblin" not in line
-    assert dm_view(state, events(3), "").count("he/him") == 1
+def test_the_player_view_carries_the_pronoun_column_the_dm_view_has():
+    """A player talks about their allies and the monsters both, and infers a
+    gender from a name exactly as readily as the DM does."""
+    view = player_view(make_state(), "pc_1", events(), "")
+    assert "COMBATANTS (name | pronouns | side | health | dist | conditions)" in view
+    def row(cid):
+        return next(l for l in view.splitlines() if l.startswith(f"{cid} "))
+
+    for cid, pron in [("pc_1", "he/him"), ("pc_2", "they/them"),
+                      ("pc_3", "she/her"), ("pc_4", "they/them")]:
+        assert f"| {pron} |" in row(cid), cid
+    # A monster states nothing and is not guessed at.
+    assert "| they/them |" in row("mon_1")
 
 
 def test_the_roster_that_opens_a_scene_introduces_each_character_properly():
