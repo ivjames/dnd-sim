@@ -16,6 +16,11 @@ htmlcov/
 *.sqlite3-wal
 *.sqlite3-shm
 
+# audio sourcing tool: harvested candidates, the built picker, downloaded
+# assets and the manifest. `config.json` (what the picker copies out) lives
+# here too — small enough to paste anywhere, so nothing is lost by ignoring it.
+/audio/
+
 # logs / local
 *.log
 .env

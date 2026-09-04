@@ -155,4 +155,12 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   per seat (`temperature` in a party spec), or from the panel's Improv field;
   clamped to `[0, 1]` because that is Anthropic's ceiling. The DM stays at 0.8
   — it owns world facts — and the summarizer at 0.3.
+- **Audio is sourced, not yet played.** `tools/audio/` (docs: `AUDIO.md`) is a
+  dev tool — cue table, library search, a self-contained picker page, a fetcher
+  that writes `audio/manifest.json` + `CREDITS.md`. It sits outside the layering
+  and nothing on the runtime path imports it; `audio/` is gitignored. The cue
+  table is held to `engine.events.EVENT_KINDS` by `tests/audio`, so a new event
+  kind fails the suite until someone decides whether it makes a noise. Only
+  public-domain and attribution licences are accepted, and CC BY credits are an
+  obligation that has to reach the page before any of it ships.
 - pm2 process name is `dnd-sim`; `dndsim logs` tails it.

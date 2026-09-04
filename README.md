@@ -356,6 +356,20 @@ paid option. Selection and wording live in `web/static/speech.js`, a
 dependency-free module that `node` can exercise directly; the playhead, the
 transport and the speech calls are in `app.js`.
 
+## Sourcing audio
+
+There is a tool for picking the game's music, ambience, stings, swells and
+effects: `python -m tools.audio harvest` searches the openly-licensed libraries
+(Freesound, Jamendo, the Internet Archive) for every one of the 55 cues,
+`audio/picker.html` is a self-contained preview screen you audition and assign
+in, and `python -m tools.audio fetch` turns what you picked into files, a
+`manifest.json` carrying each cue's event-match rule, and a `CREDITS.md`. Only
+public-domain and attribution licences pass the gate.
+
+Nothing plays yet: no event currently makes a sound, and neither `web/` nor
+`orchestrator/` imports any of it. The manifest is the handoff point. Full
+notes, the source table and the licence rules: [AUDIO.md](AUDIO.md).
+
 ## Deployment
 
 See [DEPLOY.md](DEPLOY.md). Short version: on the lab980 droplet, `git clone`

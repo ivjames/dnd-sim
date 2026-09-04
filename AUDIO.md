@@ -1,0 +1,187 @@
+# Sourcing music, ambience, stings, swells and effects
+
+A tool for picking the game's audio, not for playing it. It searches the
+openly-licensed libraries, builds a preview screen you audition in a browser,
+and turns what you picked into files on disk with a manifest and credits. What
+plays the manifest — the spectator UI, a server mixer, something else — is a
+separate decision and is not built yet.
+
+```bash
+export FREESOUND_API_KEY=...            # optional, and the one worth having
+export JAMENDO_CLIENT_ID=...            # optional, for full-length music
+.venv/bin/python -m tools.audio harvest # search every cue → audio/candidates.json + picker.html
+open audio/picker.html                  # audition, assign, tune, Copy configuration
+# save what you copied as audio/config.json
+.venv/bin/python -m tools.audio fetch   # download → audio/assets/, manifest.json, CREDITS.md
+.venv/bin/python -m tools.audio verify  # re-hash what was fetched
+```
+
+`audio/` is gitignored: the picks (`config.json`) are worth keeping and are
+small enough to paste anywhere; the audio itself is not repo material.
+
+## Where the audio comes from
+
+Three libraries have both a real search API and a licence field worth
+trusting, so those are the three the harvester queries.
+
+| Source | Good for | Licences | Key | Notes |
+|---|---|---|---|---|
+| [Freesound](https://freesound.org/docs/api/) | effects, stings, swells, ambience, some loops | CC0, CC BY, CC BY-NC (the harvester keeps the first two) | [free, instant](https://freesound.org/apiv2/apply/) → `FREESOUND_API_KEY` | 60 requests/min, 2000/day. Originals need OAuth2; previews do not (see below) |
+| [Jamendo](https://developer.jamendo.com/v3.0) | full-length music beds | CC, per track via `license_ccurl` | [free](https://devportal.jamendo.com/) → `JAMENDO_CLIENT_ID` | Their API terms govern the free tier — read them before anything commercial |
+| [Internet Archive](https://archive.org/advancedsearch.php) | music and long ambience | whatever the uploader declared; the query keeps only public-domain / BY / BY-SA | none | Works with no credentials at all, which is why it is here. The metadata is user-supplied and the hit rate is poor — a fallback, not a first choice |
+
+Everything else worth raiding has no search API. The picker's **Add by URL**
+form takes a direct audio link plus title, author and licence, so these are one
+paste each rather than unreachable:
+
+- [OpenGameArt](https://opengameart.org/) — filter by CC0; deep in fantasy
+  loops and RPG effect packs.
+- [Kenney](https://kenney.nl/assets?q=audio) — CC0 packs, consistently made,
+  good for UI ticks and impacts.
+- [Pixabay](https://pixabay.com/music/) — sizeable music and SFX libraries
+  under the Pixabay Content License. Their public API covers images and video
+  only, so music is a manual paste.
+- [ccMixter](http://dig.ccmixter.org/) — CC music, mostly BY / BY-NC.
+- [Incompetech](https://incompetech.com/music/royalty-free/) — CC BY, so
+  usable, but the credit is mandatory.
+- [Sonniss GDC bundles](https://sonniss.com/gameaudiogdc) — large royalty-free
+  SFX bundles; read the licence that ships inside each bundle.
+- [Tabletop Audio](https://tabletopaudio.com/) — built for exactly this job,
+  but under its own terms rather than a Creative Commons licence. Check them
+  before using anything from it.
+
+## Licences
+
+`sources.PERMISSIVE` is `cc0`, `pd`, `by`, `by-sa` — public domain or
+credit-required. The harvester drops anything else from the candidate list and
+`fetch` refuses it, because a NonCommercial or NoDerivatives track is a thing
+you cannot ship and therefore noise in a list you are auditioning by ear. If
+you have a reason to take one anyway, `fetch --allow by-nc` says so out loud.
+
+`fetch` writes `audio/CREDITS.md` from the manifest, grouped by licence, listing
+every asset with author, source and page. Anything under a BY or BY-SA heading
+has to be credited wherever the audio plays — keep that file next to the assets,
+and put its contents somewhere a listener can reach before this ships.
+
+Nothing here touches game *content* licensing: SRD 5.1 (CC-BY-4.0) still governs
+what the rules engine knows, and audio licences are a separate obligation.
+
+## Quality and the preview caveat
+
+Freesound generates .ogg and .mp3 previews for every upload; downloading the
+**original** file needs OAuth2 (a user login flow), while previews need only the
+API token. The harvester takes the HQ MP3 preview and the fetcher downloads
+that, so Freesound assets arrive as 128 kbps MP3 rather than the uploader's WAV.
+For a sting under narration that is inaudible; for a long music bed it is worth
+knowing. The licence on the audio is the same either way — it governs the
+recording, not the encoding — so nothing about attribution changes. If a
+particular asset deserves the original, fetch it by hand from its `page_url` and
+drop it in over the downloaded file (`verify` will then report a hash mismatch,
+which is the correct complaint).
+
+Jamendo returns a real download URL where the artist allowed it and a stream URL
+otherwise; the fetcher prefers the former. Archive files are whatever was
+uploaded.
+
+## The cue table
+
+`tools/audio/cues.py` is the authoritative list: 55 cues in five groups, 24 of
+them marked required. `python -m tools.audio cues` prints it.
+
+- **music** — long loopable beds, switched by phase: explore, tension, combat,
+  desperate combat, victory, defeat, downtime.
+- **ambience** — the place: stone corridors, wet cave, crypt, deep mine, night
+  forest, fen, campfire, road, weather. Assign one (or two, layered) per
+  scenario in `examples/`.
+- **sting** — short one-shots on a specific moment: initiative, crit, natural 1,
+  a body dropping, death, a failed death save, a scene change.
+- **swell** — risers with no impact, for the moments no single event can
+  identify. All manual.
+- **sfx** — the mechanical layer: dice, hit, miss, one per damage type, spell
+  cast, heal, conditions, movement, turn ticks.
+
+Each cue carries a `match` rule — an event kind plus equality constraints on the
+event's `data`, with dotted paths for nested values:
+
+```python
+{"kind": "attack", "data": {"hit": False, "roll.natural": 1}}   # sting_fumble
+{"kind": "damage", "data": {"damage_type": "fire"}}             # sfx_dmg_fire
+```
+
+Audio layers rather than replaces, so **one event lights at most one cue per
+group**: `combat_start` swaps the music bed *and* hits a sting; a crit fires
+`sting_crit` *and* `sfx_attack_hit`. Within a group the most specific match
+wins. `cues.cues_for_event(event)` is that logic, and `fetch` copies each cue's
+match rule into the manifest so a player needs the manifest and nothing else.
+
+Constraints are deliberately dumb — no ranges, no negation, no expressions.
+A cue that cannot be expressed that way carries `match: null` and says in its
+`when` what fires it.
+
+The test suite holds the table to the engine: every kind in
+`engine.events.EVENT_KINDS` must either have a cue or be listed in
+`UNSCORED_EVENT_KINDS`, no cue may match a kind the engine cannot emit, and a
+full seeded mock game is routed through the table to prove the rules fire on
+events the engine really produces. Add an event kind and the audio tests fail
+until someone decides whether it makes a noise.
+
+## The two documents
+
+**`config.json`** — what the picker copies out. One entry per assigned cue: the
+candidate's identity and URLs, its licence, and the playback knobs you set
+(`gain_db`, `loop`, `fade_in_ms`, `fade_out_ms`, `trim_start_s`, `trim_end_s`).
+
+```json
+{"version": 1, "assignments": {
+  "sting_crit": {"source": "freesound", "source_id": "316847",
+                 "title": "sword-hit.wav", "author": "someone",
+                 "license": "cc0", "page_url": "https://freesound.org/s/316847/",
+                 "download_url": "https://cdn.freesound.org/previews/316/316847_1-hq.mp3",
+                 "duration": 1.4, "gain_db": -8, "loop": false,
+                 "fade_in_ms": 0, "fade_out_ms": 0,
+                 "trim_start_s": 0, "trim_end_s": null}}}
+```
+
+**`manifest.json`** — what `fetch` writes beside the files. The same knobs, plus
+the local path, size and sha256, plus the cue's `match` rule and `when`, plus
+the credit block. Ordered like the cue table, so a diff between two runs reads.
+
+## Commands
+
+| | |
+|---|---|
+| `harvest` | search every cue and write `candidates.json`, then rebuild the picker. `--group sting`, `--cues a,b`, `--required`, `--per-query N`, `--source freesound`. Re-running one cue keeps the others |
+| `picker` | rebuild `picker.html` from an existing `candidates.json` |
+| `fetch` | download a config. `--config -` reads stdin, `--dry-run` lists without downloading, `--force` re-downloads, `--allow by-nc` widens the licence gate |
+| `verify` | re-hash every file against the manifest |
+| `cues` | print the cue table; `--json` for the machine-readable form |
+
+`--out` moves the working directory (default `audio/`).
+
+## Using the picker
+
+It is one self-contained HTML file with the candidates baked in — open it off
+the filesystem, no server. Audio streams from the source, so the machine doing
+the picking needs the network.
+
+Cues on the left, candidates in the middle, the assignment and its knobs on the
+right. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>space</kbd> auditions,
+<kbd>enter</kbd> assigns, <kbd>x</kbd> clears, <kbd>n</kbd>/<kbd>p</kbd> change
+cue, <kbd>u</kbd> jumps to the next unassigned required cue. The gain knob is
+applied to the preview, so what you hear is what the config asks for. Picks are
+kept in the browser's local storage; **Copy configuration** is the output, and
+**Import config** takes one back so a config can be revised later rather than
+redone.
+
+## What this deliberately does not do
+
+- **No playback in the game.** Nothing under `web/` or `orchestrator/` imports
+  any of this, and no event currently produces a sound. The manifest is the
+  handoff point; wiring it into the spectator UI is a separate change with its
+  own decisions (per-viewer volume, ducking under the narration voice, whether
+  beds cross-fade on the client or a mixer runs server-side).
+- **No transcoding, normalising or trimming of the files.** The knobs are
+  recorded as intent, not applied — no ffmpeg dependency, and a player can honour
+  them at runtime.
+- **No original-quality Freesound downloads.** That needs the OAuth2 flow;
+  previews are what is fetched.
