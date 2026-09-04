@@ -151,3 +151,28 @@ def test_a_gender_the_roster_cannot_answer_is_a_worse_match_not_a_silence():
     only_women = [Voice("Astrid", "sv-SE", "Female"), Voice("Elin", "sv-SE", "Female")]
     cast = cast_for("pc_1", only_women, "Astrid", "male")
     assert cast.voice_id == "Elin"          # dealt anyway, rather than raising
+
+
+def test_each_engine_is_only_sent_what_it_accepts():
+    """Polly errors on an unsupported tag rather than ignoring it, so a line
+    written for the wrong engine is a 502 and a fallback, not a flat reading.
+
+    `pitch` and `vocal-tract-length` are standard-only; `rate` survives on
+    neural and long-form; generative gets neither, because its prosody tag is
+    documented as full-sentences-only and a chunk can be a fragment.
+    """
+    monster = cast_for("monster:goblin_1", STANDARD_ENGLISH, "Brian")
+    assert monster.pitch_pct and monster.rate_pct != 100 and monster.vtl_pct
+
+    standard = ssml_for("Fee fi.", monster, "standard")
+    assert "vocal-tract-length" in standard and "pitch=" in standard and "rate=" in standard
+
+    for engine in ("neural", "long-form"):
+        said = ssml_for("Fee fi.", monster, engine)
+        assert "vocal-tract-length" not in said and "pitch=" not in said
+        assert 'rate="95%"' in said
+
+    assert ssml_for("Fee fi.", monster, "generative") == "<speak>Fee fi.</speak>"
+    # An engine nobody has heard of is written for the one this is built around
+    # rather than sent bare — being wrong loudly beats being wrong quietly.
+    assert ssml_for("Fee fi.", monster, "chorus") == standard

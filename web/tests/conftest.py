@@ -246,6 +246,9 @@ class FakeTTS:
         cast = self.cast(key, gender)
         return cast, cache_key(self.engine, cast.cache_key(), text)
 
+    def cached(self, ckey: str):
+        return self.clips.get(ckey)
+
     def synthesize(self, key: str, text: str, gender: str = ""):
         from tts.client import TTSError, TTSResult  # noqa: PLC0415
 

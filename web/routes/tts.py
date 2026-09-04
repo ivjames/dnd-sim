@@ -15,6 +15,8 @@ just less well.
 
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from typing import Any
 
 from flask import Blueprint, Response, current_app, jsonify, request
@@ -92,13 +94,64 @@ def _ledger_of(entry: Any):
     return ledger if hasattr(ledger, "add_usd") else None
 
 
-def _spent(entry: Any, row: Any) -> float:
+def _spent(entry: Any, game_id: str) -> float:
+    """What this game has spent, read fresh.
+
+    Fresh matters: this is read again inside the admission lock, and a `row`
+    dict fetched at the top of the request would answer with whatever was true
+    before the last spectator's clip.
+    """
     ledger = _ledger_of(entry)
     if ledger is not None:
         return float(getattr(ledger, "total_usd", 0.0) or 0.0)
     if entry is not None:
         return float(entry.cost_usd or 0.0)
-    return float((row or {}).get("cost_usd") or 0.0)
+    return float((_db().get_game(game_id) or {}).get("cost_usd") or 0.0)
+
+
+# Admission control. The budget check and the charge are two moments, and a
+# clip is synthesized between them: without this, every spectator asking for a
+# DIFFERENT line at the same time reads the same below-budget total and every
+# one of them goes to Polly. The per-cache-key lock in `PollyTTS` does not help
+# — it only collapses requests for the SAME words.
+#
+# So a synthesis about to happen holds its own cost against the game until it
+# is either charged or abandoned. In-process is the whole story: `instances: 1`
+# is a hard ceiling in ecosystem.config.js (games live in this process), so
+# there is no second process to race with.
+_ADMIT = threading.Lock()
+_RESERVED: dict[str, float] = {}
+
+
+class _NoBudget(Exception):
+    """Raised inside `_admission`: this clip would take the game over."""
+
+    def __init__(self, committed: float) -> None:
+        super().__init__(committed)
+        self.committed = committed
+
+
+@contextmanager
+def _admission(game_id: str, entry: Any, usd: float, budget: float):
+    with _ADMIT:
+        held = _RESERVED.get(game_id, 0.0)
+        committed = _spent(entry, game_id) + held
+        # Strictly: a clip that WOULD take the game over is refused, where the
+        # model-call check stops the game only once it already has. Erring
+        # toward stopping is the house style (llm/cost.py picks peak rates for
+        # the same reason).
+        if budget > 0 and committed + usd > budget:
+            raise _NoBudget(committed)
+        _RESERVED[game_id] = held + usd
+    try:
+        yield
+    finally:
+        with _ADMIT:
+            left = _RESERVED.get(game_id, 0.0) - usd
+            if left > 1e-9:
+                _RESERVED[game_id] = left
+            else:
+                _RESERVED.pop(game_id, None)
 
 
 def _charge(game_id: str, entry: Any, chars: int, usd: float) -> None:
@@ -113,6 +166,15 @@ def _charge(game_id: str, entry: Any, chars: int, usd: float) -> None:
     ledger = _ledger_of(entry)
     if ledger is not None:
         ledger.add_usd("tts", usd, chars=chars)
+        # ...and write it down. A `GameEntry` stays in the registry for the
+        # life of the process, but its monitor thread returns at the first
+        # terminal status — so for a finished game, which is exactly the game
+        # people replay, nothing else would ever persist this. The charge would
+        # live in memory until a restart handed the budget back.
+        try:
+            entry.persist_snapshot()
+        except Exception:  # pragma: no cover - accounting must not kill playback
+            current_app.logger.exception("could not persist tts cost")
         return
     try:
         _db().add_cost(game_id, usd)
@@ -174,21 +236,12 @@ def speak(game_id: str):
     if len(text) > svc.max_chars:
         return _err(f"text is {len(text)} characters; the cap is {svc.max_chars}")
 
-    budget = _budget_of(entry, row)
-    spent = _spent(entry, row)
-    if budget > 0 and spent >= budget:
-        return _err(
-            f"budget of ${budget:.2f} is spent (${spent:.4f}); "
-            "narration falls back to the browser's voices",
-            402,
-        )
-
     # An unchanged clip is the common case — the playhead goes backwards, tabs
     # reload, two spectators hear the same line — so answer the revalidation
     # before touching the cache, let alone Polly.
     gender = _gender_for(entry, row, key)
     try:
-        _cast, ckey = svc.cache_key_for(key, text, gender)
+        cast, ckey = svc.cache_key_for(key, text, gender)
     except Exception as exc:  # a pool that cannot be cast from
         current_app.logger.warning("tts casting failed: %s", exc)
         return _err(f"{type(exc).__name__}: {exc}", 503)
@@ -196,8 +249,23 @@ def speak(game_id: str):
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers={"ETag": etag, "Cache-Control": IMMUTABLE})
 
+    # A clip already paid for is served whatever the budget says. The budget
+    # governs SPEND, and re-reading a line costs nothing — a game that has run
+    # out of money stays listenable right to the end of its transcript.
+    hit = svc.cached(ckey)
+    if hit is not None:
+        return _audio(hit, cast.voice_id, etag)
+
+    budget = _budget_of(entry, row)
     try:
-        result = svc.synthesize(key, text, gender)
+        with _admission(game_id, entry, svc.price_of(len(text)), budget):
+            result = svc.synthesize(key, text, gender)
+    except _NoBudget as exc:
+        return _err(
+            f"budget of ${budget:.2f} is spent (${exc.committed:.4f}); "
+            "narration falls back to the browser's voices",
+            402,
+        )
     except TTSError as exc:
         current_app.logger.info("tts unavailable: %s", exc)
         return _err(str(exc), 502)
@@ -205,13 +273,17 @@ def speak(game_id: str):
     if not result.cached and result.usd:
         _charge(game_id, entry, result.chars, result.usd)
 
+    return _audio(result.audio, result.cast.voice_id, etag)
+
+
+def _audio(data: bytes, voice_id: str, etag: str):
     return Response(
-        result.audio,
+        data,
         mimetype="audio/mpeg",
         headers={
             "Cache-Control": IMMUTABLE,
             "ETag": etag,
-            "Content-Length": str(len(result.audio)),
-            "X-Dnd-Voice": result.cast.voice_id,
+            "Content-Length": str(len(data)),
+            "X-Dnd-Voice": voice_id,
         },
     )

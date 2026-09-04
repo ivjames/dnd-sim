@@ -164,7 +164,7 @@ override the process environment pm2 provides.
 | `AWS_SECRET_ACCESS_KEY` | ditto |
 | `AWS_REGION` | Polly region, e.g. `us-east-1`; adopted the same way. boto3 will not build a client without one |
 | `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
-| `DND_TTS_ENGINE` | `standard` — Polly engine. `neural`, `long-form` and `generative` are priced too, but the monster timbre effect (`vocal-tract-length`) and pitch control are standard-only |
+| `DND_TTS_ENGINE` | `standard` — Polly engine. `neural`, `long-form` and `generative` all work and are priced, and each is sent only the SSML it accepts; but pitch and the monster timbre effect (`vocal-tract-length`) are standard-only, so casting on those engines is blunter and 4–25× dearer |
 | `DND_TTS_LANG` | `en-US` — the language whose voices are cast from |
 | `DND_TTS_DM_VOICE` | `Brian` — the DM's own voice; everyone else is dealt out of the rest |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` — where synthesized clips live |

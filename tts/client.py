@@ -203,9 +203,20 @@ class PollyTTS:
 
     # -- synthesis -----------------------------------------------------------
 
+    def cached(self, ckey: str) -> bytes | None:
+        """A clip already paid for, or None. The caller checks this before the
+        budget: a cache hit is not spend, so it is not refused for lack of it."""
+        return self.cache.get(ckey)
+
+    def ssml(self, text: str, cast: Cast) -> str:
+        return ssml_for(text, cast, self.engine)
+
     def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]:
+        # Keyed on the document that will actually be sent, not on the cast it
+        # came from: an engine that drops pitch makes two casts that differ
+        # only in pitch the same audio, and they should be the same file.
         cast = self.cast(key, gender)
-        return cast, cache_key(self.engine, cast.cache_key(), ssml_for(text, cast))
+        return cast, cache_key(self.engine, cast.voice_id, self.ssml(text, cast))
 
     def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
         """Audio for one line in one seat. Raises `TTSError` if it cannot be had."""
@@ -249,7 +260,7 @@ class PollyTTS:
         stream = None
         try:
             resp = client.synthesize_speech(
-                Text=ssml_for(text, cast),
+                Text=self.ssml(text, cast),
                 TextType="ssml",
                 VoiceId=cast.voice_id,
                 Engine=self.engine,

@@ -7,6 +7,8 @@ promised — not about AWS.
 
 from __future__ import annotations
 
+import threading
+import time
 from urllib.parse import urlencode
 
 import pytest
@@ -214,3 +216,76 @@ def test_gender_survives_the_process_that_ran_the_game(tts_app, tts_client, samp
     rv = tts_client.get(speak_url(game, key="pc_1"))
     assert rv.status_code == 200
     assert rv.headers["X-Dnd-Voice"] in {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+
+
+# -- the three things a concurrent, long-lived process gets wrong -------------
+
+def test_simultaneous_clips_cannot_walk_past_the_budget(tts_app, tts_client, tts, sample_config):
+    """Different words are different cache keys, so nothing serialises them.
+
+    The check and the charge used to sit either side of the synthesis, so eight
+    spectators asking for eight different lines all read the same below-budget
+    total and all eight went to Polly. A synthesis that takes a moment is what
+    makes that window visible; the budget here fits exactly one clip.
+    """
+    one_clip = len("Line number 0.") * 4.0 / 1_000_000
+    game = create(tts_client, dict(sample_config, budget_usd=one_clip * 1.5))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+
+    real = tts.synthesize
+
+    def slow(key, text, gender=""):
+        time.sleep(0.2)          # every other request is admitted or refused meanwhile
+        return real(key, text, gender)
+
+    tts.synthesize = slow
+    codes = []
+
+    def ask(n):
+        codes.append(tts_app.test_client().get(
+            speak_url(game, text="Line number %d." % n)).status_code)
+
+    threads = [threading.Thread(target=ask, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert sorted(codes) == sorted([200] + [402] * 7)
+    assert entry.game.ledger.total_usd == pytest.approx(one_clip, rel=1e-6)
+    assert len(tts.calls) == 1
+
+
+def test_a_finished_games_charges_are_written_down(tts_app, tts_client, tts, game):
+    """A terminal entry stays in the registry but its monitor has returned.
+
+    Nothing else persists after that, so a replay's charge would live in memory
+    until a restart handed the budget straight back.
+    """
+    db = tts_app.config["DND_DB"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+    entry.game.stop()
+    entry.shutdown()                       # the monitor thread is gone
+    assert entry.status() in ("stopped", "finished")
+
+    text = "The fire has burned down to embers."
+    assert tts_client.get(speak_url(game, text=text)).status_code == 200
+
+    expected = len(text) * 4.0 / 1_000_000
+    assert entry.cost_usd == pytest.approx(expected, rel=1e-6)
+    assert db.get_game(game)["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_clip_already_paid_for_outlives_the_budget(tts_app, tts_client, tts, game):
+    """The budget governs spend. Re-reading a line is not spend."""
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+    text = "Roll for initiative!"
+    assert tts_client.get(speak_url(game, text=text)).status_code == 200
+
+    entry.game.ledger.add_usd("dm", entry.config["budget_usd"])
+    assert tts_client.get(speak_url(game, text=text)).status_code == 200      # cached
+    assert tts_client.get(speak_url(game, text="Something new.")).status_code == 402
+    assert len(tts.calls) == 1

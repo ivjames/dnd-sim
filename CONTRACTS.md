@@ -853,7 +853,8 @@ with the browser's voices kept as a real fallback rather than deleted.
                                                           # number as speech.js `hashString`
    def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
    def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast   # ValueError on an empty pool
-   def ssml_for(text: str, cast: Cast) -> str             # <speak>[<amazon:effect vtl>][<prosody>]…
+   def ssml_for(text: str, cast: Cast, engine: str = "standard") -> str   # only what `engine` accepts
+   ENGINE_SSML: dict[str, frozenset[str]]                 # engine → {"pitch","rate","vtl"} subset
    def billable_chars(text: str) -> int                   # the words, not the markup
    STANDARD_ENGLISH: tuple[Voice, ...]                    # fallback roster, read 2026-09-04
 
@@ -873,6 +874,8 @@ with the browser's voices kept as a real fallback rather than deleted.
                     language="en-US", dm_voice="Brian", max_chars=400)
        def available(self) -> bool                        # False = no boto3, or no credentials
        def voices(self) -> tuple[Voice, ...]              # DescribeVoices once, else STANDARD_ENGLISH
+       def cached(self, ckey: str) -> bytes | None        # a clip already paid for
+       def ssml(self, text: str, cast: Cast) -> str       # `ssml_for` at this instance's engine
        def cast(self, key: str, gender: str = "") -> Cast
        def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
        def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
@@ -910,6 +913,24 @@ with the browser's voices kept as a real fallback rather than deleted.
    narration is charged from Flask request threads. `Ledger.ROW` names every
    counter a row can carry so `to_dict` can sum across rows that count
    different things (tokens for a model, characters for a voice).
+
+   **Admission is atomic.** The check and the charge sit either side of a
+   synthesis, and different lines are different cache keys, so `PollyTTS`'s
+   per-key lock does not serialize them: without this, N spectators asking for
+   N different lines all read the same below-budget total and all N call Polly.
+   A synthesis about to happen therefore holds its own cost against the game
+   (`_RESERVED` in `web/routes/tts.py`, under one process-wide lock) until it
+   is charged or abandoned, and a clip that WOULD take the game over is refused
+   before the call. In-process is sufficient because `instances: 1` is a hard
+   ceiling. A **cache hit skips the budget entirely**: it is not spend, and a
+   game that has run out of money stays listenable.
+
+   **A charge is persisted where it is made.** A `GameEntry` lives in the
+   registry for the life of the process but its monitor thread returns at the
+   first terminal status — so for a finished game, which is exactly the game
+   people replay, nothing else would write after that and the charge would sit
+   in memory until a restart handed the budget back. `_charge` calls
+   `entry.persist_snapshot()` on the ledger path.
 
    A game this process is no longer running has no `Ledger` to charge, so its
    spend goes to the row instead through the new `web/db.py: Database.add_cost(
@@ -949,11 +970,18 @@ with the browser's voices kept as a real fallback rather than deleted.
    chosen (`DND_TTS_DM_VOICE`, default `Brian`) rather than dealt, and no other
    seat is given it.
 
-7. **The `standard` engine is the default and is not an arbitrary one.** It is
-   the cheapest at $4/1M characters, and `<prosody pitch>` and
-   `<amazon:effect vocal-tract-length>` — the two tags the casting depends on —
-   are standard-only; Polly errors on an unsupported tag rather than ignoring
-   it, so `DND_TTS_ENGINE=neural` is a change to `ssml_for` too. Billed
+7. **The `standard` engine is the default and is not an arbitrary one**, but
+   every engine works. It is the cheapest at $4/1M characters, and
+   `<prosody pitch>` and `<amazon:effect vocal-tract-length>` — the two tags
+   the casting leans on — are standard-only. Polly errors on an unsupported tag
+   rather than ignoring it, so `ssml_for` takes the engine and writes only what
+   that engine accepts (`ENGINE_SSML`): `rate` survives on neural and
+   long-form; generative gets plain text, because its prosody tag is documented
+   as full-sentences-only and a chunk can be a fragment. The cost of the others
+   is not an error but a blunter table — with no pitch, two characters dealt
+   one voice cannot be told apart, and a monster is only a voice rather than a
+   big one. The cache key is therefore the rendered document rather than the
+   cast, so casts an engine renders identically share one clip. Billed
    characters exclude SSML tags
    (<https://docs.aws.amazon.com/polly/latest/dg/limits.html>), which is what
    `billable_chars` counts.

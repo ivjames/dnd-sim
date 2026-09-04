@@ -38,6 +38,7 @@ __all__ = [
     "escape",
     "normalize_gender",
     "GENDERS",
+    "ENGINE_SSML",
 ]
 
 
@@ -227,23 +228,48 @@ def escape(text: str) -> str:
     )
 
 
-def ssml_for(text: str, cast: Cast) -> str:
-    """The `<speak>` document for a line in its seat's voice.
+#: What each Polly engine will accept of a `Cast`. Polly ERRORS on a tag the
+#: engine does not support rather than ignoring it, so a line written for the
+#: wrong engine is a 502 and a fallback, not a slightly flat reading.
+#:
+#:   pitch  `<prosody pitch>` — "Generative, Neural, and Long-Form voices
+#:          support the volume and rate attributes, but don't support the pitch
+#:          attribute" (docs.aws.amazon.com/polly/latest/dg/prosody-tag.html)
+#:   vtl    `<amazon:effect vocal-tract-length>` — "Not available" for all
+#:          three (…/supportedtags.html)
+#:   rate   `<prosody rate>` — everywhere, except that on generative the
+#:          prosody tag "can be used only around full sentences", and a chunk
+#:          can be a mid-sentence fragment when one sentence runs past the
+#:          chunk cap. Not worth the risk for a rate nudge, so generative gets
+#:          the plain text.
+#:
+#: Both dates read 2026-09-04.
+ENGINE_SSML: dict[str, frozenset[str]] = {
+    "standard": frozenset({"pitch", "rate", "vtl"}),
+    "neural": frozenset({"rate"}),
+    "long-form": frozenset({"rate"}),
+    "generative": frozenset(),
+}
 
-    `<prosody pitch>` and `<amazon:effect vocal-tract-length>` are supported on
-    the standard engine and NOT on neural, long-form or generative — Polly
-    errors on an unsupported tag rather than ignoring it, so an engine change
-    is a change here too.
+
+def ssml_for(text: str, cast: Cast, engine: str = "standard") -> str:
+    """The `<speak>` document for a line in its seat's voice, on `engine`.
+
+    Only what the engine supports is written. The consequence on anything but
+    `standard` is real and is the reason `standard` is the default: with no
+    pitch and no vocal-tract-length, two characters dealt the same voice cannot
+    be told apart, and a monster is only a voice rather than a big one.
     """
+    allowed = ENGINE_SSML.get(str(engine or "standard").strip().lower(), ENGINE_SSML["standard"])
     body = escape(text)
     prosody = []
-    if cast.pitch_pct:
+    if cast.pitch_pct and "pitch" in allowed:
         prosody.append(f'pitch="{cast.pitch_pct:+d}%"')
-    if cast.rate_pct != 100:
+    if cast.rate_pct != 100 and "rate" in allowed:
         prosody.append(f'rate="{cast.rate_pct:d}%"')
     if prosody:
         body = "<prosody " + " ".join(prosody) + ">" + body + "</prosody>"
-    if cast.vtl_pct:
+    if cast.vtl_pct and "vtl" in allowed:
         body = (
             f'<amazon:effect vocal-tract-length="{cast.vtl_pct:+d}%">' + body + "</amazon:effect>"
         )

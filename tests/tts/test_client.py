@@ -14,7 +14,7 @@ import pytest
 
 from tts.cache import AudioCache
 from tts.client import PollyTTS, TTSError, from_env
-from tts.voices import STANDARD_ENGLISH, ssml_for
+from tts.voices import STANDARD_ENGLISH, Cast, ssml_for
 
 MP3 = b"\xff\xfb\x90\x00pretend-audio"
 
@@ -227,3 +227,41 @@ def test_a_client_that_cannot_be_built_is_not_an_exception(tmp_path, monkeypatch
     monkeypatch.setitem(__import__("sys").modules, "boto3", broken)
     svc = PollyTTS(AudioCache(str(tmp_path), 0))
     assert svc.available() is False
+
+
+def test_the_cache_key_is_the_document_that_will_be_sent(tmp_path):
+    """Not the cast it came from.
+
+    An engine that drops a tag makes two casts differing only in that tag the
+    same audio, and they should be the same file rather than two identical ones
+    bought separately.
+    """
+    from tts.cache import cache_key  # noqa: PLC0415
+
+    voices = [{"Id": "Joanna", "LanguageCode": "en-US", "Gender": "Female",
+               "SupportedEngines": ["standard", "neural"]},
+              {"Id": "Brian", "LanguageCode": "en-GB", "Gender": "Male",
+               "SupportedEngines": ["standard", "neural"]}]
+    neural = service(tmp_path, FakePolly(voices=voices), engine="neural")
+    std = service(tmp_path, FakePolly(voices=voices))
+
+    cast, ckey = neural.cache_key_for("monster:goblin_1", "Fee fi.")
+    assert ckey == cache_key("neural", cast.voice_id, neural.ssml("Fee fi.", cast))
+    assert ckey != std.cache_key_for("monster:goblin_1", "Fee fi.")[1]
+
+    # Two casts that this engine renders identically ARE the same clip.
+    a = Cast("pc_1", "Joanna", "en-US", pitch_pct=-10)
+    b = Cast("npc", "Joanna", "en-US", pitch_pct=10)
+    assert neural.ssml("Fee fi.", a) == neural.ssml("Fee fi.", b)
+    assert std.ssml("Fee fi.", a) != std.ssml("Fee fi.", b)
+
+
+def test_only_what_the_engine_accepts_goes_on_the_wire(tmp_path):
+    """Polly errors on an unsupported tag, so this is the difference between a
+    working neural game and one that 502s every monster's line."""
+    fake = FakePolly()
+    neural = service(tmp_path, fake, engine="neural")
+    neural.synthesize("monster:goblin_1", "Fee fi.")
+    sent = fake.calls[0]["Text"]
+    assert "vocal-tract-length" not in sent and "pitch=" not in sent
+    assert sent.startswith("<speak>")

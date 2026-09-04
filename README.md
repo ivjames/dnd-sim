@@ -94,7 +94,7 @@ Tests:
 | `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | — | Amazon Polly, which reads the game aloud. Read by boto3 in the ordinary way, so an instance profile works too. Without them the spectator's own browser speaks the game. |
 | `DND_TTS` | unset (auto) | `0` → no server voices at all. `1` → on even for mock games, which otherwise stay free. |
-| `DND_TTS_ENGINE` | `standard` | Polly engine. `standard` is $4/1M characters and is the only one with pitch and `vocal-tract-length`, which is what makes a monster sound like one. |
+| `DND_TTS_ENGINE` | `standard` | Polly engine: `standard`, `neural`, `long-form` or `generative`. Each is sent only the SSML it accepts, so the others work — but pitch and `vocal-tract-length` are standard-only, so on anything else two characters dealt the same voice cannot be told apart and a monster is only a voice rather than a big one. |
 | `DND_TTS_LANG` | `en-US` | The language the voice pool is drawn from. |
 | `DND_TTS_DM_VOICE` | `Brian` | The DM's voice; the rest of the table is dealt from the other voices. |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
@@ -284,6 +284,16 @@ charged to the game's own `budget_usd` alongside the model calls — it shows up
 as `by_role.tts` in the ledger, and a game that has spent its budget goes back
 to the browser's voices rather than quietly spending more. A whole game's
 narration is a few cents.
+
+A clip about to be synthesized **holds its own cost against the game** until it
+is charged or abandoned, so eight spectators asking for eight different lines
+at the same moment cannot each read the same below-budget total and each go to
+Polly. A clip that would take the game over is refused before the call, which
+is stricter than the model-call check (that one stops the game once it already
+has) — erring toward stopping is the house style. A clip **already paid for is
+served whatever the budget says**: the budget governs spend, and re-reading a
+line is not spend, so a game that has run out of money stays listenable to the
+end of its transcript.
 
 Every clip is cached on disk under `data/tts`, keyed by the words and the seat,
 so a line is paid for once however many times it is replayed — which matters,
