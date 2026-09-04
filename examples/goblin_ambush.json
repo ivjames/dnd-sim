@@ -15,7 +15,7 @@
       "level": 3,
       "abilities": {"STR": 16, "DEX": 12, "CON": 16, "INT": 10, "WIS": 12, "CHA": 8},
       "equipment": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "A retired caravan guard with a bad knee and a better shield. Talks like a foreman: short sentences, orders phrased as suggestions. Believes the front line is the only honest place to stand and will physically put himself between danger and anyone smaller than him. Grumbles constantly, never once complains."
     },
     {
@@ -37,7 +37,7 @@
       "abilities": {"STR": 12, "DEX": 10, "CON": 14, "INT": 11, "WIS": 17, "CHA": 13},
       "equipment": "default",
       "spells": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "A field priest of the Morninglord who has patched up more brawls than she has attended sermons. Warm, blunt, and entirely unsentimental about violence: heal the ones who can stand, bless the ones who can swing, and pray afterwards. Keeps a running tally of who owes her a drink."
     },
     {

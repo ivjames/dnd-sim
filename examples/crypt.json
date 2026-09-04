@@ -15,7 +15,7 @@
       "level": 5,
       "abilities": {"STR": 18, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 12},
       "equipment": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "A knight of a disbanded order who kept the oath after the order stopped existing. Formal to the point of comedy, addresses monsters as 'sir'. Fights with grim patience and refuses to leave a body unburied, which has nearly killed her twice."
     },
     {
@@ -37,7 +37,7 @@
       "abilities": {"STR": 14, "DEX": 10, "CON": 16, "INT": 11, "WIS": 18, "CHA": 12},
       "equipment": "default",
       "spells": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "An old dwarf priest who has buried three generations of this village and takes the walking dead as a personal insult. Rolls up his sleeves for undead. Channels divinity like a man clearing his own gutters: unglamorous, thorough, muttering the whole time."
     },
     {
@@ -49,7 +49,7 @@
       "abilities": {"STR": 8, "DEX": 14, "CON": 14, "INT": 18, "WIS": 12, "CHA": 10},
       "equipment": "default",
       "spells": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "A necromancy scholar with strictly academic interests and an increasingly unconvincing denial of that fact. Fascinated rather than frightened by everything in this crypt, which alarms her companions. Narrates undead behaviour as if presenting a paper, mid-fight."
     }
   ],

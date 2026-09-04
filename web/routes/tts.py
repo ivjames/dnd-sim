@@ -24,6 +24,7 @@ from typing import Any
 from flask import Blueprint, Response, current_app, jsonify, request
 
 from tts.client import TTSError
+from tts.voices import gender_for_pronouns
 
 bp = Blueprint("tts", __name__, url_prefix="/api")
 
@@ -63,9 +64,9 @@ def _member_for(entry: Any, row: Any, key: str) -> dict:
     Read here rather than taken from the request on purpose: this endpoint
     spends money, and a voice trait in the query string would be a way to pick
     any voice on the roster (and to mint a fresh cache entry per pick). Only a
-    party member has a gender or an age to state — `dm`, `npc` and
-    `monster:<id>` have no character record, and are cast as an adult of
-    unstated gender.
+    party member has pronouns or an age to state — `dm`, `npc` and
+    `monster:<id>` have no character record, and are cast as an adult from the
+    whole pool.
     """
     for member in _config_of(entry, row).get("party") or []:
         if isinstance(member, dict) and str(member.get("id") or "") == key:
@@ -73,17 +74,39 @@ def _member_for(entry: Any, row: Any, key: str) -> dict:
     return {}
 
 
+def _pool_gender_of(member: dict) -> str:
+    """Which voices this seat may be dealt from: its `pronouns`, or its `gender`.
+
+    `pronouns` is what a party spec states; `gender` is what it used to state
+    and is still read, because a game persists its config and its clips are
+    cached per cast — a stranger's config, or a row written before this
+    existed, would otherwise re-cast mid-transcript and pay Polly again to do
+    it.
+
+    A stated `pronouns` decides on its own, **including when it narrows
+    nothing**. A character who states `they/them` beside a legacy `gender` is a
+    character whose config was updated, and reading the old key underneath
+    would quietly keep the narrowing that update removed.
+    """
+    said = str(member.get("pronouns") or "").strip()
+    if said:
+        return gender_for_pronouns(said)
+    return str(member.get("gender") or "")
+
+
 def _voice_traits_for(entry: Any, row: Any, key: str) -> tuple[str, str]:
     """`(gender, age)` for a seat: what the config says, or nothing.
 
-    `age` is passed through as written — `"child"`, `"adult"`, `9`, `"40"` —
-    and `tts.voices.normalize_age` is the one place that decides what a given
+    The first is the voice-pool constraint the character's `pronouns` name (see
+    `_pool_gender_of`), not a fact about the character. `age` is passed through
+    as written — `"child"`, `"adult"`, `9`, `"40"` — and
+    `tts.voices.normalize_age` is the one place that decides what a given
     answer means. Nothing here is a default: an unstated age means an adult
     because the casting says so, not because the web layer filled one in.
     """
     member = _member_for(entry, row, key)
     age = member.get("age")
-    return str(member.get("gender") or ""), "" if age is None else str(age)
+    return _pool_gender_of(member), "" if age is None else str(age)
 
 
 #: A ceiling this server owns, which the submitted config cannot raise.
@@ -329,11 +352,12 @@ MAX_CAST_SEATS = 16
 def cast_preview():
     """Who will read each seat: the voice, its accent, and its gender.
 
-    The new-game panel lets a seat be cast as a child, and that is one visible
-    control over an outcome — which of Polly's voices reads your cleric, and
-    what it sounds like — that is otherwise decided silently. This answers it
-    before the game exists, so the panel can show the casting it is about to
-    buy rather than only the one trait it can change.
+    The new-game panel lets a seat state its pronouns and be cast as a child,
+    and those are two visible controls over an outcome — which of Polly's
+    voices reads your cleric, and what it sounds like — that is otherwise
+    decided silently. This answers it before the game exists, so the panel can
+    show the casting it is about to buy rather than only the traits it can
+    change.
 
     Anonymous, like the rest of the read side, and safe to be: it spends
     nothing, synthesises nothing and writes no cache entry. It is `cast_for`
@@ -376,7 +400,10 @@ def cast_preview():
             seats.append({"id": "", "voice": None})
             continue
         age = member.get("age")
-        cast = svc.cast(key, str(member.get("gender") or ""), "" if age is None else str(age))
+        # `_pool_gender_of` and not the raw keys: pronouns decide the pool and
+        # `gender` is only the older way of saying it, and the preview would be
+        # a lie the moment the two readings differed.
+        cast = svc.cast(key, _pool_gender_of(member), "" if age is None else str(age))
         voice = next(
             (v for v in svc.voices(cast.engine) if v.id == cast.voice_id), None
         )

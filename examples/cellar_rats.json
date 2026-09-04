@@ -16,7 +16,7 @@
       "level": 1,
       "abilities": {"STR": 16, "DEX": 13, "CON": 15, "INT": 9, "WIS": 12, "CHA": 10},
       "equipment": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "Three weeks a mercenary, eleven years a butcher's boy, and it shows in how he holds a blade — competently, and like meat. Wants this job over before supper. Says the plan out loud to check it is a plan. Hates being underground and will keep saying so."
     },
     {
@@ -38,7 +38,7 @@
       "abilities": {"STR": 12, "DEX": 10, "CON": 14, "INT": 11, "WIS": 16, "CHA": 13},
       "equipment": "default",
       "spells": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "Newly posted, badly briefed, taking notes on everything. Wants a report she can defend to her chapter house, which means she keeps asking why before she asks where. Treats a vermin nest as a public health matter. Disapproves of looting and says so, once, each time."
     },
     {
@@ -50,7 +50,7 @@
       "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 16, "WIS": 12, "CHA": 11},
       "equipment": "default",
       "spells": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "Copying a bestiary for a living and taking field jobs to draw from life. Wants a specimen, ideally intact, absolutely regardless of what that costs the rest of the party. One spell slot and an unwarranted sense of timing. Narrates what he is drawing while people are being bitten."
     }
   ],

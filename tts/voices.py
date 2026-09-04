@@ -48,11 +48,13 @@ __all__ = [
     "escape",
     "is_monster_key",
     "normalize_gender",
+    "gender_for_pronouns",
     "normalize_age",
     "accent_for",
     "ACCENTS",
     "is_child_voice",
     "GENDERS",
+    "PRONOUN_GENDERS",
     "AGES",
     "CHILD_VOICE_IDS",
     "CHILD_MAX_AGE",
@@ -140,6 +142,27 @@ MONSTER_PREFIX = "monster:"
 # and "" means no constraint.
 GENDERS = {"f": "female", "female": "female", "woman": "female",
            "m": "male", "male": "male", "man": "male"}
+
+#: The subject pronouns that name a voice on Polly's roster — and the only two
+#: that can, because the roster is `Female` and `Male`.
+#:
+#: A party spec states `pronouns`, not a gender: a character's pronouns are a
+#: fact its own persona already carries ("she keeps the ledger", `Father`
+#: Bexley), where a gender is a second fact someone has to infer from them. The
+#: inference is this table, it is one-way, and it answers one question — which
+#: voices this character may be dealt from. It is not a claim that a pronoun
+#: *is* a gender.
+#:
+#: Everything else a character may go by — `they/them`, a neopronoun set, a
+#: spelling this table has never seen — leaves the pool whole, which is the
+#: same casting an unstated pronoun gets and the only honest one: a roster with
+#: two kinds of voice on it cannot answer a third, and pushing such a character
+#: into one of the two to fill the gap would launder the roster's limitation
+#: into someone's character sheet.
+PRONOUN_GENDERS = {"he": "male", "she": "female"}
+
+#: The first run of letters in a stated pronoun set: the subject pronoun.
+_FIRST_PRONOUN = re.compile(r"[a-z]+")
 
 #: The voices Amazon records as children's, matched on the id, case-insensitively.
 #:
@@ -283,6 +306,23 @@ def accent_for(language: str) -> str:
 def normalize_gender(gender: str) -> str:
     """"female", "male", or "" for no constraint. See `GENDERS`."""
     return GENDERS.get(str(gender or "").strip().lower(), "")
+
+
+def gender_for_pronouns(pronouns) -> str:
+    """Which voices a character who goes by `pronouns` may be cast from.
+
+    `"he/him"` -> `"male"`, `"she/her"` -> `"female"`, everything else -> `""`,
+    which is the whole pool. Read from the FIRST pronoun listed, so `"he/him"`,
+    `"he/him/his"` and a bare `"He"` are one answer and a character who writes
+    `"she/they"` is cast the way they wrote it.
+
+    The answer is about the roster and nothing else. It does not say what a
+    character's pronouns *are*: `"they/them"`, a neopronoun set and a stated
+    nothing all come back `""` here, because Polly reports `Female` and `Male`
+    and there is no third voice to deal. See `PRONOUN_GENDERS`.
+    """
+    found = _FIRST_PRONOUN.search(str(pronouns or "").strip().lower())
+    return PRONOUN_GENDERS.get(found.group(0), "") if found else ""
 
 
 def is_child_voice(voice) -> bool:

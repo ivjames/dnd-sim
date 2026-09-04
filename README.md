@@ -192,22 +192,26 @@ vars). A party member may carry its own `"model"`, which overrides
   "player_model": "claude-haiku-4-5-20251001",
   "party": [
     {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3,
-     "gender": "male"},
+     "pronouns": "he/him"},
     {"id": "pc_2", "name": "Vessa Quill", "race": "Halfling (Lightfoot)", "klass": "Rogue", "level": 3,
-     "gender": "female", "model": "grok-4.3"},
+     "pronouns": "she/her", "model": "grok-4.3"},
     {"id": "pc_3", "name": "Sister Marigold Penn", "race": "Human", "klass": "Cleric", "level": 3,
-     "gender": "female", "model": "gemini-2.5-flash"},
+     "pronouns": "she/her", "model": "gemini-2.5-flash"},
     {"id": "pc_4", "name": "Ilbrandt Ash", "race": "Elf (High)", "klass": "Wizard", "level": 3,
-     "gender": "male", "model": "deepseek-v4-flash"}
+     "pronouns": "he/him", "model": "deepseek-v4-flash"}
   ]
 }
 ```
 
-`"gender"` and `"age"` are optional and decide which Polly voices that
+`"pronouns"` and `"age"` are optional and decide which Polly voices that
 character can be cast from (see [Spoken narration](#spoken-narration)) —
-`"age"` takes `child`, `adult` or a number of years, and only an age that reads
-as a child changes anything. Neither is a rules field: the engine, the DM and
-the players never see either of them.
+`"pronouns"` takes any set a character goes by (`he/him`, `she/her`,
+`they/them`, anything else), and `"age"` takes `child`, `adult` or a number of
+years, of which only an age that reads as a child changes anything.
+`"pronouns"` is also what the DM is told to call the character, in the
+COMBATANTS block of its own prompt, so the pronouns a character is narrated in
+and the voice it is spoken in come off the one authored string. Neither is a
+rules field: nothing in the engine reads either, and the players see neither.
 
 Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
 other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,
@@ -406,52 +410,43 @@ transcript prints it in front of every line of dialogue as it always has.
 
 ### Who a character is
 
-**A character sheet carries a gender and a pronoun set**, and both reach the
-table. `gender` is what the config states and is what casts the voice; a
-character's `"pronouns"` — `"she/her"`, `"he/him"`, `"they/them"`, or anything
-else written the same way — is what the DM and the other players are told to
-call them, and it is a column on the combatant table in every view they are
-sent. The two are not the same question, which is why there are two fields: a
-character may be they/them and still be read aloud in a woman's voice. Neither
-has any rules meaning — two sheets built from the same spec with different
-genders differ in exactly those two fields.
+**The pronouns a character states reach the table, not just the casting.** The
+DM's combatant table has carried a pronouns column since the attribution fix;
+`player_view` now carries the same one, because a player talks about its allies
+and the monsters both and infers a gender from a name exactly as readily. The
+roster that opens a scene introduces each character with them, the player's own
+cached prefix carries its own, and both system prompts say it outright: use the
+pronouns you are given, never infer them from a name, a class, a title or a
+voice. A monster has no character sheet, so it gets they/them on its own row,
+every row, every turn — the fix for a Bandit Captain who is "she" in round 2
+and "he" in round 5 is not to deal her a gender, it is to close the question.
 
-The set is resolved once, when the character is built, in this order: **what
-the character states**, else **what its stated gender implies**, else
-**they/them**. The implication is what carries the shipped parties, who state a
-gender wherever their persona already does and pronouns nowhere — without it,
-Dame Ysolde Harrower, Sister Marigold Penn and Father Bexley Crane would all be
-narrated as they/them. The default carries everyone else: a character who states no gender
-states none because their persona states none, so they/them is not a guess
-about them, it is the refusal to make one. A set nobody has listed is kept as
-written rather than corrected — neopronouns are not a typo, and a narrator
-handed `ey/em` can use `ey/em`.
+A party member may state `"pronouns"` — `he/him`, `she/her`, `they/them`, or
+any other set — and that decides which voices the character can be dealt.
+`he` narrows the pool to the voices Polly reports as `Male`, `she` to the ones
+it reports as `Female`, and everything else leaves the pool whole. Only the
+first pronoun is read, so `he/him` and `he/him/his` are one answer. It narrows
+who can be cast and nothing else: the choice within that set is the same hash
+as before, so a character keeps its voice for as long as its pronouns and the
+roster hold. They are read from the game's own party list, never from the
+request that asks for the clip — this endpoint spends money, and pronouns in
+the query string would be a way to walk the whole roster a paid clip at a time.
 
-Before this, the sheet said nothing about any of it, and a model handed a name,
-a class and a persona filled the gap by inference — confidently, every turn,
-and sometimes wrongly. That is the same failure as the child's voice, one layer
-up. The DM and player prompts now carry the matching rule: use the pronouns you
-are given, never infer them from a name, a class, a title or a voice. A monster
-has no character sheet — an SRD stat block records a size and a type and no
-gender — so it gets they/them on its own row, every row, every turn: the fix
-for a Bandit Captain who is "she" in round 2 and "he" in round 5 is not to deal
-her a gender, it is to close the question.
+The mapping runs one way, from pronouns to a set of voices, and it is not a
+claim that a pronoun is a gender. Polly's roster is `Female` and `Male`; there
+is no third kind of voice on it. So a character who goes by `they/them`, or by
+a set this mapping has never seen, or who states nothing at all, is dealt from
+the **whole** pool rather than pushed into one of the two — the roster's
+limitation is not something to launder into a character sheet.
 
-A party member may state a `"gender"` — `female` or `male` — and is then dealt
-only from the voices Polly reports as that gender. It narrows who can be cast
-and nothing else: the choice within that set is the same hash as before, so a
-character keeps its voice for as long as its gender and the roster hold. The
-gender is read from the game's own party list, never from the request that asks
-for the clip — this endpoint spends money, and a gender in the query string
-would be a way to walk the whole roster a paid clip at a time.
-
-Polly's roster is `Female` and `Male`; there is no third kind of voice on it.
-So a character who states neither, or states nothing at all, is dealt from the
-**whole** pool rather than pushed into one of the two — the roster's limitation
-is not something to launder into a character sheet.
+The older key `"gender"` (`female` / `male`) is still read where a config
+states it and no `pronouns`, so a scenario written before this, or a
+stranger's, casts as it always did. Where both are stated the pronouns decide,
+including `they/them`: a config that was updated should not go on being
+narrowed by the key the update replaced.
 
 The shipped parties follow one rule, and it is worth stating because it decides
-what a stranger's config should look like too: **a character states a gender
+what a stranger's config should look like too: **a character states pronouns
 only where their own persona already does** — an explicit pronoun, or a
 gendered form of address (`Dame`, `Sister`, `Brother`, `Father`, `Mother`).
 Where the persona says nothing, the config says nothing, and that character is
@@ -459,8 +454,8 @@ dealt from the whole pool. Five of the twenty-eight in `examples/` are like
 that — Crick, Vessa Quill, Ilbrandt Ash, Pib Underbough, Ozric Talleyrand — and
 so are two of the four in the built-in preset. Choosing for them would be
 writing a fact into someone else's character. Where a language ships
-voices of only one gender (Korean and Swedish each ship one), a stated gender
-that cannot be answered gets a voice anyway: a worse match, not a silence.
+voices of only one gender (Korean and Swedish each ship one), a narrowing that
+cannot be answered gets a voice anyway: a worse match, not a silence.
 
 **A character is cast as an adult unless it says otherwise.** Polly's roster
 has children's voices in it — `Ivy`, `Justin` and `Kevin`, the only three its
@@ -480,26 +475,35 @@ agree about which strings are numbers at all, and `Number()` and Python's
 else, and any number that cannot be an age (`0`, `-3`, `"old enough"`), is
 read as nothing said rather than rounded into one of the two, and a language
 with no children's voices at all — every language but US English — casts a
-stated child from the adult voices, a worse match rather than a silence. The
-**New game** panel has a row per seat for this, and choosing *adult* there
-writes nothing: an unstated age already casts as one.
+stated child from the adult voices, a worse match rather than a silence.
 
-**And the panel says who that dealt you** — under each seat, the voice it will
-be read by, that voice's accent, and the gender Polly records for the
-recording: `Geraint · Welsh · male`. Age is the only trait editable there, so
-without this the panel showed the one knob and stayed silent about the outcome
-it turns, while gender — which the config *does* state — was never shown at
-all. The line comes from `POST /api/tts/cast`, which is `cast_for` over the
-roster the server has already listed: the same function, roster and hash that
-will read the game, so the panel cannot name a voice the game then does not
-use. It renders nothing and spends nothing, and a server without Polly answers
-that it has no cast — the browser's own voices will read the game, and they
-are not this roster.
+**The New game panel asks for both, one row per seat**: the pronouns the
+character goes by and whether its voice is an adult's or a child's. Either left
+at its default writes nothing into the config — unstated pronouns already cast
+from the whole pool and an unstated age already casts as an adult — so opening
+the panel and touching nothing cannot state a fact about a character that
+nobody chose to state. A scenario that already states a set the row does not
+offer keeps it verbatim, as its own option; one that states only the older
+`gender` key shows an unstated pronoun row, and leaving it there changes
+nothing, because filling it in from that key would be running the mapping
+backwards.
 
-**The browser fallback ignores gender and age.** `SpeechSynthesisVoice` has no
-gender or age attribute in any browser, and inferring one from voice names
-across every OS and locale would be a guess dressed as data. A session on the
-fallback engine casts as it always did.
+**The browser fallback ignores both.** `SpeechSynthesisVoice` has no gender or
+age attribute in any browser, and inferring one from voice names across every
+OS and locale would be a guess dressed as data. A session on the fallback
+engine casts as it always did.
+
+**And the panel says what those two rows dealt you** — under each seat, the
+voice it will be read by, that voice's accent, and the gender Polly records for
+the recording: `Geraint · Welsh · male`. A panel can show its controls and stay
+silent about the outcome they turn, which is the state this was in; the outcome
+is the interesting half, and it is not one a reader can work out from a pronoun
+set and an age. The line comes from `POST /api/tts/cast`, which is `cast_for`
+over the roster the server has already listed: the same function, roster and
+hash that will read the game, so the panel cannot name a voice the game then
+does not use. It renders nothing and spends nothing, and a server without Polly
+answers that it has no cast — the browser's own voices will read the game, and
+they are not this roster.
 
 ### Two engines, one narrator
 

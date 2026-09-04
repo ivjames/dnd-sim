@@ -597,16 +597,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.party-ages { display: grid; gap: 6px; }
-/* Name, the one control, and — on the line under both — who that casting has
-   actually dealt the seat. The cast spans the full width so a long voice line
-   does not squeeze the name. */
-.party-age {
-  display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 4px 10px;
+.party-seats { display: grid; gap: 6px; }
+/* Name, the two controls, and — on a line under all three — who that casting
+   has actually dealt the seat. The cast spans the full width so a long voice
+   line does not squeeze the name. */
+.party-seat {
+  display: grid; grid-template-columns: 1fr 130px 100px; gap: 4px 10px;
   align-items: center;
 }
-.party-age > span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.party-age select { margin: 0; }
+.party-seat > span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-seat select { margin: 0; min-width: 0; }
 .party-cast {
   grid-column: 1 / -1;
   font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
@@ -639,6 +639,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .initiative { max-height: none; }
   .transcript { height: 60vh; }
   .row, .row-4 { grid-template-columns: 1fr; }
+  /* three columns leave a phone about 90px for the name; stack instead */
+  .party-seat { grid-template-columns: 1fr 1fr; }
+  .party-seat span { grid-column: 1 / -1; }
   .topbar-right { width: 100%; }
   .cost-bar { width: 50px; }
 }

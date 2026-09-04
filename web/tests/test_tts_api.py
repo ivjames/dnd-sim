@@ -169,16 +169,18 @@ def test_a_game_this_process_no_longer_runs_still_keeps_its_tab(tts_app, tts_cli
     assert tts_client.get(speak_url(game, text="More.")).status_code == 402
 
 
-# -- gender ------------------------------------------------------------------
+# -- pronouns ----------------------------------------------------------------
 
-def test_a_pc_is_cast_from_the_gender_its_own_party_list_states(tts_client, sample_config):
+def test_a_pc_is_cast_from_the_pronouns_its_own_party_list_states(tts_client, sample_config):
     party = [
         {"id": "pc_1", "name": "Thorin", "race": "Dwarf (Hill)", "klass": "Fighter",
-         "level": 3, "gender": "male"},
+         "level": 3, "pronouns": "he/him"},
         {"id": "pc_2", "name": "Vessa", "race": "Halfling (Lightfoot)", "klass": "Rogue",
-         "level": 3, "gender": "female"},
+         "level": 3, "pronouns": "she/her"},
         {"id": "pc_3", "name": "Crick", "race": "Halfling (Lightfoot)", "klass": "Rogue",
-         "level": 3},                                    # no gender stated
+         "level": 3},                                    # no pronouns stated
+        {"id": "pc_4", "name": "Ilbrandt", "race": "Human", "klass": "Cleric",
+         "level": 3, "pronouns": "they/them"},
     ]
     game = create(tts_client, dict(sample_config, party=party))["id"]
 
@@ -194,33 +196,92 @@ def test_a_pc_is_cast_from_the_gender_its_own_party_list_states(tts_client, samp
     # Unstated is dealt from the whole pool — which is the point of leaving it
     # unstated, not a failure to state it.
     assert voice("pc_3") == cast_for("pc_3", STANDARD_ENGLISH, "Brian").voice_id
+    # And so is they/them: Polly's roster is female and male, and there is no
+    # third voice to deal. Stating it says who the character is; it does not
+    # ask the roster for something it does not have.
+    assert voice("pc_4") == cast_for("pc_4", STANDARD_ENGLISH, "Brian").voice_id
 
-    # The DM, an NPC and a monster have no character record to read a gender
+    # The DM, an NPC and a monster have no character record to read pronouns
     # from, and are cast exactly as they were before any of this.
     for key in ("dm", "npc", "monster:goblin_1"):
         assert voice(key) == cast_for(key, STANDARD_ENGLISH, "Brian").voice_id
 
 
-def test_the_caller_cannot_choose_the_voice(tts_client, sample_config):
-    """Gender is read from the game, never from the request.
+def test_a_legacy_gender_is_still_read_and_stated_pronouns_win(tts_client, sample_config):
+    """`gender` is what a party spec used to say, and a stranger's still might.
 
-    This endpoint spends money: a gender in the query string would be a way to
+    A game persists its config and its clips are cached per cast, so dropping
+    the old key would re-cast a running table mid-transcript and pay Polly
+    again to do it. Where both are stated, the pronouns decide — including
+    they/them, which narrows nothing: reading the old key underneath would
+    quietly keep a narrowing the newer key removed.
+    """
+    party = [
+        {"id": "pc_1", "name": "Vessa", "race": "Halfling (Lightfoot)", "klass": "Rogue",
+         "level": 3, "gender": "female"},
+        {"id": "pc_2", "name": "Crick", "race": "Halfling (Lightfoot)", "klass": "Rogue",
+         "level": 3, "gender": "female", "pronouns": "he/him"},
+        {"id": "pc_3", "name": "Pib", "race": "Human", "klass": "Cleric",
+         "level": 3, "gender": "female", "pronouns": "they/them"},
+    ]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    def voice(key):
+        return tts_client.get(speak_url(game, key=key)).headers["X-Dnd-Voice"]
+
+    women = {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+    assert voice("pc_1") in women
+    assert voice("pc_2") in {v.id for v in STANDARD_ENGLISH if v.gender == "Male"}
+    assert voice("pc_3") == cast_for("pc_3", STANDARD_ENGLISH, "Brian").voice_id
+
+
+def test_converting_a_config_to_pronouns_costs_nothing(tts_client, tts, sample_config):
+    """The claim the migration rests on, checked rather than asserted.
+
+    `she/her` resolves to the same pool constraint `female` did, so the cast is
+    the same voice and the SSML is the same document — and the disk cache key
+    is `(engine, voice id, SSML)` with no config fingerprint in it. So a
+    converted scenario's clips are still hits, and nothing is re-synthesized.
+    A change that quietly re-bought every clip a running table had already paid
+    for would be a real cost, not a cosmetic one.
+    """
+    line = "The cart still smoulders."
+    member = {"id": "pc_1", "name": "Vessa", "race": "Halfling (Lightfoot)",
+              "klass": "Rogue", "level": 3}
+
+    was = create(tts_client, dict(sample_config, party=[dict(member, gender="female")]))["id"]
+    before = tts_client.get(speak_url(was, key="pc_1", text=line))
+    assert before.status_code == 200 and len(tts.calls) == 1
+
+    now = create(tts_client, dict(sample_config, party=[dict(member, pronouns="she/her")]))["id"]
+    after = tts_client.get(speak_url(now, key="pc_1", text=line))
+    assert after.status_code == 200
+    assert after.headers["X-Dnd-Voice"] == before.headers["X-Dnd-Voice"]
+    assert after.headers["ETag"] == before.headers["ETag"]
+    assert len(tts.calls) == 1, "the converted config paid Polly for a clip it already had"
+
+
+def test_the_caller_cannot_choose_the_voice(tts_client, sample_config):
+    """A voice trait is read from the game, never from the request.
+
+    This endpoint spends money: pronouns in the query string would be a way to
     walk the whole roster, minting a paid cache entry per step.
     """
     party = [{"id": "pc_1", "name": "Thorin", "race": "Dwarf (Hill)", "klass": "Fighter",
-              "level": 3, "gender": "male"}]
+              "level": 3, "pronouns": "he/him"}]
     game = create(tts_client, dict(sample_config, party=party))["id"]
 
     honest = tts_client.get(speak_url(game, key="pc_1"))
-    asked = tts_client.get(speak_url(game, key="pc_1") + "&gender=female")
-    assert honest.headers["X-Dnd-Voice"] == asked.headers["X-Dnd-Voice"]
-    assert honest.headers["ETag"] == asked.headers["ETag"]      # and it is the same clip
+    for asked in ("&pronouns=she/her", "&gender=female"):
+        rv = tts_client.get(speak_url(game, key="pc_1") + asked)
+        assert honest.headers["X-Dnd-Voice"] == rv.headers["X-Dnd-Voice"]
+        assert honest.headers["ETag"] == rv.headers["ETag"]     # and it is the same clip
 
 
-def test_gender_survives_the_process_that_ran_the_game(tts_app, tts_client, sample_config):
+def test_pronouns_survive_the_process_that_ran_the_game(tts_app, tts_client, sample_config):
     """The party list is in the row too, so an archived game still casts right."""
     party = [{"id": "pc_1", "name": "Vessa", "race": "Halfling (Lightfoot)", "klass": "Rogue",
-              "level": 3, "gender": "female"}]
+              "level": 3, "pronouns": "she/her"}]
     game = create(tts_client, dict(sample_config, party=party))["id"]
     tts_app.config["DND_REGISTRY"].get(game).shutdown()
     tts_app.config["DND_REGISTRY"]._games.pop(game)
@@ -238,11 +299,11 @@ def test_a_pc_is_only_cast_as_a_child_if_its_own_party_list_says_so(tts_client, 
     was dealt from."""
     party = [
         {"id": "pc_1", "name": "Father Bexley Crane", "race": "Dwarf (Hill)", "klass": "Cleric",
-         "level": 3, "gender": "male"},                  # no age stated: an adult
+         "level": 3, "pronouns": "he/him"},              # no age stated: an adult
         {"id": "pc_2", "name": "Wren", "race": "Human", "klass": "Rogue",
-         "level": 3, "gender": "female", "age": 40},
+         "level": 3, "pronouns": "she/her", "age": 40},
         {"id": "pc_3", "name": "Pip", "race": "Human", "klass": "Rogue",
-         "level": 3, "gender": "female", "age": "child"},
+         "level": 3, "pronouns": "she/her", "age": "child"},
     ]
     game = create(tts_client, dict(sample_config, party=party))["id"]
 
@@ -261,10 +322,10 @@ def test_a_pc_is_only_cast_as_a_child_if_its_own_party_list_says_so(tts_client, 
 
 
 def test_the_caller_cannot_ask_to_be_a_child(tts_client, sample_config):
-    """Age is read from the game, exactly as gender is, and for the same
+    """Age is read from the game, exactly as pronouns are, and for the same
     reason: this endpoint spends money."""
     party = [{"id": "pc_1", "name": "Father Bexley Crane", "race": "Dwarf (Hill)",
-              "klass": "Cleric", "level": 3, "gender": "male"}]
+              "klass": "Cleric", "level": 3, "pronouns": "he/him"}]
     game = create(tts_client, dict(sample_config, party=party))["id"]
 
     honest = tts_client.get(speak_url(game, key="pc_1"))
@@ -419,12 +480,16 @@ def test_reconfiguring_the_server_retires_the_browsers_copies(tts_client, tts):
     assert svc(language="en-GB").config_id() != base
 
 
-def test_the_shipped_parties_state_a_gender_only_where_their_persona_does():
+def test_the_shipped_parties_state_pronouns_only_where_their_persona_does():
     """The rule the examples follow, kept honest.
 
-    Inventing a gender for a character whose persona states none would be
-    writing a fact into someone else's character; leaving one off a character
+    Inventing pronouns for a character whose persona states none would be
+    writing a fact into someone else's character; leaving them off a character
     whose persona says "she" would be ignoring what is already written.
+
+    The examples say `pronouns` and nothing says `gender` any more: the older
+    key is still read (a stranger's config may use it) but a shipped party
+    stating both would be a config arguing with itself.
     """
     import glob
     import json
@@ -441,13 +506,14 @@ def test_the_shipped_parties_state_a_gender_only_where_their_persona_does():
             seen += 1
             text = member["name"] + " " + member.get("persona", "")
             female, male = bool(said.search(text)), bool(his.search(text))
-            stated = member.get("gender", "")
+            stated = member.get("pronouns", "")
+            assert "gender" not in member, (path, member["name"])
             if female and not male:
-                assert stated == "female", (path, member["name"])
+                assert stated == "she/her", (path, member["name"])
             elif male and not female:
-                assert stated == "male", (path, member["name"])
+                assert stated == "he/him", (path, member["name"])
             elif not female and not male:
-                assert not stated, (path, member["name"], "persona states no gender")
+                assert not stated, (path, member["name"], "persona states no pronouns")
     assert seen >= 28
 
 

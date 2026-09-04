@@ -11,12 +11,6 @@ import random
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-# The one rule this stand-in does not reimplement. What a config's answer means
-# is decided in exactly one place (CONTRACTS.md §1.3); a second reading of it
-# here could disagree with the real engine and the views would be tested
-# against the disagreement.
-from engine.characters import normalize_pronouns
-
 # --- dice ------------------------------------------------------------------
 
 
@@ -111,11 +105,8 @@ class CharacterSheet:
     spellcasting_ability: str | None = None
     features: list = field(default_factory=list)
     persona: str = ""
-    # CONTRACTS.md §1.3: who the character is, which the views read and the
-    # prompts print. A stand-in that omitted them would let a view ship
-    # without them and still pass.
+    pronouns: str = ""
     gender: str = ""
-    pronouns: str = "they/them"
 
 
 @dataclass
@@ -275,8 +266,8 @@ def build_character(spec: dict, rng: RNG) -> CharacterSheet:
         spell_slots={1: 2} if klass in ("Cleric", "Wizard") else {},
         features=[],
         persona=spec.get("persona", ""),
+        pronouns=str(spec.get("pronouns", "") or ""),
         gender=str(spec.get("gender", "") or ""),
-        pronouns=normalize_pronouns(spec.get("pronouns"), spec.get("gender")),
     )
 
 

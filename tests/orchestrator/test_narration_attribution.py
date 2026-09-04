@@ -105,12 +105,46 @@ def test_the_narration_view_does_not_reprint_the_events_it_is_about():
      ("", DEFAULT_PRONOUNS), ("  ", DEFAULT_PRONOUNS), ("nonbinary", DEFAULT_PRONOUNS),
      (None, DEFAULT_PRONOUNS)],
 )
-def test_a_party_member_gets_the_pronouns_its_own_spec_states(stated, expected):
+def test_a_party_member_whose_spec_states_only_the_older_gender(stated, expected):
+    """`gender` is the spelling a party spec used to state. Still read, and
+    still read through `PRONOUNS`, because a stranger's config and a game
+    persisted before `pronouns` existed both still carry it."""
     sheet = eng.build_character(
         {"id": "pc_1", "name": "Rooke", "klass": "Fighter", "level": 3, "gender": stated}, eng.RNG(1)
     )
     assert pronouns_for(eng.Combatant(id="pc_1", name="Rooke", side="party", kind="pc",
                                       sheet=sheet)) == expected
+
+
+@pytest.mark.parametrize(
+    "stated, expected",
+    [("she/her", "she/her"), ("he/him", "he/him"), ("they/them", "they/them"),
+     ("xe/xem", "xe/xem"), ("He/Him", "He/Him"), ("  she/her  ", "she/her"),
+     ("", DEFAULT_PRONOUNS), ("   ", DEFAULT_PRONOUNS), (None, DEFAULT_PRONOUNS)],
+)
+def test_stated_pronouns_are_narrated_as_written(stated, expected):
+    """The key a party spec states now, and the column asks for exactly it —
+    so there is nothing to infer and nothing to round off. A set this codebase
+    has never heard of reaches the DM intact; only silence becomes the default.
+    """
+    sheet = eng.build_character(
+        {"id": "pc_1", "name": "Rooke", "klass": "Fighter", "level": 3, "pronouns": stated},
+        eng.RNG(1),
+    )
+    assert pronouns_for(eng.Combatant(id="pc_1", name="Rooke", side="party", kind="pc",
+                                      sheet=sheet)) == expected
+
+
+def test_stated_pronouns_beat_a_legacy_gender_here_too():
+    """`web/routes/tts.py` casts the voice off `pronouns` where both are
+    stated. Narrating off the other one would put the DM and the voice at odds
+    in exactly the config that took the trouble to say so."""
+    sheet = eng.build_character(
+        {"id": "pc_1", "name": "Rooke", "klass": "Fighter", "level": 3,
+         "gender": "female", "pronouns": "they/them"}, eng.RNG(1),
+    )
+    assert pronouns_for(eng.Combatant(id="pc_1", name="Rooke", side="party", kind="pc",
+                                      sheet=sheet)) == "they/them"
 
 
 def test_a_monster_states_nothing_so_it_is_they():
@@ -126,11 +160,27 @@ def test_the_pronoun_spellings_are_the_ones_tts_already_casts_on():
     narrate the character the other. `agents/` cannot import `tts/` — wrong
     direction in the layering — so the tables are pinned against each other
     here instead."""
-    from tts.voices import GENDERS
+    from tts.voices import GENDERS, gender_for_pronouns, normalize_gender
 
     assert set(PRONOUNS) == set(GENDERS)
     for spelling, gender in GENDERS.items():
         assert PRONOUNS[spelling] == {"female": "she/her", "male": "he/him"}[gender]
+        # And the legacy read is a round trip: narrating a `gender` through
+        # this table lands on pronouns the casting reads back as the same pool.
+        assert gender_for_pronouns(PRONOUNS[spelling]) == normalize_gender(spelling)
+
+    # The other direction is the one that matters now, because `pronouns` is
+    # what a spec states: what the DM is told and what the voice is dealt from
+    # come off the SAME string, so the two cannot disagree about a character.
+    for said in ("she/her", "he/him", "they/them", "xe/xem", "she/they"):
+        sheet = eng.build_character(
+            {"id": "pc_1", "name": "Rooke", "klass": "Fighter", "level": 3, "pronouns": said},
+            eng.RNG(1),
+        )
+        narrated = pronouns_for(eng.Combatant(id="pc_1", name="Rooke", side="party",
+                                              kind="pc", sheet=sheet))
+        assert narrated == said
+        assert gender_for_pronouns(narrated) == gender_for_pronouns(said)
 
 
 def test_the_view_gives_every_combatant_pronouns():
