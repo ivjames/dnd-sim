@@ -1910,6 +1910,12 @@
   // that decides what a given answer means.
   var CHILD_AGES = { child: 1, kid: 1, boy: 1, girl: 1 };
   var CHILD_MAX_AGE = 12;
+  // The same numeric grammar `_NUMERIC_AGE` pins in tts/voices.py, and here
+  // for the same reason: `Number()` and Python's `float()` disagree in both
+  // directions ("0xA" is 10 to one and an error to the other, "1_0" the other
+  // way round), and a select showing one thing while the server casts another
+  // would restate a character's age the moment this panel was submitted.
+  var NUMERIC_AGE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/;
 
   function isChildAge(said) {
     if (said === null || said === undefined || typeof said === 'boolean') return false;
@@ -1917,6 +1923,7 @@
     var s = String(said).trim().toLowerCase();
     if (!s) return false;
     if (CHILD_AGES[s]) return true;
+    if (!NUMERIC_AGE.test(s)) return false;
     var n = Number(s);
     return isFinite(n) && n > 0 && n <= CHILD_MAX_AGE;
   }

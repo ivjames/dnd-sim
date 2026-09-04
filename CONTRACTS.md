@@ -1369,8 +1369,16 @@ children, because there is nothing to ask.
    `gender` is (the narration amendment's §5: this endpoint spends money, and a
    trait in the query string walks the roster a paid clip at a time). `normalize_age` is the only
    place that decides what an answer means: the words in `AGES`, or a number of
-   years against `CHILD_MAX_AGE` (12). Anything unreadable — `"old enough"`,
-   `0`, `-3`, `True` — is nothing said.
+   years against `CHILD_MAX_AGE` (12), written in the one grammar
+   `_NUMERIC_AGE` pins — sign, decimal digits, at most one point, optional
+   exponent. Anything unreadable — `"old enough"`, `0`, `-3`, `True`, `0xA`,
+   `1_0` — is nothing said. The grammar is pinned rather than left to
+   `float()` because `web/static/app.js` decides which way its select starts
+   and `Number()` disagrees with `float()` in both directions; a panel that
+   showed one answer while the server cast another would restate a
+   character's age on submit, since submitting writes the select back.
+   `web/tests/test_newgame_panel.py` runs both implementations over one
+   corpus.
 
    **Not an engine field**, exactly as `gender` is not: `CharacterSheet` (§1.3)
    is unchanged, `build_character` ignores the key, and neither the DM nor the

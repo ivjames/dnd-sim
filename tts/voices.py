@@ -34,6 +34,7 @@ device voice list:
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 
 __all__ = [
@@ -169,6 +170,22 @@ AGES = {"child": "child", "kid": "child", "boy": "child", "girl": "child",
         "adult": "adult", "grown": "adult", "grownup": "adult", "grown-up": "adult",
         "elder": "adult", "elderly": "adult", "old": "adult"}
 
+#: The one numeric grammar an `age` may be written in: an optional sign, plain
+#: decimal digits with at most one point, an optional exponent. Nothing else.
+#:
+#: Pinned with a pattern rather than left to `float()` because the panel in
+#: `web/static/app.js` has to agree with this function about which strings are
+#: numbers, and `float()` and JavaScript's `Number()` disagree in both
+#: directions: `float("1_0")` is 10 where `Number("1_0")` is NaN, and
+#: `Number("0xA")` is 10 where `float("0xA")` raises. Either disagreement is a
+#: select that shows one thing and a server that casts another — and because
+#: submitting the panel writes its answer back, opening the panel and touching
+#: nothing would silently restate the character's age. So both sides accept
+#: exactly this, and the shared corpus in `web/tests/test_newgame_panel.py`
+#: runs the two implementations against each other. `inf` and `nan` are
+#: excluded here as well, though the range check below would have caught them.
+_NUMERIC_AGE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\Z")
+
 # Timbre shifts dealt to monsters: never 0, because a monster whose only
 # treatment rounded to "no treatment" is a goblin that sounds like the barmaid.
 MONSTER_VTL: tuple[int, ...] = (-20, -10, 10, 20, 30, 40)
@@ -251,6 +268,8 @@ def normalize_age(age) -> str:
             return ""
         if said in AGES:
             return AGES[said]
+        if not _NUMERIC_AGE.match(said):
+            return ""
         raw = said
     try:
         years = float(raw)               # type: ignore[arg-type]
