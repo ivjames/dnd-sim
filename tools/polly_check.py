@@ -202,6 +202,33 @@ def build(args: argparse.Namespace, cache_dir: str, client: Any) -> PollyTTS:
     )
 
 
+def _the_other_way(svc: PollyTTS, client: Any, cache_dir: str) -> PollyTTS:
+    """`svc` with the monsters rendered the other way, and nothing else moved.
+
+    Derived from the service rather than rebuilt from the arguments, because
+    the run being compared against is whatever this deployment is configured
+    for: under `--no-monster-fx` (or `DND_TTS_MONSTER_FX=0`) the primary render
+    IS the old voice, and rebuilding "the old voice" from the same arguments
+    would save two copies of it and call them a comparison.
+
+    The untreated arrangement is always put on `standard`, whatever
+    `--monster-engine` said, because that is the only engine
+    `<amazon:effect vocal-tract-length>` exists on — an untreated monster
+    anywhere else is not the old voice, it is a plain one.
+    """
+    fx = not svc.monster_fx
+    return PollyTTS(
+        AudioCache(cache_dir, 0),
+        client=client,
+        region=svc.region,
+        engine=svc.engine,
+        monster_engine=svc.engine if fx else "standard",
+        monster_fx=fx,
+        language=svc.language,
+        dm_voice=svc.dm_voice,
+    )
+
+
 def monster_fx(args: argparse.Namespace) -> bool:
     """Whether monsters are post-processed, as `from_env` decides it —
     `--no-monster-fx` being the command-line way to say `DND_TTS_MONSTER_FX=0`."""
@@ -473,18 +500,19 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
         table, table_req = speak(svc, rec, TABLE_KEY, args.text, rep, args.out)
         monster, monster_req = speak(svc, rec, MONSTER_KEY, args.monster_text, rep, args.out)
 
-        old = b""
+        other = b""
         if args.ab and monster:
-            # The same line, cast the way it was before the treatment existed:
-            # standard engine, vocal-tract-length, no post-processing. Its own
-            # service, so nothing about the run above changes.
+            # The same line, rendered the OTHER way — derived from the service
+            # above rather than from the arguments, so it differs in exactly
+            # one dimension whichever way this run is configured. Building it
+            # from the arguments is how the comparison silently becomes two
+            # copies of the same arrangement under `--no-monster-fx`.
+            counterpart = _the_other_way(svc, rec, cache_dir)
+            which = "new" if counterpart.monster_fx else "old"
             print()
-            print("the old monster voice, for comparison")
-            was = build(argparse.Namespace(**{**vars(args), "no_monster_fx": True,
-                                              "monster_engine": "standard"}),
-                        cache_dir, rec)
-            old, _req = speak(was, rec, MONSTER_KEY, args.monster_text, rep, args.out,
-                              label="monster_goblin_1.old")
+            print(f"the {which} monster voice, for comparison")
+            other, _req = speak(counterpart, rec, MONSTER_KEY, args.monster_text, rep,
+                                args.out, label=f"monster_goblin_1.{which}")
 
         print()
         print("the monsters")
@@ -521,7 +549,7 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
                           f"table={table_req.get('OutputFormat')!r} "
                           f"monster={monster_req.get('OutputFormat')!r}")
             if args.ab:
-                rep.check(bool(old) and old != monster,
+                rep.check(bool(other) and other != monster,
                           "the two monster voices are different audio")
                 rep.note("play them back to back; the treated one should be the "
                          "same production as the DM line, only bigger")

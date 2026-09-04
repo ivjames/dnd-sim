@@ -113,6 +113,37 @@ def test_the_ab_pass_renders_the_monster_line_both_ways(capsys, tmp_path):
     assert "the old monster voice" in out
 
 
+def test_the_ab_pass_compares_against_the_run_it_is_in(capsys, tmp_path):
+    """`--ab` renders the line the OTHER way, whichever way this run renders
+    it. Built from the arguments instead, `--ab --no-monster-fx` would save two
+    copies of the old voice and call them a comparison — a listening test that
+    cannot fail, which is worse than not running one."""
+    polly = FakePolly()
+    out_dir = tmp_path / "clips"
+    code, out = run(["--ab", "--no-monster-fx", "--out", str(out_dir)], polly, capsys)
+    assert code == 0, out
+    # The primary monster line is the old one; the comparison is the treated one.
+    assert [s["OutputFormat"] for s in polly.sent] == ["mp3", "mp3", "pcm"]
+    assert "vocal-tract-length" in polly.sent[1]["Text"]
+    assert "vocal-tract-length" not in polly.sent[2]["Text"]
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "dm.mp3", "monster_goblin_1.mp3", "monster_goblin_1.new.wav"]
+    assert "the new monster voice" in out
+    assert "the two monster voices are different audio" in out and "FAIL" not in out
+
+
+def test_the_untreated_half_of_an_ab_is_always_on_the_engine_that_has_the_tag(capsys):
+    """`--monster-engine` names where the monsters render; it cannot move the
+    comparison. An untreated monster on neural writes no `vocal-tract-length`
+    — Polly has none there — so it would be a plain voice being passed off as
+    the one the treatment replaced."""
+    polly = FakePolly()
+    code, out = run(["--ab", "--monster-engine", "neural"], polly, capsys)
+    assert code == 0, out
+    assert [s["Engine"] for s in polly.sent] == ["neural", "neural", "standard"]
+    assert "vocal-tract-length" in polly.sent[2]["Text"]
+
+
 def test_a_monster_line_polly_refuses_is_a_non_zero_exit(capsys):
     """The whole point. A table line succeeding must not be enough to pass —
     that is exactly the state the droplet could be in right now, and the

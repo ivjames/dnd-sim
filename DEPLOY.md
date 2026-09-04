@@ -296,9 +296,10 @@ non-zero if either fails. It uses a temporary cache directory and no game, so
 it neither fills `data/tts` nor charges a ledger; the two clips cost about
 $0.0005. `--dry-run` prints the documents without sending them, `--out DIR`
 keeps the clips to listen to, and `--ab` renders the monster line a second time
-the old way — standard engine, `vocal-tract-length` — so the treated voice and
-the one it replaced can be played back to back. Whether the new one is better
-is a judgement; that is where it is made.
+the *other* way — whichever of the treatment and the old standard-engine
+`vocal-tract-length` this deployment is not configured for — so the two can be
+played back to back. Whether the new one is better is a judgement; that is
+where it is made.
 
 When a monster line does fail, `dndsim logs` is the only place it shows:
 
