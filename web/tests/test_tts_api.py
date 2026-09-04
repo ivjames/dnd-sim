@@ -402,3 +402,89 @@ def test_a_stranger_cannot_raise_the_ceiling_by_asking(tts_app, tts_client, tts,
 def test_a_bad_ceiling_is_the_default_not_a_crash(tts_app, tts_client, tts, game, monkeypatch):
     monkeypatch.setenv("DND_TTS_MAX_USD", "not a number")
     assert tts_client.get(speak_url(game)).status_code == 200
+
+
+def test_two_tabs_after_one_line_are_one_clip_not_one_refusal(tts_app, tts_client, tts,
+                                                              sample_config):
+    """Identical requests must not each reserve the cost of the same clip.
+
+    With budget for exactly one synthesis, the second asker would be refused
+    for a clip the first is a moment from making free — and the page reads a
+    402 as settled and gives up on server voices for the whole game.
+    """
+    text = "The cart still smoulders."
+    one_clip = len(text) * 4.0 / 1_000_000
+    game = create(tts_client, dict(sample_config, budget_usd=one_clip * 1.5))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+
+    real = tts.render
+
+    def slow(key, body, gender=""):
+        time.sleep(0.2)
+        return real(key, body, gender)
+
+    tts.render = slow
+    codes = []
+
+    def ask():
+        codes.append(tts_app.test_client().get(speak_url(game, text=text)).status_code)
+
+    threads = [threading.Thread(target=ask) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert codes == [200, 200, 200, 200]
+    assert len(tts.calls) == 1                                  # paid for once
+    assert entry.game.ledger.total_usd == pytest.approx(one_clip, rel=1e-6)
+
+
+def test_the_charge_lands_before_the_reservation_is_released(tts_app, tts_client, tts,
+                                                             sample_config):
+    """A waiter must never see a ledger that does not yet know about a clip
+    that has already been synthesized.
+
+    The window is between releasing the reservation and recording the charge,
+    so the delay has to go inside the charge — a slow synthesis holds the
+    reservation and proves nothing.
+    """
+    one_clip = len("Line number 0.") * 4.0 / 1_000_000
+    game = create(tts_client, dict(sample_config, budget_usd=one_clip * 1.5))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+
+    charging = threading.Event()
+    real_add = entry.game.ledger.add_usd
+
+    def slow_add(role, usd, **counters):
+        charging.set()
+        time.sleep(0.25)                 # the gap, held open
+        return real_add(role, usd, **counters)
+
+    entry.game.ledger.add_usd = slow_add
+    codes = []
+
+    def ask(n):
+        codes.append(tts_app.test_client().get(
+            speak_url(game, text="Line number %d." % n)).status_code)
+
+    first = threading.Thread(target=ask, args=(0,))
+    first.start()
+    assert charging.wait(timeout=5)
+    second = threading.Thread(target=ask, args=(1,))     # a DIFFERENT line
+    second.start()
+    for t in (first, second):
+        t.join(timeout=15)
+
+    assert sorted(codes) == [200, 402]
+    assert entry.game.ledger.total_usd == pytest.approx(one_clip, rel=1e-6)
+
+
+def test_a_nonstandard_engine_with_no_roster_says_so(tts_app, tts_client, tts):
+    """The built-in roster is standard-only. Casting one of those voices with
+    `Engine=neural` is the 502 loop engine-aware SSML exists to avoid."""
+    tts.voices = lambda: ()
+    body = tts_client.get("/api/tts").get_json()
+    assert body["available"] is False and "could be listed" in body["reason"]

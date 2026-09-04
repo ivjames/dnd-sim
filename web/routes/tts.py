@@ -246,6 +246,15 @@ def capability():
                 "reason": "no Polly client — boto3 is missing, or AWS credentials are not set",
             }
         )
+    if not svc.voices():
+        # A non-standard engine whose DescribeVoices failed: the built-in
+        # roster is standard-only, so there is nothing to cast from.
+        return jsonify(
+            {
+                "available": False,
+                "reason": f"no {svc.engine} voices for {svc.language} could be listed",
+            }
+        )
     return jsonify(
         {
             "available": True,
@@ -317,8 +326,22 @@ def speak(game_id: str):
     # The lower of what the game asked for and what this server allows.
     budget = min(_budget_of(entry, row), _server_cap())
     try:
-        with _admission(game_id, entry, svc.price_of(len(text)), budget):
-            result = svc.synthesize(key, text, gender)
+        # Inside the line's own gate, so that two tabs after the SAME line do
+        # not each reserve the cost of it — the second would be refused for a
+        # clip the first is a moment from making free, and the page treats a
+        # 402 as settled and gives up on server voices for the whole game.
+        with svc.exclusive(ckey):
+            hit = svc.cached(ckey)
+            if hit is not None:                       # whoever held the gate paid for it
+                return _audio(hit, cast.voice_id, etag)
+            # The charge lands INSIDE the reservation. Releasing the one before
+            # making the other leaves a gap in which a waiting request reads a
+            # ledger that does not yet know about this clip, and reserves money
+            # that is already spent.
+            with _admission(game_id, entry, svc.price_of(len(text)), budget):
+                result = svc.render(key, text, gender)
+                if result.usd:
+                    _charge(game_id, entry, result.chars, result.usd)
     except _NoBudget as exc:
         capped = budget < _budget_of(entry, row)
         return _err(
@@ -329,9 +352,6 @@ def speak(game_id: str):
     except TTSError as exc:
         current_app.logger.info("tts unavailable: %s", exc)
         return _err(str(exc), 502)
-
-    if not result.cached and result.usd:
-        _charge(game_id, entry, result.chars, result.usd)
 
     return _audio(result.audio, result.cast.voice_id, etag)
 

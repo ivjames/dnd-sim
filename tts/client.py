@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -167,6 +168,17 @@ class PollyTTS:
         return pool
 
     def _fallback_pool(self) -> tuple[Voice, ...]:
+        """The built-in roster, which is exactly what its name says.
+
+        `STANDARD_ENGLISH` is the voices Polly serves on the STANDARD engine.
+        Handing one to a neural request casts a voice that engine does not
+        have, and Polly answers with an error — the same repeated 502 that
+        engine-aware SSML exists to avoid. On any other engine a failed
+        `DescribeVoices` leaves no roster worth vouching for, so this reports
+        none and the page uses the browser's voices instead of hearing nothing.
+        """
+        if self.engine != "standard":
+            return ()
         prefix = self.language.split("-")[0].lower()
         pool = tuple(v for v in STANDARD_ENGLISH if v.language.lower().startswith(prefix))
         return pool or STANDARD_ENGLISH
@@ -230,40 +242,61 @@ class PollyTTS:
         cast = self.cast(key, gender)
         return cast, cache_key(self.engine, cast.voice_id, self.ssml(text, cast))
 
-    def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
-        """Audio for one line in one seat. Raises `TTSError` if it cannot be had."""
+    def _check(self, text: str) -> str:
         text = str(text or "").strip()
         if not text:
             raise TTSError("nothing to say")
         if len(text) > self.max_chars:
             raise TTSError(f"line is {len(text)} characters; the cap is {self.max_chars}")
+        return text
 
-        cast, ckey = self.cache_key_for(key, text, gender)
-        hit = self.cache.get(ckey)
-        if hit is not None:
-            return TTSResult(hit, cast, 0, 0.0, True, ckey)
+    @contextmanager
+    def exclusive(self, ckey: str):
+        """Hold the one-synthesis-per-line gate for `ckey`.
 
-        # Two tabs asking for the same line at the same moment is otherwise
-        # two identical Polly bills: the second asker waits on the first and
-        # then finds the clip in the cache. Not a hard guarantee — a third
-        # arriving in the instant the gate is retired makes its own — so the
-        # cost of losing the race stays one duplicate clip, never a wrong one.
+        Exposed because the caller has to do more inside it than synthesize:
+        the web layer checks the cache and reserves budget in here, so that two
+        tabs asking for the SAME line cannot each reserve the cost of it and
+        have the second refused for a clip the first is about to make free.
+        """
         with self._lock:
             gate = self._inflight.setdefault(ckey, threading.Lock())
         try:
             with gate:
-                hit = self.cache.get(ckey)
-                if hit is not None:
-                    return TTSResult(hit, cast, 0, 0.0, True, ckey)
-                audio = self._synthesize_now(text, cast)
-                self.cache.put(ckey, audio)
+                yield
         finally:
             # Whether it worked or not: a gate left behind is a slow leak of
             # one lock per distinct line the game ever speaks.
             with self._lock:
                 self._inflight.pop(ckey, None)
+
+    def render(self, key: str, text: str, gender: str = "") -> TTSResult:
+        """Synthesize unconditionally, and cache it.
+
+        No gate and no cache read: the caller holds `exclusive` and has already
+        looked. Raises `TTSError` if it cannot be had.
+        """
+        text = self._check(text)
+        cast, ckey = self.cache_key_for(key, text, gender)
+        audio = self._synthesize_now(text, cast)
+        self.cache.put(ckey, audio)
         chars = billable_chars(text)
         return TTSResult(audio, cast, chars, self.price_of(chars), False, ckey)
+
+    def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
+        """Audio for one line in one seat, from the cache or from Polly."""
+        text = self._check(text)
+        cast, ckey = self.cache_key_for(key, text, gender)
+        hit = self.cache.get(ckey)
+        if hit is not None:
+            return TTSResult(hit, cast, 0, 0.0, True, ckey)
+        with self.exclusive(ckey):
+            # Two tabs asking at the same moment is otherwise two identical
+            # Polly bills: the second waits here and then finds the clip.
+            hit = self.cache.get(ckey)
+            if hit is not None:
+                return TTSResult(hit, cast, 0, 0.0, True, ckey)
+            return self.render(key, text, gender)
 
     def _synthesize_now(self, text: str, cast: Cast) -> bytes:
         client = self.client()

@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable
 
@@ -228,6 +229,8 @@ class FakeTTS:
         self.fail = fail
         self.calls: list[tuple[str, str]] = []
         self.clips: dict[str, bytes] = {}
+        self._gates: dict[str, threading.Lock] = {}
+        self._gate_lock = threading.Lock()
 
     def available(self) -> bool:
         return self.up
@@ -251,6 +254,26 @@ class FakeTTS:
 
     def cached(self, ckey: str):
         return self.clips.get(ckey)
+
+    def voices(self):
+        from tts.voices import STANDARD_ENGLISH  # noqa: PLC0415
+
+        return STANDARD_ENGLISH if self.up else ()
+
+    @contextmanager
+    def exclusive(self, ckey: str):
+        """A real gate, because the route's correctness depends on it being one.
+
+        A no-op stub here would let identical requests through side by side and
+        quietly pass tests the real service would fail.
+        """
+        with self._gate_lock:
+            gate = self._gates.setdefault(ckey, threading.Lock())
+        with gate:
+            yield
+
+    def render(self, key: str, text: str, gender: str = ""):
+        return self.synthesize(key, text, gender)
 
     def synthesize(self, key: str, text: str, gender: str = ""):
         from tts.client import TTSError, TTSResult  # noqa: PLC0415

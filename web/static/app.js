@@ -537,6 +537,7 @@
     tts: { available: false, checked: false, engine: '', maxChars: 400,
            config: '', degraded: false, fails: 0, reason: '' },
     clips: {},             // clip URL → object URL, for what has been fetched
+    pending: {},           // clip URL → in-flight promise, so one URL is asked for once
     clipOrder: [],
     gestureArmed: false,   // the document-level "first tap starts it" listener is on
     settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true },
@@ -668,13 +669,21 @@
     });
     V.clips = {};
     V.clipOrder = [];
+    V.pending = {};
   }
 
   // Resolves to a playable object URL. Rejects with `.status` set from the
   // response, because which refusal it was decides whether to ask again.
+  //
+  // One request per URL, ever, including while one is still in flight: a
+  // prefetch that has not landed by the time the playhead reaches its line
+  // would otherwise be asked for a second time, and on the server those two
+  // are a race for the same clip — near the budget the second is refused, and
+  // the page reads a 402 as settled and gives up on server voices entirely.
   function clipFetch(url) {
     if (V.clips[url]) return Promise.resolve(V.clips[url]);
-    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+    if (V.pending[url]) return V.pending[url];
+    var p = fetch(url, { credentials: 'same-origin' }).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (body) {
           var msg = body;
@@ -690,6 +699,12 @@
       clipKeep(url, obj);
       return obj;
     });
+    V.pending[url] = p;
+    // Clear on both paths, so a line refused once can be asked for again after
+    // the game's budget or the server's configuration has moved on.
+    var forget = function () { delete V.pending[url]; };
+    p.then(forget, forget);
+    return p;
   }
 
   // Ask once, at start-up: can this server speak at all? A no is not an error
