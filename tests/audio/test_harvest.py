@@ -20,7 +20,7 @@ class FakeSource(Source):
         self.answers = answers or {}
         self.boom = boom
 
-    def search(self, query, *, dur, limit):
+    def search(self, query, *, dur, limit, group=""):
         self.asked.append((query, dur, limit))
         if self.boom:
             raise self.boom
@@ -127,3 +127,25 @@ def test_every_source_is_rate_limited():
     assert {s.name for s in SOURCES} <= set(H.SOURCE_GROUPS)
     for groups in H.SOURCE_GROUPS.values():
         assert set(groups) <= set(C.GROUPS)
+
+
+def test_a_music_catalogue_is_never_asked_for_ambience():
+    """incompetech is compositions. Ambience is a recording of a place."""
+    assert "ambience" not in H.SOURCE_GROUPS["incompetech"]
+    assert "ambience" in H.SOURCE_GROUPS["freesound"]
+    assert "ambience" in H.SOURCE_GROUPS["archive"]
+
+
+def test_the_cue_group_reaches_the_source():
+    class Recorder(FakeSource):
+        def __init__(self):
+            super().__init__("archive")
+            self.groups = []
+
+        def search(self, query, *, dur, limit, group=""):
+            self.groups.append(group)
+            return []
+
+    rec = Recorder()
+    H.harvest([C.cue("amb_crypt_undead")], [rec], log=lambda *_: None, sleep=no_sleep)
+    assert set(rec.groups) == {"ambience"}

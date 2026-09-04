@@ -35,8 +35,8 @@ itself as a JSON file.
 |---|---|---|---|---|
 | [Freesound](https://freesound.org/docs/api/) | effects, stings, swells, ambience, some loops | CC0, CC BY, CC BY-NC (the harvester keeps the first two) | [free, instant](https://freesound.org/apiv2/apply/) → `FREESOUND_API_KEY` | 60 requests/min, 2000/day. Originals need OAuth2; previews do not (see below) |
 | [Jamendo](https://developer.jamendo.com/v3.0) | full-length music beds | CC, per track via `license_ccurl` | [free](https://devportal.jamendo.com/) → `JAMENDO_CLIENT_ID` | Their API terms govern the free tier — read them before anything commercial |
-| [incompetech](https://incompetech.com/music/royalty-free/music.html) | music beds, and a Stings genre | CC BY 4.0, all of it | none | Kevin MacLeod's 1400-piece catalogue, published whole as [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json) — fetched once per run and searched in memory, so it is one request and no rate limit. Its `feel` vocabulary is *Dark, Eerie, Mysterious, Unnerving, Somber, Epic, Action, Suspenseful*, which is this game's mood list almost exactly |
-| [Internet Archive](https://archive.org/advancedsearch.php) | music and long ambience | whatever the uploader declared; the query keeps only public-domain / BY / BY-SA | none | Works with no credentials at all, which is why it is here. The metadata is user-supplied and the hit rate is poor — a fallback, not a first choice |
+| [incompetech](https://incompetech.com/music/royalty-free/music.html) | music beds and stings — **not** ambience | CC BY 4.0, all of it | none | Kevin MacLeod's 1400-piece catalogue, published whole as [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json) — fetched once per run and searched in memory, so it is one request and no rate limit. Its `feel` vocabulary is *Dark, Eerie, Mysterious, Unnerving, Somber, Epic, Action, Suspenseful*, which is this game's mood list almost exactly |
+| [Internet Archive](https://archive.org/advancedsearch.php) | field-recorded ambience, and music | whatever the uploader declared; the query keeps only public-domain / BY / BY-SA | none | Works with no credentials at all. For ambience the query narrows to field recordings (radio aporee and anything tagged as one), which is the difference between the sound of a crypt and a piece of music about one |
 
 **Why a CC BY catalogue is in the default set:** the `sheep` repo sourced two
 rounds of CC0 music for its game and *neither survived audition* — the CC0 pool
@@ -65,6 +65,14 @@ paste each rather than unreachable:
 - [Tabletop Audio](https://tabletopaudio.com/) — built for exactly this job,
   but under its own terms rather than a Creative Commons licence. Check them
   before using anything from it.
+
+**Ambience is a recording of a place, not a piece about one.** A composer's
+catalogue will answer "crypt ambience" with something atmospheric and wrong, so
+incompetech is never asked for that group, and the Archive's ambience query is
+narrowed to field recordings. Generic words are dropped from an Archive query
+before it is sent — every field recording's description says "ambience", so
+ORing that word in returns the collection in its own order and the word that
+picks one out does no work.
 
 ## Licences
 
