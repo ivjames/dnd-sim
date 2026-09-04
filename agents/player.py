@@ -18,7 +18,16 @@ from .common import (
 )
 from .views import render_actions
 
-__all__ = ["PlayerAgent", "AgentOutputError"]
+__all__ = ["PlayerAgent", "AgentOutputError", "DEFAULT_TEMPERATURE", "clamp_temperature"]
+
+# Players sample hot on purpose. At 0.8 a Haiku seat converges: the same
+# character reaches for the same opening line and the same attack every round,
+# and `Game._say` then swallows the repeat, so the character goes quiet rather
+# than saying something new. 1.0 is the top of the Anthropic range, not a
+# tuned optimum — it is simply as much variance as the API will give.
+DEFAULT_TEMPERATURE = 1.0
+TEMPERATURE_MIN = 0.0
+TEMPERATURE_MAX = 1.0
 
 SPEECH_WORDS = 20
 SCENE_SPEECH_WORDS = 25
@@ -26,6 +35,24 @@ FREE_SPEECH_WORDS = 35   # a social beat; spoken aloud, so kept short
 REASONING_WORDS = 25
 MAX_TOKENS_ACTION = 200
 MAX_TOKENS_SPEECH = 160
+
+
+def clamp_temperature(value: Any, default: float = DEFAULT_TEMPERATURE) -> float:
+    """A sampling temperature the wire will accept, or `default` if unreadable.
+
+    The ceiling is 1.0 because that is Anthropic's maximum and every default
+    seat here is an Anthropic model; an OpenAI-compatible host would take 2.0,
+    but a config that only works on some seats is worse than one that works on
+    all of them. Clamping rather than raising is deliberate: a bad number in a
+    scenario file should cost variety, not kill the game mid-scene.
+    """
+    try:
+        t = float(value)
+    except (TypeError, ValueError):
+        return default
+    if t != t:  # NaN
+        return default
+    return min(TEMPERATURE_MAX, max(TEMPERATURE_MIN, t))
 
 
 def _sheet_summary(sheet: Any) -> str:
@@ -64,12 +91,14 @@ class PlayerAgent:
         ledger: Ledger,
         *,
         engine: Any = None,
+        temperature: float = DEFAULT_TEMPERATURE,
     ) -> None:
         self.client = client
         self.model = model
         self.sheet = sheet
         self.ledger = ledger
         self.engine = engine
+        self.temperature = clamp_temperature(temperature)
         self.actor_id = getattr(sheet, "id", "pc")
         self.name = getattr(sheet, "name", self.actor_id)
         self.role = f"player:{self.actor_id}"
@@ -93,13 +122,13 @@ class PlayerAgent:
             }
         ]
 
-    def _call(self, user: str, max_tokens: int, temperature: float = 0.8) -> str:
+    def _call(self, user: str, max_tokens: int, temperature: float | None = None) -> str:
         resp = self.client.complete(
             model=self.model,
             system=self.system_blocks,
             messages=[{"role": "user", "content": user}],
             max_tokens=max_tokens,
-            temperature=temperature,
+            temperature=self.temperature if temperature is None else temperature,
             json_only=True,
         )
         self.ledger.add(self.role, resp)

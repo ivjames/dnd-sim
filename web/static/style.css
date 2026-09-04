@@ -353,6 +353,7 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
 .modal-card h2 { margin: 0 0 14px; font-family: var(--serif); font-size: 20px; color: var(--amber); }
 .modal-card .lbl { display: block; margin: 12px 0 4px; }
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
 /* ---------- responsive: iPad portrait & phones ---------- */
@@ -367,7 +368,7 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
   .layout { grid-template-columns: 1fr; }
   .col-right { flex-direction: column; }
   .transcript { height: 55vh; }
-  .row { grid-template-columns: 1fr; }
+  .row, .row-4 { grid-template-columns: 1fr; }
   .topbar-right { width: 100%; }
   .cost-bar { width: 50px; }
 }

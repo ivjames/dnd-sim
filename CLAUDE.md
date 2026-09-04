@@ -159,4 +159,15 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   kitchen-sink `.gitignore` eating a source dir is the classic thing this
   catches (`data/` is ignored here on purpose; `engine/data/` is not, and must
   stay tracked — `git ls-files engine/data` confirms).
+- **Scenarios are `examples/*.json` and the web panel offers all of them**, so a
+  file dropped in there is a shipped scenario. `budget_usd` in each is sized
+  from a full mock run of that file (`--mock --tempo 0 --budget 20` prints the
+  total) with headroom — the budget is a stop, not an estimate, and a game that
+  hits it halts mid-scene. Grid bounds, `scene_<i>` triggers, party size and
+  monster names are checked for every file by the suite, so a broken scenario
+  fails `pytest` rather than a live game.
+- **Players sample at `player_temperature` (default 1.0), not 0.8.** Per game,
+  per seat (`temperature` in a party spec), or from the panel's Improv field;
+  clamped to `[0, 1]` because that is Anthropic's ceiling. The DM stays at 0.8
+  — it owns world facts — and the summarizer at 0.3.
 - pm2 process name is `dnd-sim`; `dndsim logs` tails it.

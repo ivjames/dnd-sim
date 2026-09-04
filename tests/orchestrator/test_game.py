@@ -594,16 +594,44 @@ def test_config_roundtrip(cfg):
     assert GameConfig.from_dict(cfg.to_dict()).to_dict() == cfg.to_dict()
 
 
-def test_example_configs_load():
-    for name in ("goblin_ambush", "crypt"):
-        c = GameConfig.load(f"examples/{name}.json")
-        assert len(c.party) == 4
-        assert all(p.get("persona") for p in c.party)
-        assert c.encounters()
-        for enc in c.encounters():
-            grid = enc["grid"]
-            assert len(grid["party_start"]) == 4
-            assert len(grid["enemy_start"]) >= sum(m["count"] for m in enc["monsters"]) - 1
+def example_paths():
+    """Every shipped scenario. The web new-game panel offers all of them."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "examples"
+    return sorted(root.glob("*.json"))
+
+
+@pytest.mark.parametrize("path", example_paths(), ids=lambda p: p.stem)
+def test_example_configs_load(path):
+    c = GameConfig.load(path)
+    assert len(c.party) == 4
+    assert all(p.get("persona") for p in c.party)
+    assert c.encounters()
+    for enc in c.encounters():
+        grid = enc["grid"]
+        assert len(grid["party_start"]) == 4
+        assert len(grid["enemy_start"]) >= sum(m["count"] for m in enc["monsters"]) - 1
+
+
+@pytest.mark.parametrize("path", example_paths(), ids=lambda p: p.stem)
+def test_example_grids_and_triggers_are_in_range(path):
+    """A start square off the map, or on a wall, is a scenario bug, not a game one."""
+    c = GameConfig.load(path)
+    scenes = (c.scenario or {}).get("scenes") or []
+    assert len(scenes) <= c.max_scenes
+    for enc in c.encounters():
+        trigger = enc.get("trigger", "")
+        assert trigger.startswith("scene_")
+        assert 1 <= int(trigger.split("_")[1]) <= c.max_scenes
+        grid = enc["grid"]
+        w, h = int(grid["width"]), int(grid["height"])
+        walls = {tuple(p) for p in grid.get("walls", [])}
+        starts = [tuple(p) for p in grid["party_start"]] + [tuple(p) for p in grid["enemy_start"]]
+        for x, y in starts + list(walls) + [tuple(p) for p in grid.get("difficult", [])]:
+            assert 0 <= x < w and 0 <= y < h, f"{path.name}: ({x},{y}) is off a {w}x{h} grid"
+        assert len(set(starts)) == len(starts), f"{path.name}: two combatants share a square"
+        assert not (set(starts) & walls), f"{path.name}: a start square is inside a wall"
 
 
 def test_cli_runs_a_mock_game(tmp_path, monkeypatch, capsys):
@@ -655,3 +683,30 @@ def _patched_game_init(orig):
         orig(self, cfg, client, bus, on_event=on_event, engine=engine or eng)
 
     return init
+
+
+# --- player sampling temperature -------------------------------------------
+
+
+def test_config_reads_and_clamps_player_temperature():
+    c = GameConfig.from_dict({"player_temperature": 4})
+    assert c.player_temperature == 1.0
+    assert GameConfig.from_dict({}).player_temperature == 1.0
+    assert GameConfig.from_dict({"player_temperature": 0.3}).player_temperature == 0.3
+
+
+def test_a_seat_can_run_cooler_than_the_table():
+    c = GameConfig.from_dict({"player_temperature": 0.9})
+    assert c.player_temperature_for({"id": "pc_1"}) == 0.9
+    assert c.player_temperature_for({"id": "pc_2", "temperature": 0.2}) == 0.2
+    assert c.player_temperature_for({"id": "pc_3", "temperature": 9}) == 1.0
+    assert c.player_temperature_for({"id": "pc_4", "temperature": "warm"}) == 0.9
+
+
+def test_seat_temperatures_reach_the_agents(cfg):
+    cfg.player_temperature = 0.7
+    cfg.party[1] = dict(cfg.party[1], temperature=0.1)
+    g, _ = make_game(cfg)
+    g._setup()
+    assert g.players["pc_1"].temperature == 0.7
+    assert g.players["pc_2"].temperature == 0.1

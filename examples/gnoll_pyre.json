@@ -1,0 +1,109 @@
+{
+  "title": "The Pyre at Halloway Steads",
+  "seed": 31,
+  "setting": "The open grass steads east of the Dessarin, three days after a gnoll band came through and did not stop to loot.",
+  "tone": "hard, fast, open-field horror; heroism at speed",
+  "budget_usd": 2.75,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 20,
+  "player_temperature": 1.0,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Ranulf Hale",
+      "race": "Human",
+      "klass": "Fighter",
+      "level": 4,
+      "abilities": {"STR": 17, "DEX": 14, "CON": 16, "INT": 10, "WIS": 12, "CHA": 11},
+      "equipment": "default",
+      "persona": "Grew up two steads over and knows the names on the fence posts. Wants to catch the band, not chase it, and pushes the party to move before it is ready. Goes quiet when angry, which is most of this. Will not be talked out of a charge once he has started walking."
+    },
+    {
+      "id": "pc_2",
+      "name": "Kestrel Vayne",
+      "race": "Elf (High)",
+      "klass": "Rogue",
+      "level": 4,
+      "abilities": {"STR": 10, "DEX": 18, "CON": 14, "INT": 13, "WIS": 14, "CHA": 12},
+      "equipment": "default",
+      "persona": "Tracked this band for a bounty and would rather nobody knew the bounty is on one specific gnoll. Wants the leader alive long enough to be sure. Cold, exact, and openly impatient with grief as a use of daylight. Refuses to explain herself twice."
+    },
+    {
+      "id": "pc_3",
+      "name": "Mother Adelie Fenn",
+      "race": "Human",
+      "klass": "Cleric",
+      "level": 4,
+      "abilities": {"STR": 13, "DEX": 10, "CON": 16, "INT": 11, "WIS": 18, "CHA": 13},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Rode out with the survivors and has been awake for two days doing it. Wants the living moved south before anything else, and will spend the party's momentum to do it. Says exactly what she thinks of Ranulf's charges, at volume, afterwards. Prays out loud, briskly, mid-fight."
+    },
+    {
+      "id": "pc_4",
+      "name": "Ozric Talleyrand",
+      "race": "Dwarf (Hill)",
+      "klass": "Wizard",
+      "level": 4,
+      "abilities": {"STR": 9, "DEX": 14, "CON": 15, "INT": 17, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "A hedge wizard who sells weather charms to these farms and knows exactly how flammable a summer stead is. Wants to fight nowhere near the barns and says so every time somebody suggests otherwise. Hoards slots miserly, then spends three at once and expects applause."
+    }
+  ],
+  "scenario": {
+    "opening": "The smoke is a day old and still standing in the air where there is no wind to move it. Halloway's people got out along the ditch — most of them. The band did not take the grain, or the horses, or the silver in the kitchen. Whatever they came for, they carried it east on foot and left a fire behind them for the finding.",
+    "location": "The burned steads on the Halloway grass",
+    "objectives": [
+      "Get the survivors clear of the grass",
+      "Find out what the band took, since it was not plunder",
+      "Break the band before it reaches the next stead"
+    ],
+    "max_scenes": 2,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "The Ditch Line",
+        "description": "Survivors in a drainage ditch, a burning barn as a landmark, and outriders circling the open ground between.",
+        "location": "The ditch below Halloway's east field"
+      },
+      {
+        "title": "The Standing Pyre",
+        "description": "A heaped fire that is not a farm fire, tended, and the thing tending it stands eight feet tall.",
+        "location": "The pyre on the east ridge"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Gnoll", "count": 3},
+          {"name": "Worg", "count": 2}
+        ],
+        "grid": {
+          "width": 16,
+          "height": 12,
+          "party_start": [[2, 5], [2, 6], [3, 5], [3, 6]],
+          "enemy_start": [[13, 3], [13, 8], [14, 5], [14, 6], [12, 6]],
+          "difficult": [[7, 4], [7, 5], [7, 6], [7, 7], [8, 5], [8, 6]],
+          "walls": [[10, 0], [10, 1], [10, 10], [10, 11]]
+        }
+      },
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Ogre", "count": 1},
+          {"name": "Gnoll", "count": 4}
+        ],
+        "grid": {
+          "width": 14,
+          "height": 12,
+          "party_start": [[1, 5], [1, 6], [2, 5], [2, 6]],
+          "enemy_start": [[10, 6], [11, 3], [11, 9], [12, 5], [12, 7]],
+          "difficult": [[6, 5], [6, 6], [6, 7], [7, 5], [7, 6], [7, 7]],
+          "walls": [[8, 0], [8, 1], [8, 2], [8, 10], [8, 11]]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "title": "The Grey Mother's Ford",
+  "seed": 17,
+  "setting": "A peat fen where the only crossing for thirty miles is a stone ford older than the road, and the toll for using it has lately been paid in people.",
+  "tone": "folkloric and mean; a fairy tale with the teeth left in",
+  "budget_usd": 2.0,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 25,
+  "player_temperature": 1.0,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Dame Brynn Ashcott",
+      "race": "Human",
+      "klass": "Fighter",
+      "level": 5,
+      "abilities": {"STR": 18, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 13},
+      "equipment": "default",
+      "persona": "Took the fen contract because nobody else would and has begun to suspect why. Wants a clean fight on ground she has chosen, and gets increasingly blunt as the fen refuses to give her one. Distrusts fire in a peat bog and will argue the point mid-combat, being wrong."
+    },
+    {
+      "id": "pc_2",
+      "name": "Ferris Lom",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 5,
+      "abilities": {"STR": 10, "DEX": 18, "CON": 15, "INT": 13, "WIS": 13, "CHA": 14},
+      "equipment": "default",
+      "persona": "Fen-born, and the only one here who calls the thing under the ford by a name rather than a species. Wants to pay it off the old way and is serious about this. Superstitious, quick, and a little smug when the old ways work. Keeps something in his coat he has not shown the party."
+    },
+    {
+      "id": "pc_3",
+      "name": "Brother Halvard Kirn",
+      "race": "Dwarf (Hill)",
+      "klass": "Cleric",
+      "level": 5,
+      "abilities": {"STR": 14, "DEX": 10, "CON": 17, "INT": 11, "WIS": 18, "CHA": 11},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Holds that a thing that eats travellers is a thing to be put down, not bargained with, and holds it loudly at Ferris. Wants the ford consecrated before the party leaves. Immovable in argument, generous in a fight, and the first to admit afterwards when he was wrong — much later, quietly."
+    },
+    {
+      "id": "pc_4",
+      "name": "Ilse Varn",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 5,
+      "abilities": {"STR": 8, "DEX": 14, "CON": 14, "INT": 18, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Knows precisely what stops a troll knitting itself back together and has been waiting most of her career to use it. Wants the kill and the notes. Impatient with negotiation, contemptuous of superstition, and prone to acting on her own initiative a round before the party is ready."
+    }
+  ],
+  "scenario": {
+    "opening": "The ford is eight flat stones under brown water, and on the near bank somebody has stacked boots. Not thrown — stacked, in pairs, by size. The reeds go quiet as you come down to the water, all at once, the way a room does.",
+    "location": "The stone ford in the Grey Mother's fen",
+    "objectives": [
+      "Cross the fen, or make the crossing safe for those who must",
+      "Learn what the stacked boots are for",
+      "Deal with what has been taking the toll"
+    ],
+    "max_scenes": 2,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "The Stacked Boots",
+        "description": "Brown water, a bank of reeds, and squatters who have been living well off whatever the fen leaves behind.",
+        "location": "The near bank of the ford"
+      },
+      {
+        "title": "Under the Ford Stones",
+        "description": "A peat hollow below the crossing, thick with old bones and the sweetish smell of something that heals faster than it should.",
+        "location": "The hollow beneath the ford"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Orc", "count": 4},
+          {"name": "Worg", "count": 1}
+        ],
+        "grid": {
+          "width": 14,
+          "height": 12,
+          "party_start": [[2, 5], [2, 6], [3, 5], [3, 6]],
+          "enemy_start": [[11, 4], [11, 7], [12, 5], [12, 6], [10, 6]],
+          "difficult": [[6, 3], [6, 4], [6, 5], [6, 6], [6, 7], [6, 8]],
+          "walls": [[9, 0], [9, 1], [9, 10], [9, 11]]
+        }
+      },
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Troll", "count": 1},
+          {"name": "Orc", "count": 2}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 12,
+          "party_start": [[1, 5], [1, 6], [2, 5], [2, 6]],
+          "enemy_start": [[9, 6], [10, 3], [10, 9]],
+          "difficult": [[5, 4], [5, 5], [5, 6], [5, 7], [6, 5], [6, 6]],
+          "walls": [[7, 0], [7, 1], [7, 2], [7, 9], [7, 10], [7, 11]]
+        }
+      }
+    ]
+  }
+}

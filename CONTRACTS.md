@@ -831,6 +831,57 @@ The web client's half of this — narration as a playhead over the transcript
 rather than a queue, so pausing, backgrounding the tab and reloading all leave
 a resumable mark — is UI, not contract; it is described in the README.
 
+### 2026-09-04 — agents/ + orchestrator/ + web/ — how improvised the players are
+
+Players were sampling at a hard-coded 0.8 and converging: the same character
+reached for the same opening line and the same attack every round, and the
+repetition guard from the 2026-09-04 amendment above then swallowed the repeat,
+so a converged character went *quiet* rather than saying something new. Two
+levers, one mechanical and one prompt-side.
+
+1. **`PlayerAgent(..., temperature=DEFAULT_TEMPERATURE)`** (§3). The value is
+   the default for every call the agent makes; `_call` still takes a
+   per-call override. `agents.player.DEFAULT_TEMPERATURE` is **1.0** — the top
+   of the Anthropic range, not a tuned optimum: it is simply as much variance
+   as the API will give a Haiku seat. The DM (0.8) and summarizer (0.3) are
+   unchanged; a hotter DM invents world facts, which is the one thing it must
+   not do.
+
+2. **`GameConfig.player_temperature: float = DEFAULT_TEMPERATURE`** (§4), with a
+   per-seat override in a party spec's `temperature` field and the accessor
+   **`player_temperature_for(spec)`**, alongside the existing
+   `player_model_for`. `Game` records `seat_temperatures: dict[str, float]`
+   beside `seat_models` and passes each seat's value to its `PlayerAgent`.
+
+   **`agents.player.clamp_temperature(value, default=DEFAULT_TEMPERATURE)`**
+   is the single definition of what is acceptable: `[0.0, 1.0]`, with anything
+   unreadable (a string, `None`, NaN) falling back to `default`. It clamps
+   rather than raises — a silly number in a scenario file should cost variety,
+   not kill a live game mid-scene — and the ceiling is 1.0 because that is
+   Anthropic's maximum and every default seat is an Anthropic model. An
+   OpenAI-compatible host would accept 2.0; a config that only works on some
+   seats is worse than one that works on all of them. `orchestrator/config.py`
+   imports the helper rather than restating the range (layering allows
+   `orchestrator → agents`).
+
+3. **Prompt changes, `agents/prompts/player_*.txt`.** `player_system.txt` gains
+   a "PLAY LIKE A PERSON, NOT A PROCEDURE" block: react to the turn actually
+   handed to you, check the legal list for something better than last round's
+   action before repeating it, hold your own read of the fight, never reuse a
+   line. `player_scene_choice.txt` asks for the character's own vote rather
+   than the safest or the winning one; `player_speech.txt` asks the line to
+   answer *this* moment. The ABSOLUTE RULES are untouched — improvisation is
+   scoped to motive, voice and choice of legal action, and never to dice,
+   outcomes, or facts about the world.
+
+4. **`web/`**: the new-game panel gains an **Improv (0–1)** field
+   (`ng-temp` → `config.player_temperature`, clamped client-side too). No API
+   change: `player_temperature` rides in the config body like any other field
+   and `GameConfig.from_dict` clamps it server-side regardless.
+
+Determinism is unaffected: `MockLLMClient` ignores `temperature`, so a mock run
+at the same seed is still byte-identical.
+
 ### 2026-09-04 — new `tts/` + web/ + llm/ — narration moves to Amazon Polly
 
 Spoken narration was the spectator's own `speechSynthesis`: free, private, and
