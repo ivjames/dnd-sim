@@ -80,7 +80,7 @@ path. All of them are SRD 5.1 content only.
 | `cellar_rats.json` | level 1 | one scene, one fight | The cheapest live smoke test there is: giant rats and two kobolds in a fish cellar. |
 | `spider_mine.json` | level 2 | two scenes, two fights | Kobold pack tactics underground, then giant spiders, webs, and a lot of difficult terrain. |
 | `goblin_ambush.json` | level 3 | two scenes, one fight | The reference game: goblins and a boss on an open road. |
-| `tollhouse.json` | level 3 | three scenes, one fight | Talk first. Two full social scenes before anyone draws, and a fight that is a failure state. |
+| `tollhouse.json` | level 3 | three scenes, one fight | Talk first: two full social scenes before anyone draws, and a fight that arrives when the talking runs out. |
 | `gnoll_pyre.json` | level 4 | two scenes, two fights | Gnoll Rampage and worg speed on open ground, then an ogre at a fire. |
 | `crypt.json` | level 5 | two scenes, two fights | Undead: turn undead, ghoul paralysis, a party that can be locked down. |
 | `troll_fen.json` | level 5 | two scenes, two fights | A troll. Regeneration stops for a round on fire or acid damage, so the wizard's slots decide the fight. |
@@ -94,8 +94,12 @@ halts mid-scene. A mock run is the cheap way to re-check one after editing:
 ```
 
 Writing a new one: copy the nearest file. `scenario.scenes[i]` and
-`scenario.encounters[].trigger: "scene_<i>"` line up by index, `grid`
-coordinates must sit inside `width`/`height` and off the walls, and every
+`scenario.encounters[].trigger: "scene_<i>"` line up by index — and that
+encounter **always** runs, after that scene's beats, however the talking went;
+there is no conditional trigger, so a scenario cannot offer a fight the party
+can talk its way out of (the DM can start combat *earlier* by adjudicating
+`start_combat`, never later). `grid` coordinates must sit inside
+`width`/`height` and off the walls, and every
 monster name must resolve in `engine/data/monsters.json` (29 of them, CR ⅛–5).
 The test suite checks all of that for every file in `examples/`, so a broken
 scenario fails `pytest`, not a live game.
