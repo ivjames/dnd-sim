@@ -164,7 +164,8 @@ override the process environment pm2 provides.
 | `AWS_SECRET_ACCESS_KEY` | ditto |
 | `AWS_REGION` | Polly region, e.g. `us-east-1`; adopted the same way. boto3 will not build a client without one |
 | `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
-| `DND_TTS_ENGINE` | `standard` — Polly engine. `neural`, `long-form` and `generative` all work and are priced, and each is sent only the SSML it accepts; but pitch and the monster timbre effect (`vocal-tract-length`) are standard-only, so casting on those engines is blunter and 4–25× dearer |
+| `DND_TTS_ENGINE` | `neural` — Polly engine for the table ($16/1M). `standard`, `long-form` and `generative` also work; each is sent only the SSML it accepts |
+| `DND_TTS_MONSTER_ENGINE` | `standard` — engine for speaking monsters ($4/1M), separate because `vocal-tract-length` is standard-only and it is what makes an ogre sound bigger than a goblin. Set equal to `DND_TTS_ENGINE` for one engine throughout |
 | `DND_TTS_LANG` | `en-US` — the language whose voices are cast from |
 | `DND_TTS_DM_VOICE` | `Brian` — the DM's own voice; everyone else is dealt out of the rest |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` — where synthesized clips live |
@@ -220,7 +221,7 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 | wipe history | `pm2 stop dnd-sim`, delete `data/dndsim.sqlite3*`, `dndsim restart` |
 | tests | `.venv/bin/python -m pytest -q` |
 | cost safety | every game carries `budget_usd`; the orchestrator halts at `budget_exceeded`. When in doubt, `DND_SIM_MOCK=1`. |
-| narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.narrator` in the ledger). A game's whole narration is a few cents at `standard`; `DND_TTS=0` removes it entirely. |
+| narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.narrator` in the ledger), each seat at its own engine's rate. A game's whole narration is ~$0.45 on the shipped neural/standard split, ~$0.12 with `DND_TTS_ENGINE=standard`; `DND_TTS=0` removes it entirely. |
 | clip cache | `du -sh data/tts` — safe to delete wholesale; the next listen re-synthesizes and re-pays. |
 | voices sound wrong | `curl -s localhost:8071/api/tts` says whether Polly answered and which engine; `available:false` means the page is using each spectator's own browser voices. |
 

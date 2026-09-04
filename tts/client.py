@@ -28,12 +28,15 @@ from tts.voices import (
     Voice,
     billable_chars,
     cast_for,
+    is_monster_key,
     source_fingerprint,
     ssml_for,
 )
 
 __all__ = [
     "PRICE_USD_PER_MILLION_CHARS",
+    "DEFAULT_ENGINE",
+    "DEFAULT_MONSTER_ENGINE",
     "TTSError",
     "TTSResult",
     "PollyTTS",
@@ -53,7 +56,14 @@ PRICE_USD_PER_MILLION_CHARS: dict[str, float] = {
     "generative": 30.0,
 }
 
-DEFAULT_ENGINE = "standard"
+DEFAULT_ENGINE = "neural"
+#: The engine a speaking monster is cast on, whatever the table is using.
+#: `<amazon:effect vocal-tract-length>` is standard-only, and it is the whole
+#: reason a goblin and an ogre sound like different sizes rather than merely
+#: different voices — TTS-COSTS.md §4 concluded the novelty-voiced monsters had
+#: no vendor equivalent, and this is it. Set `DND_TTS_MONSTER_ENGINE` equal to
+#: `DND_TTS_ENGINE` to put the whole table on one engine.
+DEFAULT_MONSTER_ENGINE = "standard"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_DM_VOICE = "Brian"
 DEFAULT_MAX_CHARS = 400          # a `speech.js` chunk is capped at 220
@@ -98,19 +108,21 @@ class PollyTTS:
         client: Any = None,
         region: str = "",
         engine: str = DEFAULT_ENGINE,
+        monster_engine: str = DEFAULT_MONSTER_ENGINE,
         language: str = DEFAULT_LANGUAGE,
         dm_voice: str = DEFAULT_DM_VOICE,
         max_chars: int = DEFAULT_MAX_CHARS,
     ) -> None:
         self.cache = cache
         self.engine = (engine or DEFAULT_ENGINE).strip().lower()
+        self.monster_engine = (monster_engine or self.engine).strip().lower()
         self.language = (language or DEFAULT_LANGUAGE).strip()
         self.dm_voice = (dm_voice or "").strip()
         self.max_chars = int(max_chars)
         self.region = (region or "").strip()
         self._client = client
         self._client_tried = client is not None
-        self._voices: tuple[Voice, ...] | None = None
+        self._voices: dict[str, tuple[Voice, ...]] = {}   # per engine
         self._lock = threading.Lock()
         self._inflight: dict[str, threading.Lock] = {}
 
@@ -118,10 +130,20 @@ class PollyTTS:
 
     @property
     def price_per_million(self) -> float:
-        return PRICE_USD_PER_MILLION_CHARS.get(self.engine, PRICE_USD_PER_MILLION_CHARS["standard"])
+        return self.rate_for(self.engine)
 
-    def price_of(self, chars: int) -> float:
-        return max(0, int(chars)) * self.price_per_million / 1_000_000.0
+    def rate_for(self, engine: str) -> float:
+        return PRICE_USD_PER_MILLION_CHARS.get(
+            str(engine or self.engine), PRICE_USD_PER_MILLION_CHARS["standard"]
+        )
+
+    def price_of(self, chars: int, engine: str = "") -> float:
+        return max(0, int(chars)) * self.rate_for(engine or self.engine) / 1_000_000.0
+
+    def engine_for(self, key: str) -> str:
+        """Which engine speaks this seat. A monster keeps the one that can
+        still change its timbre; everyone else gets the table's."""
+        return self.monster_engine if is_monster_key(key) else self.engine
 
     # -- the AWS client ------------------------------------------------------
 
@@ -159,7 +181,7 @@ class PollyTTS:
 
     # -- casting -------------------------------------------------------------
 
-    def voices(self) -> tuple[Voice, ...]:
+    def voices(self, engine: str = "") -> tuple[Voice, ...]:
         """The pool: every voice of this engine whose language matches.
 
         Asked of `DescribeVoices` once and remembered. `STANDARD_ENGLISH` is
@@ -167,15 +189,17 @@ class PollyTTS:
         without `polly:DescribeVoices` costs a possibly-stale roster rather
         than a silent narrator.
         """
+        engine = str(engine or self.engine).strip().lower()
         with self._lock:
-            if self._voices is not None:
-                return self._voices
-        pool = self._describe() or self._fallback_pool()
+            hit = self._voices.get(engine)
+        if hit is not None:
+            return hit
+        pool = self._describe(engine) or self._fallback_pool(engine)
         with self._lock:
-            self._voices = pool
+            self._voices[engine] = pool
         return pool
 
-    def _fallback_pool(self) -> tuple[Voice, ...]:
+    def _fallback_pool(self, engine: str = "") -> tuple[Voice, ...]:
         """The built-in roster, which is exactly what its name says.
 
         `STANDARD_ENGLISH` is the voices Polly serves on the STANDARD engine.
@@ -185,18 +209,18 @@ class PollyTTS:
         `DescribeVoices` leaves no roster worth vouching for, so this reports
         none and the page uses the browser's voices instead of hearing nothing.
         """
-        if self.engine != "standard":
+        if str(engine or self.engine) != "standard":
             return ()
         prefix = self.language.split("-")[0].lower()
         pool = tuple(v for v in STANDARD_ENGLISH if v.language.lower().startswith(prefix))
         return pool or STANDARD_ENGLISH
 
-    def _describe(self) -> tuple[Voice, ...]:
+    def _describe(self, engine: str = "") -> tuple[Voice, ...]:
         client = self.client()
         if client is None:
             return ()
         prefix = self.language.split("-")[0].lower()
-        want = self.engine
+        want = str(engine or self.engine).strip().lower()
         out: list[Voice] = []
         try:
             token = None
@@ -217,9 +241,13 @@ class PollyTTS:
         return tuple(out)
 
     def cast(self, key: str, gender: str = "") -> Cast:
-        """The seat `key` sits in. `gender` is the character's, where the game
-        states one — it narrows the pool, it does not pick the voice."""
-        return cast_for(key, self.voices(), self.dm_voice, gender)
+        """The seat `key` sits in, on the engine that will speak it.
+
+        `gender` is the character's, where the game states one — it narrows the
+        pool, it does not pick the voice.
+        """
+        engine = self.engine_for(key)
+        return cast_for(key, self.voices(engine), self.dm_voice, gender, engine)
 
     # -- synthesis -----------------------------------------------------------
 
@@ -232,10 +260,10 @@ class PollyTTS:
         URL so that reconfiguring the server retires the browser's copies
         rather than leaving them to be replayed for a year.
         """
-        ids = ",".join(v.id for v in self.voices())
-        return cache_key(
-            self.engine, self.language, self.dm_voice, ids, source_fingerprint()
-        )[:12]
+        parts = [self.language, self.dm_voice, source_fingerprint()]
+        for engine in dict.fromkeys((self.engine, self.monster_engine)):
+            parts += [engine, ",".join(v.id for v in self.voices(engine))]
+        return cache_key(*parts)[:12]
 
     def cached(self, ckey: str) -> bytes | None:
         """A clip already paid for, or None. The caller checks this before the
@@ -243,14 +271,14 @@ class PollyTTS:
         return self.cache.get(ckey)
 
     def ssml(self, text: str, cast: Cast) -> str:
-        return ssml_for(text, cast, self.engine)
+        return ssml_for(text, cast)      # the engine rides on the cast
 
     def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]:
         # Keyed on the document that will actually be sent, not on the cast it
         # came from: an engine that drops pitch makes two casts that differ
         # only in pitch the same audio, and they should be the same file.
         cast = self.cast(key, gender)
-        return cast, cache_key(self.engine, cast.voice_id, self.ssml(text, cast))
+        return cast, cache_key(cast.engine, cast.voice_id, self.ssml(text, cast))
 
     def _check(self, text: str) -> str:
         text = str(text or "").strip()
@@ -291,7 +319,7 @@ class PollyTTS:
         audio = self._synthesize_now(text, cast)
         self.cache.put(ckey, audio)
         chars = billable_chars(text)
-        return TTSResult(audio, cast, chars, self.price_of(chars), False, ckey)
+        return TTSResult(audio, cast, chars, self.price_of(chars, cast.engine), False, ckey)
 
     def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
         """Audio for one line in one seat, from the cache or from Polly."""
@@ -318,7 +346,7 @@ class PollyTTS:
                 Text=self.ssml(text, cast),
                 TextType="ssml",
                 VoiceId=cast.voice_id,
-                Engine=self.engine,
+                Engine=cast.engine,
                 OutputFormat="mp3",
             )
             stream = (resp or {}).get("AudioStream")
@@ -353,10 +381,15 @@ def from_env(cache_dir: str) -> PollyTTS | None:
     # free. `DND_TTS=1` is how you say you meant it.
     if not asked and env_flag("DND_SIM_MOCK"):
         return None
-    engine = (os.environ.get("DND_TTS_ENGINE") or DEFAULT_ENGINE).strip().lower()
-    if engine not in PRICE_USD_PER_MILLION_CHARS:
-        log.warning("unknown DND_TTS_ENGINE %r; using %s", engine, DEFAULT_ENGINE)
-        engine = DEFAULT_ENGINE
+    def _engine(var: str, default: str) -> str:
+        name = (os.environ.get(var) or default).strip().lower()
+        if name not in PRICE_USD_PER_MILLION_CHARS:
+            log.warning("unknown %s %r; using %s", var, name, default)
+            return default
+        return name
+
+    engine = _engine("DND_TTS_ENGINE", DEFAULT_ENGINE)
+    monster_engine = _engine("DND_TTS_MONSTER_ENGINE", DEFAULT_MONSTER_ENGINE)
     try:
         cache_mb = float(os.environ.get("DND_TTS_CACHE_MB") or DEFAULT_CACHE_MB)
     except ValueError:
@@ -369,6 +402,7 @@ def from_env(cache_dir: str) -> PollyTTS | None:
         AudioCache(os.environ.get("DND_TTS_CACHE") or cache_dir, int(cache_mb * 1024 * 1024)),
         region=os.environ.get("DND_TTS_REGION") or os.environ.get("AWS_REGION") or "",
         engine=engine,
+        monster_engine=monster_engine,
         language=os.environ.get("DND_TTS_LANG") or DEFAULT_LANGUAGE,
         dm_voice=os.environ.get("DND_TTS_DM_VOICE") or DEFAULT_DM_VOICE,
         max_chars=max_chars,

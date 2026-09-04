@@ -380,27 +380,33 @@ missing piece, and implementing narration did not finish it:
   a stranger may create, and `POST /api/games/<id>/note` still takes 2,000
   unauthenticated characters that `speech.js` speaks as story.
 
-### The engine is not settled
+### The engine, settled
 
-The implementation defaults to **Standard**; §5 recommends **Neural** and calls
-Standard "mentioned for completeness, not recommended". Both readings are on
-the table and the disagreement is real, so it is recorded rather than resolved
-by whichever was written last.
+Both engines ship, chosen per seat. `DND_TTS_ENGINE` (**neural**) speaks the
+DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (**standard**) speaks
+anything cast as `monster:<id>`. Setting them equal puts the whole table on one.
 
-§5's case is that distinctness is bought as separate voices rather than
-synthesised, which makes Neural's larger, more accented inventory the feature
-that matters, on a better base voice.
+§5's case carried for the table: at this quality nothing can pitch-shift, so
+distinctness is bought as separate voices, and Neural's roster is the larger and
+more accented one. What §5 did not have is that **`<amazon:effect
+vocal-tract-length>` is the vendor equivalent for the novelty-voiced monsters
+that §4 concluded had none** — it changes timbre rather than pitch, so a goblin
+and an ogre differ in how their voices are built rather than merely in which
+voice they drew. It is Standard-only, like pitch. Hence the split rather than a
+choice: the one thing Standard alone can do is the one thing only monsters
+need.
 
-One fact §5 does not have: **`<amazon:effect vocal-tract-length>` is a vendor
-equivalent for the novelty-voiced monsters, and §4 concluded there was none.**
-It changes timbre rather than pitch — a longer vocal tract is a bigger creature
-— so on Standard a speaking goblin and a speaking ogre are told apart by how
-their voices are *built*, not merely by which voice they were dealt. It is
-Standard-only, like pitch. On Neural a speaking monster is just another voice
-from the pool.
+Cost lands between the two rows in §3. Monsters are a small share of spoken
+characters, so a game is ~$0.45 rather than Neural's $0.48 or Standard's $0.12.
 
-So the trade is: Neural buys a better-sounding table at 4× the rate ($0.48 a
-game against $0.12) and gives up per-actor modulation and the monster effect;
-Standard keeps both and sounds like 2016. `DND_TTS_ENGINE` switches it, and
-`ssml_for` already writes only what each engine accepts, so neither is a code
-change — but the default is a decision, and it is the owner's.
+Two consequences worth stating:
+
+- **Neural needs `DescribeVoices` to answer.** The built-in roster is
+  Standard's, so a failed listing leaves the table with nothing to cast from
+  and `/api/tts` reports unavailable — the page then uses the browser's voices.
+  Under the old Standard default that call failing was survivable; now it is
+  not. Monsters would still have a roster, but half a narrator is worse than a
+  clean fallback.
+- **A game crosses two rates.** `by_role.narrator` is one row and the ledger
+  charges each clip at its own engine's rate, so the per-character figure for a
+  game is a blend and not a constant.

@@ -176,3 +176,22 @@ def test_each_engine_is_only_sent_what_it_accepts():
     # An engine nobody has heard of is written for the one this is built around
     # rather than sent bare — being wrong loudly beats being wrong quietly.
     assert ssml_for("Fee fi.", monster, "chorus") == standard
+
+
+def test_the_engine_travels_with_the_cast():
+    """A line cast for one engine and rendered on another is a 502.
+
+    Keeping the two together is why `Cast` carries the engine rather than
+    `ssml_for` taking it from a setting that may have moved on.
+    """
+    monster = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "standard")
+    assert monster.engine == "standard"
+    assert "vocal-tract-length" in ssml_for("Fee fi.", monster)
+
+    on_neural = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "neural")
+    assert on_neural.engine == "neural"
+    assert "vocal-tract-length" not in ssml_for("Fee fi.", on_neural)
+
+    # Same seat, same voice — only what can be said about it differs.
+    assert on_neural.voice_id == monster.voice_id
+    assert on_neural.cache_key() != monster.cache_key()

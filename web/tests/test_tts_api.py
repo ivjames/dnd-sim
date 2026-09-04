@@ -334,12 +334,14 @@ def test_reconfiguring_the_server_retires_the_browsers_copies(tts_client, tts):
 
     def svc(**kw):
         s = PollyTTS(AudioCache("/nonexistent", 0), client=object(), **kw)
-        s._voices = tuple(STANDARD_ENGLISH)
+        s._voices = {e: tuple(STANDARD_ENGLISH)
+                     for e in ("standard", "neural", "long-form", "generative")}
         return s
 
     base = svc().config_id()
     assert base and base == svc().config_id()
-    assert svc(engine="neural").config_id() != base
+    assert svc(engine="long-form").config_id() != base
+    assert svc(monster_engine="generative").config_id() != base    # both engines count
     assert svc(dm_voice="Joanna").config_id() != base
     assert svc(language="en-GB").config_id() != base
 

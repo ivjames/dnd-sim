@@ -157,7 +157,8 @@ world stay the engine's and the DM's.
 | `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | — | Amazon Polly, which reads the game aloud. Read by boto3 in the ordinary way, so an instance profile works too. Without them the spectator's own browser speaks the game. |
 | `DND_TTS` | unset (auto) | `0` → no server voices at all. `1` → on even for mock games, which otherwise stay free. |
-| `DND_TTS_ENGINE` | `standard` | Polly engine: `standard`, `neural`, `long-form` or `generative`. Each is sent only the SSML it accepts, so the others work — but pitch and `vocal-tract-length` are standard-only, so on anything else two characters dealt the same voice cannot be told apart and a monster is only a voice rather than a big one. |
+| `DND_TTS_ENGINE` | `neural` | Polly engine for the table: `standard`, `neural`, `long-form` or `generative`. Each is sent only the SSML it accepts. |
+| `DND_TTS_MONSTER_ENGINE` | `standard` | Engine for speaking monsters, which is separate because `vocal-tract-length` is standard-only. Set it equal to `DND_TTS_ENGINE` to put the whole table on one engine. |
 | `DND_TTS_LANG` | `en-US` | The language the voice pool is drawn from. |
 | `DND_TTS_DM_VOICE` | `Brian` | The DM's voice; the rest of the table is dealt from the other voices. |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
@@ -268,7 +269,7 @@ GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on f
 POST /api/games/<id>/pause|resume|stop  → 202
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
-GET  /api/tts                           {"available":bool, engine, language, max_chars, price_per_million_chars, config}
+GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, config}
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
@@ -350,9 +351,27 @@ devices); Polly has no such thing, so there it is an ordinary voice put through
 creature — with pitch and rate behind it. Nobody else is ever treated: not the
 DM, not a PC, not an NPC that isn't a monster.
 
+That effect is the reason **a monster is synthesized on a different engine from
+everyone else**. It is standard-only, and so is pitch, while the table itself
+sounds better on neural — so the DM, the players and the NPCs are cast on
+`DND_TTS_ENGINE` (neural) and speaking monsters on `DND_TTS_MONSTER_ENGINE`
+(standard). The engine travels on the cast rather than being read from a
+setting when the clip is made, so a line cannot be cast for one engine and
+rendered on another; each engine keeps its own voice roster, its own cached
+clips and its own rate in the ledger. Set the two equal for one engine
+throughout.
+
+One thing the neural default costs: the built-in fallback roster is standard's,
+so if `DescribeVoices` cannot be reached the table has nothing to cast from and
+the page falls back to the browser's voices. Under a standard default that call
+failing was survivable.
+
 ### What it costs
 
-Polly's standard engine is **$4.00 per million characters**, and that spend is
+Polly is **$16.00 per million characters** on the neural engine and **$4.00**
+on standard, and the table uses both — neural for the DM, the players and the
+NPCs, standard for speaking monsters (see above). That works out around $0.45 a
+game. The spend is
 charged to the game's own `budget_usd` alongside the model calls — it shows up
 as `by_role.narrator` in the ledger, and a game that has spent its budget goes back
 to the browser's voices rather than quietly spending more. A whole game's

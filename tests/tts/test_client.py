@@ -13,7 +13,7 @@ import threading
 import pytest
 
 from tts.cache import AudioCache
-from tts.client import PollyTTS, TTSError, from_env
+from tts.client import DEFAULT_ENGINE, PollyTTS, TTSError, from_env
 from tts.voices import STANDARD_ENGLISH, Cast, ssml_for
 
 MP3 = b"\xff\xfb\x90\x00pretend-audio"
@@ -52,6 +52,15 @@ class FakePolly:
 
 
 def service(tmp_path, client=None, **kw):
+    """A service pinned to `standard` unless a test says otherwise.
+
+    The shipped default is neural for the table and standard for monsters (see
+    `test_a_monster_keeps_the_engine_that_can_still_change_its_timbre`); these
+    tests are about mechanics that do not depend on which, so they pin one
+    rather than re-deriving it.
+    """
+    kw.setdefault("engine", "standard")
+    kw.setdefault("monster_engine", "standard")
     return PollyTTS(AudioCache(str(tmp_path), 0), client=client or FakePolly(), **kw)
 
 
@@ -130,17 +139,29 @@ def test_what_it_will_not_say(tmp_path):
 
 
 def test_without_a_client_there_are_no_server_voices(tmp_path):
-    svc = PollyTTS(AudioCache(str(tmp_path), 0))
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), engine="standard", monster_engine="standard")
     svc._client_tried = True          # as if boto3 or the credentials were missing
     assert svc.available() is False
     with pytest.raises(TTSError):
         svc.synthesize("dm", "Hello.")
     assert svc.cast("dm").voice_id == "Brian"      # casting still works off the built-in roster
 
+    # ...but only on standard, whose roster is the one built in. On any other
+    # engine there is nothing to cast from and the page uses browser voices.
+    neural = PollyTTS(AudioCache(str(tmp_path), 0), engine="neural")
+    neural._client_tried = True
+    assert neural.voices() == ()
+    with pytest.raises(ValueError):
+        neural.cast("dm")
+
 
 def test_the_engine_sets_the_price(tmp_path):
     assert service(tmp_path).price_of(1_000_000) == pytest.approx(4.0)
     assert service(tmp_path, engine="neural").price_of(1_000_000) == pytest.approx(16.0)
+    # And per seat, since the table and its monsters need not be on one engine.
+    split = service(tmp_path, engine="neural", monster_engine="standard")
+    assert split.price_of(1_000_000, split.engine_for("dm")) == pytest.approx(16.0)
+    assert split.price_of(1_000_000, split.engine_for("monster:goblin_1")) == pytest.approx(4.0)
 
 
 def test_from_env_says_no_where_narration_is_supposed_to_be_free(tmp_path, monkeypatch):
@@ -168,12 +189,19 @@ def test_from_env_reads_the_knobs(tmp_path, monkeypatch):
     monkeypatch.setenv("DND_TTS_CACHE", str(tmp_path / "clips"))
     svc = from_env(str(tmp_path))
     assert svc.engine == "neural" and svc.dm_voice == "Joanna" and svc.max_chars == 128
+    assert svc.monster_engine == "standard"                       # the default split
     assert svc.cache.root.endswith("clips")
 
     # An engine with no price row would make the budget stop blind; it is not
     # honoured, and the default is.
     monkeypatch.setenv("DND_TTS_ENGINE", "whisper-shout")
-    assert from_env(str(tmp_path)).engine == "standard"
+    assert from_env(str(tmp_path)).engine == DEFAULT_ENGINE
+
+    # One engine for the whole table is a supported choice, not a special case.
+    monkeypatch.setenv("DND_TTS_ENGINE", "neural")
+    monkeypatch.setenv("DND_TTS_MONSTER_ENGINE", "neural")
+    one = from_env(str(tmp_path))
+    assert one.engine_for("monster:goblin_1") == "neural"
 
 
 class FakeSession:
@@ -245,22 +273,32 @@ def test_the_cache_key_is_the_document_that_will_be_sent(tmp_path):
     neural = service(tmp_path, FakePolly(voices=voices), engine="neural")
     std = service(tmp_path, FakePolly(voices=voices))
 
+    # The key is built from the CAST's engine, which for a monster is the one
+    # that can still change its timbre rather than the table's.
     cast, ckey = neural.cache_key_for("monster:goblin_1", "Fee fi.")
-    assert ckey == cache_key("neural", cast.voice_id, neural.ssml("Fee fi.", cast))
-    assert ckey != std.cache_key_for("monster:goblin_1", "Fee fi.")[1]
+    assert cast.engine == "standard"
+    assert ckey == cache_key(cast.engine, cast.voice_id, neural.ssml("Fee fi.", cast))
+    assert ckey == std.cache_key_for("monster:goblin_1", "Fee fi.")[1]   # same seat, same clip
+
+    # A seat that does follow the table's engine keys differently under each.
+    assert neural.cache_key_for("dm", "Fee fi.")[1] != std.cache_key_for("dm", "Fee fi.")[1]
 
     # Two casts that this engine renders identically ARE the same clip.
-    a = Cast("pc_1", "Joanna", "en-US", pitch_pct=-10)
-    b = Cast("npc", "Joanna", "en-US", pitch_pct=10)
+    a = Cast("pc_1", "Joanna", "en-US", "neural", pitch_pct=-10)
+    b = Cast("npc", "Joanna", "en-US", "neural", pitch_pct=10)
     assert neural.ssml("Fee fi.", a) == neural.ssml("Fee fi.", b)
-    assert std.ssml("Fee fi.", a) != std.ssml("Fee fi.", b)
+    on_standard = [Cast(c.key, c.voice_id, c.language, "standard", pitch_pct=c.pitch_pct)
+                   for c in (a, b)]
+    assert std.ssml("Fee fi.", on_standard[0]) != std.ssml("Fee fi.", on_standard[1])
 
 
 def test_only_what_the_engine_accepts_goes_on_the_wire(tmp_path):
     """Polly errors on an unsupported tag, so this is the difference between a
     working neural game and one that 502s every monster's line."""
     fake = FakePolly()
-    neural = service(tmp_path, fake, engine="neural")
+    # The whole table on neural, monsters included — the point here is what the
+    # engine accepts, not the per-seat split.
+    neural = service(tmp_path, fake, engine="neural", monster_engine="neural")
     neural.synthesize("monster:goblin_1", "Fee fi.")
     sent = fake.calls[0]["Text"]
     assert "vocal-tract-length" not in sent and "pitch=" not in sent
@@ -285,3 +323,54 @@ def test_the_fingerprint_moves_when_the_casting_code_does(tmp_path, monkeypatch)
     # than random per run.
     monkeypatch.setattr(voices, "_SOURCE_FP", None)
     assert PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly()).config_id() == before
+
+
+def test_a_monster_keeps_the_engine_that_can_still_change_its_timbre(tmp_path):
+    """The shipped default: the table on neural for the voices, monsters on
+    standard because `vocal-tract-length` is the only vendor equivalent for the
+    novelty-voiced monsters, and it exists on no other engine."""
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly(),
+                   engine="neural", monster_engine="standard")
+
+    assert svc.engine_for("dm") == "neural"
+    assert svc.engine_for("pc_1") == "neural"
+    assert svc.engine_for("npc") == "neural"
+    assert svc.engine_for("monster:goblin_1") == "standard"
+
+    goblin = svc.cast("monster:goblin_1")
+    assert goblin.engine == "standard" and goblin.vtl_pct
+    assert "vocal-tract-length" in svc.ssml("Fee fi.", goblin)
+
+    dm = svc.cast("dm")
+    assert dm.engine == "neural"
+    assert "vocal-tract-length" not in svc.ssml("Narration.", dm)
+
+    # Each seat is billed at its own engine's rate.
+    assert svc.render("monster:goblin_1", "x" * 100).usd == pytest.approx(4.0 / 10_000)
+    assert svc.render("dm", "y" * 100).usd == pytest.approx(16.0 / 10_000)
+
+    sent = {call["VoiceId"]: call["Engine"] for call in svc.client().calls}
+    assert set(sent.values()) == {"standard", "neural"}
+
+
+def test_the_two_engines_have_their_own_rosters(tmp_path):
+    """A voice must not be cast from one engine's list and sent to another."""
+    fake = FakePolly(voices=[
+        {"Id": "Joanna", "LanguageCode": "en-US", "Gender": "Female",
+         "SupportedEngines": ["standard", "neural"]},
+        {"Id": "Geraint", "LanguageCode": "en-GB-WLS", "Gender": "Male",
+         "SupportedEngines": ["standard"]},          # standard only
+        {"Id": "Arthur", "LanguageCode": "en-GB", "Gender": "Male",
+         "SupportedEngines": ["neural"]},            # neural only
+    ])
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=fake,
+                   engine="neural", monster_engine="standard")
+
+    assert {v.id for v in svc.voices("standard")} == {"Joanna", "Geraint"}
+    assert {v.id for v in svc.voices("neural")} == {"Joanna", "Arthur"}
+    assert fake.described == 2                        # asked once per engine, then remembered
+    svc.voices("neural")
+    assert fake.described == 2
+
+    assert svc.cast("monster:goblin_1").voice_id in {"Joanna", "Geraint"}
+    assert svc.cast("pc_1").voice_id in {"Joanna", "Arthur"}

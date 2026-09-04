@@ -222,6 +222,7 @@ class FakeTTS:
 
     def __init__(self, *, up: bool = True, fail: str = "", price: float = 4.0) -> None:
         self.engine = "standard"
+        self.monster_engine = "standard"
         self.language = "en-US"
         self.max_chars = 40
         self.price_per_million = price

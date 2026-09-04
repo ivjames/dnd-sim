@@ -121,7 +121,9 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   no Polly (no AWS credentials, a mock game, the budget spent) the page speaks
   it with the browser's own `speechSynthesis`, which is what it did before and
   is still the fallback for a single failed line. Standard engine, $4/1M
-  characters, charged to the game's `budget_usd` as `by_role.narrator`, every clip
+  characters on neural — the table's engine — and $4/1M on standard, which is
+  where speaking monsters stay because `vocal-tract-length` exists nowhere else.
+  Charged to the game's `budget_usd` as `by_role.narrator`, every clip
   cached in `data/tts` so a line is paid for once, and stopped at the lower of
   the game's `budget_usd` and the server-owned `DND_TTS_MAX_USD` (default $10),
   because `POST /api/games` is unauthenticated and the config's budget is

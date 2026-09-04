@@ -272,7 +272,7 @@ GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>
 POST /api/games/<id>/pause | /resume | /stop
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
-GET  /api/tts                           {"available":bool,"engine","language","max_chars","price_per_million_chars","config"} — can this server render voices?
+GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","config"} — can this server render voices?
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
@@ -899,12 +899,12 @@ with the browser's voices kept as a real fallback rather than deleted.
    @dataclass(frozen=True)
    class Voice:  id: str; language: str; gender: str      # DescribeVoices' Id/LanguageCode/Gender
    @dataclass(frozen=True)
-   class Cast:   key: str; voice_id: str; language: str; pitch_pct: int; rate_pct: int; vtl_pct: int
+   class Cast:   key: str; voice_id: str; language: str; engine: str; pitch_pct: int; rate_pct: int; vtl_pct: int
    def hash_key(s: str) -> int                            # FNV-1a/32 over UTF-16 code units — the same
                                                           # number as speech.js `hashString`
    def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
-   def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast   # ValueError on an empty pool
-   def ssml_for(text: str, cast: Cast, engine: str = "standard") -> str   # only what `engine` accepts
+   def cast_for(key, pool, dm_voice="", gender="", engine="standard") -> Cast   # ValueError on an empty pool
+   def ssml_for(text: str, cast: Cast, engine: str = "") -> str   # only what the cast's engine accepts
    def source_fingerprint() -> str                        # digest of this module: the casting decides the audio too
    ENGINE_SSML: dict[str, frozenset[str]]                 # engine → {"pitch","rate","vtl"} subset
    def billable_chars(text: str) -> int                   # the words, not the markup
@@ -922,10 +922,11 @@ with the browser's voices kept as a real fallback rather than deleted.
    @dataclass
    class TTSResult: audio: bytes; cast: Cast; chars: int; usd: float; cached: bool; key: str
    class PollyTTS:
-       def __init__(self, cache: AudioCache, *, client=None, region="", engine="standard",
-                    language="en-US", dm_voice="Brian", max_chars=400)
+       def __init__(self, cache: AudioCache, *, client=None, region="", engine="neural",
+                    monster_engine="standard", language="en-US", dm_voice="Brian", max_chars=400)
+       def engine_for(self, key: str) -> str              # monsters keep `monster_engine`
        def available(self) -> bool                        # False = no boto3, or no credentials
-       def voices(self) -> tuple[Voice, ...]              # DescribeVoices once, else STANDARD_ENGLISH
+       def voices(self, engine="") -> tuple[Voice, ...]   # DescribeVoices once per engine, else STANDARD_ENGLISH
        def cached(self, ckey: str) -> bytes | None        # a clip already paid for
        def exclusive(self, ckey: str)                     # contextmanager: the one-synthesis-per-line gate
        def render(self, key, text, gender="") -> TTSResult   # synthesize; caller holds `exclusive`
@@ -1078,12 +1079,25 @@ with the browser's voices kept as a real fallback rather than deleted.
    chosen (`DND_TTS_DM_VOICE`, default `Brian`) rather than dealt, and no other
    seat is given it.
 
-7. **The `standard` engine is the default and is not an arbitrary one**, but
-   every engine works. It is the cheapest at $4/1M characters, and
-   `<prosody pitch>` and `<amazon:effect vocal-tract-length>` — the two tags
-   the casting leans on — are standard-only. Polly errors on an unsupported tag
-   rather than ignoring it, so `ssml_for` takes the engine and writes only what
-   that engine accepts (`ENGINE_SSML`): `rate` survives on neural and
+7. **Two engines, chosen per seat.** `DND_TTS_ENGINE` (default **`neural`**)
+   speaks the DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (default
+   **`standard`**) speaks anything cast as `monster:<id>`. The engine rides on
+   the `Cast` rather than being read from a setting at render time, so a line
+   cannot be cast for one engine and rendered on another; each engine has its
+   own `DescribeVoices` roster, its own cache namespace and its own rate in the
+   ledger.
+
+   The split exists for one tag. `<amazon:effect vocal-tract-length>` changes
+   timbre rather than pitch — a longer vocal tract is a bigger creature — and
+   it is standard-only. TTS-COSTS.md §4 concluded the novelty-voiced monsters
+   had no vendor equivalent; this is it, and it is available on exactly one
+   engine. Neural carries the rest of the table because §5 recommends it: at
+   this quality nothing can pitch-shift, so distinctness is bought as separate
+   voices, and neural's roster is larger and more accented.
+
+   Polly errors on an unsupported tag rather than ignoring it, so `ssml_for`
+   writes only what the cast's engine accepts (`ENGINE_SSML`): standard takes
+   pitch, rate and `vocal-tract-length`; `rate` survives on neural and
    long-form; generative gets plain text, because its prosody tag is documented
    as full-sentences-only and a chunk can be a fragment.
 
@@ -1093,10 +1107,11 @@ with the browser's voices kept as a real fallback rather than deleted.
    uses the browser's voices — rather than casting a standard-only voice with
    `Engine=neural` and reaching the same 502 loop by another route.
 
-   The cost of the others is not an error but a blunter table — with no pitch, two characters dealt
-   one voice cannot be told apart, and a monster is only a voice rather than a
-   big one. The cache key is therefore the rendered document rather than the
-   cast, so casts an engine renders identically share one clip. Billed
+   Putting the whole table on one engine is a supported choice, not a special
+   case, and the cost of doing so on anything but standard is a blunter table:
+   with no pitch, two characters dealt one voice cannot be told apart. The
+   cache key is the rendered document rather than the cast, so casts an engine
+   renders identically share one clip. Billed
    characters exclude SSML tags
    (<https://docs.aws.amazon.com/polly/latest/dg/limits.html>), which is what
    `billable_chars` counts.

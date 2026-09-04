@@ -37,6 +37,7 @@ __all__ = [
     "ssml_for",
     "billable_chars",
     "escape",
+    "is_monster_key",
     "normalize_gender",
     "GENDERS",
     "ENGINE_SSML",
@@ -131,17 +132,25 @@ MONSTER_VTL: tuple[int, ...] = (-20, -10, 10, 20, 30, 40)
 
 @dataclass(frozen=True)
 class Cast:
-    """A seat at the table: the voice, and how it is bent for this actor."""
+    """A seat at the table: the voice, the engine that will speak it, and how
+    it is bent for this actor.
+
+    The engine rides on the cast because it is not one setting for the whole
+    game: a monster is cast on whichever engine can still change its timbre.
+    Keeping the two together is what stops a line being cast for one engine and
+    rendered on another.
+    """
 
     key: str
     voice_id: str
     language: str
+    engine: str = "standard"
     pitch_pct: int = 0     # <prosody pitch>, percent, 0 = the voice as recorded
     rate_pct: int = 100    # <prosody rate>, percent of normal
     vtl_pct: int = 0       # <amazon:effect vocal-tract-length>, percent; monsters only
 
     def cache_key(self) -> str:
-        return f"{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
+        return f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
 
 
 def hash_key(s: str) -> int:
@@ -174,7 +183,8 @@ def normalize_gender(gender: str) -> str:
     return GENDERS.get(str(gender or "").strip().lower(), "")
 
 
-def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast:
+def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
+             engine: str = "standard") -> Cast:
     """Deal `key` a voice out of `pool`, deterministically.
 
     `pool` is any iterable of `Voice`; it is sorted by id here so the casting
@@ -194,7 +204,7 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast:
     # of the game, so it is worth being able to say which voice does it.
     dm = next((v for v in voices if v.id.lower() == str(dm_voice or "").lower()), voices[0])
     if key == "dm":
-        return Cast("dm", dm.id, dm.language)
+        return Cast("dm", dm.id, dm.language, engine)
 
     # Everyone else is dealt out of the rest, so the DM's voice is not also a
     # player's. With one voice in the pool there is no "rest" to deal from.
@@ -224,6 +234,7 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast:
             key,
             voice.id,
             voice.language,
+            engine,
             pitch_pct=-20 + ((h >> 8) % 7) * 5,      # -20 … +10
             vtl_pct=MONSTER_VTL[(h >> 12) % len(MONSTER_VTL)],
             rate_pct=90 + ((h >> 16) % 4) * 5,       # 90 … 105
@@ -238,10 +249,11 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast:
             key,
             voice.id,
             voice.language,
+            engine,
             pitch_pct=-15 + ((h >> 8) % 7) * 5,      # -15 … +15
             rate_pct=94 + ((h >> 16) % 4) * 4,       # 94 … 106
         )
-    return Cast(key, voice.id, voice.language, pitch_pct=-10 + ((h >> 8) % 5) * 5)
+    return Cast(key, voice.id, voice.language, engine, pitch_pct=-10 + ((h >> 8) % 5) * 5)
 
 
 def escape(text: str) -> str:
@@ -281,15 +293,19 @@ ENGINE_SSML: dict[str, frozenset[str]] = {
 }
 
 
-def ssml_for(text: str, cast: Cast, engine: str = "standard") -> str:
-    """The `<speak>` document for a line in its seat's voice, on `engine`.
+def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
+    """The `<speak>` document for a line in its seat's voice.
+
+    The engine comes from the cast; `engine` overrides it only for callers that
+    want to ask "what would this sound like on X".
 
     Only what the engine supports is written. The consequence on anything but
     `standard` is real and is the reason `standard` is the default: with no
     pitch and no vocal-tract-length, two characters dealt the same voice cannot
     be told apart, and a monster is only a voice rather than a big one.
     """
-    allowed = ENGINE_SSML.get(str(engine or "standard").strip().lower(), ENGINE_SSML["standard"])
+    name = str(engine or cast.engine or "standard").strip().lower()
+    allowed = ENGINE_SSML.get(name, ENGINE_SSML["standard"])
     body = escape(text)
     prosody = []
     if cast.pitch_pct and "pitch" in allowed:

@@ -285,6 +285,9 @@ def capability():
         {
             "available": True,
             "engine": svc.engine,
+            # A monster is cast on whichever engine can still change its
+            # timbre, so the table's engine is not the whole answer.
+            "monster_engine": svc.monster_engine,
             "language": svc.language,
             "max_chars": svc.max_chars,
             "price_per_million_chars": svc.price_per_million,
