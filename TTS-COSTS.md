@@ -45,6 +45,31 @@ below its ceiling; the low/high columns assume 38 and 60 words.
 matches the listening budget the word ceilings were set for, which is a
 reassuring cross-check rather than an independent one.
 
+### What that range does and does not cover
+
+It varies word count per event. It does **not** vary the number of events,
+which comes from one deterministic mock trajectory per config — and combat
+length is model-chosen in a live game, so it is the larger variable. Treat the
+table as "a game that runs like these two did".
+
+Length scales cleanly, which makes it easy to say what the exposure is. Per
+combat round, across both configs:
+
+| | rounds | turns | mechanics chars/round | narration events/turn |
+|---|---|---|---|---|
+| goblin_ambush | 13 | 85 | 882 | 1.04 |
+| crypt | 7 | 51 | 905 | 1.04 |
+
+So **~2,900 characters per combat round** with everything spoken (~890 of
+mechanics, ~2,000 of narration at 6.5–7.3 turns a round), plus ~1,000 for
+scene-setting and the epilogue. That reproduces both measured games to within
+2%, and it is the number to plan with.
+
+The configs cap combat at `max_rounds_per_combat` — 20 for goblin_ambush, 25
+for crypt — against the 13 and 7 rounds actually observed. A game that runs to
+its cap is **58,000–75,000 characters**, roughly 2.5× the central figure. That
+is the ceiling the budget has to survive, not the average.
+
 ## 2. Rates
 
 Verified against each vendor's own pricing page on 2026-09-04. Pay-as-you-go
@@ -81,6 +106,9 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 | Cartesia (Startup) | $1.18 | $0.86 | $2.05 |
 | ElevenLabs Flash | $1.50 | $1.10 | $2.61 |
 | ElevenLabs v3 | $3.00 | $2.20 | $5.22 |
+
+A game that runs to its round cap (58,000–75,000 chars, §1) costs 2–2.5× the
+first column: $0.87–$1.13 on Aura-1, $5.80–$7.50 on ElevenLabs v3.
 
 Monthly, at 30,000 chars/game:
 
@@ -154,13 +182,21 @@ Two ways to get the phrase to the vendor:
   limiting only caps how fast a stranger spends the credits. Making this safe
   means authenticating spectators, which the app does not currently do at all.
 - **Port phrasing and casting to Python** and derive the phrase server-side
-  from `(game_id, seq)`, so no caller-supplied text ever reaches the vendor.
-  Better latency, nothing to abuse, and it is what you would need anyway for
-  narration without a browser attached — at the price of ~275 lines moved and
-  a `CONTRACTS.md` amendment.
+  from `(game_id, seq)`. Better latency, and it is what you would need anyway
+  for narration without a browser attached — at the price of ~275 lines moved
+  and a `CONTRACTS.md` amendment. It narrows the attack surface rather than
+  closing it: `POST /api/games/<id>/note` (`web/routes/api.py:259`) is also
+  unauthenticated, takes `text[:2000]`, and `inject_dm_note` emits a `dm_note`,
+  which `speech.js` counts as story and always speaks. So a stranger can still
+  push 2,000 chars at a time — ~$0.03 a note on Aura-1 — through a route that
+  exists for the spectator to talk to the table. Either notes are excluded from
+  synthesis, which costs a feature, or that endpoint needs the same
+  authentication.
 
 The first looked cheaper until the auth question; it is only cheaper if
-spectator authentication already exists, and it does not. Cost the second.
+spectator authentication already exists, and it does not. Cost the second — and
+note that neither is safe without deciding what happens to DM notes, so
+spectator auth is on the critical path for paid narration either way.
 
 ## 5. Recommendation
 
