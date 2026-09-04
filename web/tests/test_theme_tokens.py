@@ -30,7 +30,7 @@ CSS = os.path.join(ROOT, "web", "static", "style.css")
 APP_JS = os.path.join(ROOT, "web", "static", "app.js")
 
 # Tokens that are not colours and so are only ever declared once, on :root.
-NON_COLOUR = {"--radius", "--quad-h", "--mono", "--serif", "--sans"}
+NON_COLOUR = {"--radius", "--board-h", "--mono", "--serif", "--sans"}
 
 
 def read(path: str) -> str:

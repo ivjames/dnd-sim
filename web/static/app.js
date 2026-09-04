@@ -429,8 +429,7 @@
 
   function renderAll(g) {
     setStatus(S.status, g && g.round);
-    renderInitiative();
-    renderParty();
+    renderTable();
     drawGrid();
     updateControls();
   }
@@ -471,44 +470,21 @@
     return n + ' tok';
   }
 
-  function renderInitiative() {
-    var list = $('initiative');
-    clear(list);
-    var st = gameState();
-    var init = st.initiative || [];
-    var cs = combatants();
-    var activeId = st.active_id || S.activeId;
-    if (typeof st.turn_index === 'number' && init.length) {
-      var cur = init[st.turn_index % init.length];
-      if (cur) activeId = Array.isArray(cur) ? cur[0] : (cur.id || activeId);
-    }
-    if (!init.length) {
-      list.appendChild(el('li', 'empty', 'No combat.'));
-      return;
-    }
-    init.forEach(function (row) {
-      var id = Array.isArray(row) ? row[0] : (row && row.id);
-      var score = Array.isArray(row) ? row[1] : (row && row.score);
-      var c = cs[id] || {};
-      var li = el('li');
-      if (id === activeId) li.className = 'active';
-      if (c.dead || (c.hp !== undefined && num(c.hp) <= 0)) li.className += ' down';
-      li.appendChild(el('span', 'side-' + (c.side || 'neutral'), c.name || id || '?'));
-      li.appendChild(el('span', 'score', score === undefined ? '' : String(score)));
-      list.appendChild(li);
-    });
-  }
-
   function hpClass(frac) { return frac > 0.5 ? '' : (frac > 0.25 ? 'hurt' : 'bad'); }
 
   // Two shapes, one card. The party card is two lines (name + AC over bar +
   // hit points); an enemy is one, because five bandits stacked four lines deep
   // pushed everything under them off the screen. Same nodes either way, so the
   // stylesheet — not this function — decides how tight it sits.
-  function card(c, id, compact) {
-    var st = gameState();
+  //
+  // `score` is the initiative roll, printed as the card's first column when
+  // there is one: the roster is one list in initiative order, so which side a
+  // combatant is on is said by the stripe down its edge rather than by which
+  // panel it sits in.
+  function card(c, id, compact, score, active) {
     var node = el('div', 'card' + (compact ? ' card-tight' : ''));
-    if (id === (st.active_id || S.activeId)) node.className += ' is-active';
+    node.className += ' side-' + (c.side || 'neutral');
+    if (active) node.className += ' is-active';
     var hp = num(c.hp), max = Math.max(1, num(c.max_hp, 1));
     if (c.dead || hp <= 0) node.className += ' is-down';
 
@@ -521,10 +497,14 @@
     if (c.sheet && c.sheet.pronouns) sub.push(c.sheet.pronouns);
     var name = el('span', 'card-name', c.name || id);
     var subEl = el('span', 'card-sub', sub.join(' · '));
+    var init = score === undefined || score === null
+      ? null : el('span', 'card-init', String(score));
     if (compact) {
+      if (init) node.appendChild(init);
       node.appendChild(name);
     } else {
       var top = el('div', 'card-top');
+      if (init) top.appendChild(init);
       top.appendChild(name);
       top.appendChild(subEl);
       node.appendChild(top);
@@ -580,19 +560,52 @@
     return node;
   }
 
-  function renderParty() {
-    var partyBox = $('party'), enemyBox = $('enemies');
-    clear(partyBox); clear(enemyBox);
+  // The table: everyone at it, in initiative order, in one list. Three panels
+  // of the same people sorted three ways is what this replaces — the order is
+  // the thing you read a fight in, and a combatant's side, hit points and
+  // conditions belong on the row you are already looking at.
+  //
+  // Out of combat there is no order to keep, so it is the party and then
+  // whoever else is on the board, which is the order the game builds them in.
+  function renderTable() {
+    var box = $('roster');
+    clear(box);
+    var st = gameState();
     var cs = combatants();
-    var ids = Object.keys(cs);
-    var nParty = 0, nEnemy = 0;
-    ids.forEach(function (id) {
-      var c = cs[id] || {};
-      if (c.side === 'party') { partyBox.appendChild(card(c, id, false)); nParty++; }
-      else { enemyBox.appendChild(card(c, id, true)); nEnemy++; }
+    var init = st.initiative || [];
+    var activeId = st.active_id || S.activeId;
+    if (typeof st.turn_index === 'number' && init.length) {
+      var cur = init[st.turn_index % init.length];
+      if (cur) activeId = Array.isArray(cur) ? cur[0] : (cur.id || activeId);
+    }
+
+    // In initiative order where there is one, and anyone the order has not
+    // heard of (a monster that walked in mid-round) after it, never dropped.
+    var seen = {}, rows = [];
+    init.forEach(function (row) {
+      var id = Array.isArray(row) ? row[0] : (row && row.id);
+      if (!id || seen[id] || !cs[id]) return;
+      seen[id] = 1;
+      rows.push({ id: id, score: Array.isArray(row) ? row[1] : (row && row.score) });
     });
-    if (!nParty) partyBox.appendChild(el('p', 'empty', S.gameId ? 'Party not built yet.' : 'No game loaded.'));
-    if (!nEnemy) enemyBox.appendChild(el('p', 'empty', '—'));
+    var rest = Object.keys(cs).filter(function (id) { return !seen[id]; });
+    rest.sort(function (a, b) {
+      var sa = (cs[a] || {}).side === 'party' ? 0 : 1;
+      var sb = (cs[b] || {}).side === 'party' ? 0 : 1;
+      return sa - sb;
+    });
+    rest.forEach(function (id) { rows.push({ id: id, score: undefined }); });
+
+    if (!rows.length) {
+      box.appendChild(el('p', 'empty', S.gameId ? 'Party not built yet.' : 'No game loaded.'));
+      return;
+    }
+    rows.forEach(function (r) {
+      var c = cs[r.id] || {};
+      // A player character carries a sheet worth two lines; everything else is
+      // a name, a bar and an AC, and says it on one.
+      box.appendChild(card(c, r.id, c.side !== 'party', r.score, r.id === activeId));
+    });
   }
 
   // ---------- grid canvas ----------

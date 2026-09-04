@@ -58,11 +58,11 @@
 
 <main class="layout">
 
-  <!-- BOARD: the four things you glance at, two by two and fixed in height —
-       map top left, the enemies top right, the party below the map and the
-       initiative order beside it. Fixed so that a long fight cannot grow
-       them and push the transcript off the screen. -->
-  <section class="board" aria-label="Battle map, party, enemies and initiative">
+  <!-- BOARD: the map, and beside it the whole table in initiative order —
+       party and enemies in one list rather than three panels of the same
+       people sorted three ways. Fixed in height so a long fight cannot push
+       the transcript off the screen; the roster scrolls inside itself. -->
+  <section class="board" aria-label="Battle map and the table">
 
     <div class="panel quad quad-map">
       <h2 class="panel-title">Battle map</h2>
@@ -79,23 +79,9 @@
     </div>
 
     <div class="panel quad">
-      <h2 class="panel-title">Enemies</h2>
+      <h2 class="panel-title">The table</h2>
       <div class="panel-body">
-        <div id="enemies" class="party party-compact"><p class="empty">&mdash;</p></div>
-      </div>
-    </div>
-
-    <div class="panel quad">
-      <h2 class="panel-title">Party</h2>
-      <div class="panel-body">
-        <div id="party" class="party"><p class="empty">No game loaded.</p></div>
-      </div>
-    </div>
-
-    <div class="panel quad">
-      <h2 class="panel-title">Initiative</h2>
-      <div class="panel-body">
-        <ol id="initiative" class="initiative"><li class="empty">No combat.</li></ol>
+        <div id="roster" class="roster"><p class="empty">No game loaded.</p></div>
       </div>
     </div>
 
