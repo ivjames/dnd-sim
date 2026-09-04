@@ -682,7 +682,10 @@
   // game is impossible; the game going faster than the narrator is handled by
   // holding it — see voiceHoldEval.
   var Speech = window.DndSpeech || null;
-  var VOICE_RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
+  // Rescaled 2026-09-04: what used to be `fast` (1.2) is the comfortable
+  // middle for listening to a whole game, so it is `normal` now and the
+  // other two keep their old ratios to it (x0.85 and x1.2).
+  var VOICE_RATES = { slow: 1.0, normal: 1.2, fast: 1.45 };
   // 25 ms of nothing, played inside the tap that turns voice on. An <audio>
   // element that has played once may be played again from script, which is the
   // only way server clips ever sound on iOS.
