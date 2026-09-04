@@ -365,9 +365,9 @@ Because the monster seats are the only ones writing that tag and the only ones
 routed to a second engine, a working table proves nothing about them — and a
 monster line Polly refuses is a 502 the page answers by speaking that one line
 in the browser's own voice, so it sounds fine and shows up only in the server
-log. `.venv/bin/python -m tools.polly_check` sends one real monster line and
-one real table line and says what came back (`--dry-run` prints the documents
-and sends nothing); `tests/tts/test_polly_contract.py` holds every document the
+log. `python -m tools.polly_check` sends one real monster line and one real table
+line and says what came back — on the droplet with `.env` sourced first, as
+`run.sh` does (`--dry-run` prints the documents and sends nothing, anywhere); `tests/tts/test_polly_contract.py` holds every document the
 app can emit against Amazon's published per-engine tag matrix.
 
 One thing the neural default costs: the built-in fallback roster is standard's

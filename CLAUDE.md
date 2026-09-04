@@ -136,8 +136,8 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   proves nothing about them and a refused monster line is a 502 the page hides
   by speaking that line itself: `tests/tts/test_polly_contract.py` holds every
   document the app can emit against Amazon's published matrix, and
-  `.venv/bin/python -m tools.polly_check` sends two real lines from the droplet
-  (`--dry-run` anywhere else).
+  `python -m tools.polly_check` sends two real lines from the droplet, with
+  `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal

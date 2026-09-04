@@ -228,8 +228,17 @@ answers by speaking that line in the spectator's own browser voice. The game
 sounds fine. Nothing on the page says otherwise.
 
 ```bash
-cd /var/www/dndsim && .venv/bin/python -m tools.polly_check
+cd /var/www/dndsim && (set -a; . ./.env; set +a; .venv/bin/python -m tools.polly_check)
 ```
+
+**Source `.env` — the parentheses and the `set -a` are the point.** The keys and
+the `DND_TTS*` overrides live there and nowhere else in a shell's environment;
+`run.sh` sources them exactly this way before it execs python, and a hand-run
+`python -m` does not. Skip it and the check either reports exit 2 for missing
+credentials on a server whose narration is working, or quietly tests the default
+engines rather than the ones this deployment is configured for. The subshell is
+so `set -a` does not follow you into the rest of your session. Its first line of
+output names the engines and voice it is actually using — read it.
 
 Two clips against real Polly — one table line, one monster line — reporting the
 engine, voice, SSML, byte count and billed characters for each, and exiting
@@ -255,7 +264,7 @@ dndsim logs | grep 'tts failed'    # names the seat, the engine and the voice
 | narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.narrator` in the ledger), each seat at its own engine's rate. A game's whole narration is ~$0.45 on the shipped neural/standard split, ~$0.12 with `DND_TTS_ENGINE=standard`; `DND_TTS=0` removes it entirely. |
 | clip cache | `du -sh data/tts` — safe to delete wholesale; the next listen re-synthesizes and re-pays. |
 | voices sound wrong | `curl -s localhost:8071/api/tts` says whether Polly answered and which engine; `available:false` means the page is using each spectator's own browser voices. |
-| monsters sound like everyone else | They are falling back to the browser's voices: `.venv/bin/python -m tools.polly_check` sends one real monster line and says why. `dndsim logs \| grep 'tts failed'` names the seat and engine of every refused line. |
+| monsters sound like everyone else | They are falling back to the browser's voices: `(set -a; . ./.env; set +a; .venv/bin/python -m tools.polly_check)` sends one real monster line and says why. `dndsim logs \| grep 'tts failed'` names the seat and engine of every refused line. |
 
 ## Overrides
 

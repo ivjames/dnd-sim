@@ -175,3 +175,64 @@ def test_one_engine_for_the_whole_table_is_not_reported_as_broken(capsys):
     assert code == 0, out
     assert [s["Engine"] for s in polly.sent] == ["neural", "neural"]
     assert all("vocal-tract-length" not in s["Text"] for s in polly.sent)
+
+
+def test_a_failed_listing_is_not_a_verified_roster(capsys):
+    """The trap this tool is one level up from.
+
+    `PollyTTS.voices("standard")` answers a failed `DescribeVoices` with
+    `STANDARD_ENGLISH` — the very roster being checked — so asking it would
+    compare the fallback with itself and report a pass for a call that never
+    happened. The listing has to be read directly.
+    """
+    polly = FakePolly()
+
+    def refuse(**_kw):
+        raise RuntimeError("EndpointConnectionError: could not connect")
+
+    polly.describe_voices = refuse
+    code, out = run([], polly, capsys)
+    assert code == 1
+    assert "DescribeVoices answered" in out and "FAIL" in out
+    # The claim it must not make.
+    assert "built-in fallback roster is all served here" not in out
+    # The monster line still goes out — on standard, cast from that very
+    # fallback roster, which is exactly the situation the check is warning is
+    # unverified. The DM has no neural roster to be cast from at all.
+    assert [s["Engine"] for s in polly.sent] == ["standard"]
+    assert "a neural voice to cast from" in out
+
+
+def test_an_engine_with_no_voices_for_the_language_is_a_failure(capsys):
+    """`/api/tts` reports unavailable when any configured engine has no
+    roster, which switches server voices off for the whole game."""
+    polly = FakePolly()
+    polly.describe_voices = lambda **_kw: {"Voices": [
+        {"Id": vid, "LanguageCode": lang, "Gender": gender, "SupportedEngines": ["standard"]}
+        for vid, lang, gender, _ in ENGLISH if vid != "Olivia"
+    ]}
+    code, out = run([], polly, capsys)
+    assert code == 1
+    assert "neural: en-US voices listed" in out
+    assert "the browser's own voices" in out
+    # No neural voice to cast the DM from, and it says so instead of raising.
+    assert "a neural voice to cast from" in out
+
+
+def test_the_listing_is_read_once_and_filtered_by_language(capsys):
+    """A French deployment must not be told its English roster is fine."""
+    polly = FakePolly()
+    polly.describe_voices = lambda **_kw: {"Voices": [
+        {"Id": "Lea", "LanguageCode": "fr-FR", "Gender": "Female",
+         "SupportedEngines": ["standard", "neural"]},
+        {"Id": "Joey", "LanguageCode": "en-US", "Gender": "Male",
+         "SupportedEngines": ["standard"]},
+    ]}
+    code, out = run(["--lang", "fr-FR", "--dm-voice", "Lea"], polly, capsys)
+    assert "Lea" in out
+    # The English voice is not in the listing this deployment cast from, and
+    # the English fallback roster is not something fr-FR would ever use — so
+    # it is reported as not applicable rather than as fifteen missing voices.
+    assert "fr-FR has no fallback to check" in out
+    assert "not served:" not in out
+    assert code == 0, out

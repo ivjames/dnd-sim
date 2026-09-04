@@ -27,9 +27,18 @@ is paid for here and not left for the app to serve. It goes nowhere near a
 game, a ledger or the database: it does not import `web` or `orchestrator`, and
 there is no game id for it to charge.
 
-    .venv/bin/python -m tools.polly_check              # two clips, ~$0.0005
+On the droplet, source `.env` first, the way `run.sh` does before it execs
+python — the credentials and the `DND_TTS*` overrides are in that file and in no
+shell's environment, so without it this checks default engines with no keys:
+
+    cd /var/www/dndsim && (set -a; . ./.env; set +a; \
+        .venv/bin/python -m tools.polly_check)         # two clips, ~$0.0005
+
     .venv/bin/python -m tools.polly_check --dry-run    # print the requests, send nothing
     .venv/bin/python -m tools.polly_check --out /tmp/clips     # keep the mp3s to listen to
+
+The first line of output names the engines, language and DM voice it resolved,
+so a run against the wrong configuration is visible rather than inferred.
 
 Exit status is 0 when every check passed, 1 when one failed, and 2 when the
 check could not be run at all (no boto3, no credentials).
@@ -162,30 +171,86 @@ def build(args: argparse.Namespace, cache_dir: str, client: Any) -> PollyTTS:
     )
 
 
-def report_rosters(svc: PollyTTS, rep: Report) -> None:
+def live_roster(client: Any, language: str) -> dict[str, set[str]] | None:
+    """`DescribeVoices`, asked here and not through `PollyTTS`. None if it
+    could not be asked.
+
+    `PollyTTS.voices()` cannot answer this question, and the way it cannot is
+    the trap: on the standard engine a failed listing comes back as
+    `STANDARD_ENGLISH`, so comparing `voices("standard")` with
+    `STANDARD_ENGLISH` checks the fallback roster against itself and reports a
+    pass for a call that never happened. That is precisely the shape of failure
+    this whole tool exists to rule out, one level up — a check that says "ok"
+    because it never looked.
+
+    The language filter is `PollyTTS._describe`'s: the prefix, so `en-US`
+    accepts every English variant including `en-GB-WLS`.
+    """
+    prefix = str(language or "").split("-")[0].lower()
+    out: dict[str, set[str]] = {}
+    try:
+        token = None
+        while True:
+            resp = client.describe_voices(**({"NextToken": token} if token else {})) or {}
+            for row in resp.get("Voices") or []:
+                if not str(row.get("LanguageCode") or "").lower().startswith(prefix):
+                    continue
+                for engine in row.get("SupportedEngines") or []:
+                    out.setdefault(str(engine).lower(), set()).add(str(row.get("Id") or ""))
+            token = resp.get("NextToken")
+            if not token:
+                break
+    except Exception:      # network, IAM, a region without Polly
+        return None
+    return out
+
+
+def report_rosters(svc: PollyTTS, rec: Recorder, rep: Report) -> None:
     """What `DescribeVoices` says, and whether the built-in roster agrees.
 
-    `STANDARD_ENGLISH` is the roster the app falls back to when
-    `DescribeVoices` fails, so a voice in it the standard engine does not
-    actually serve is an `EngineNotSupportedException` on every line dealt to
-    it — and precisely in the outage where nothing else is working either.
-    Nothing but a live listing can check that.
+    `STANDARD_ENGLISH` is the roster the app casts from when `DescribeVoices`
+    fails, so a voice in it the standard engine does not actually serve is an
+    `EngineNotSupportedException` on every line dealt to it — and precisely in
+    the outage where nothing else is working either. Nothing but a live listing
+    can check that, which is why the listing is read directly.
     """
-    for engine in dict.fromkeys((svc.engine, svc.monster_engine)):
-        pool = svc.voices(engine)
-        rep.check(bool(pool), f"{engine}: a roster for {svc.language}",
-                  f"{len(pool)} voices" if pool else "none listed — /api/tts reports unavailable")
-        if pool:
-            rep.say(f"         {', '.join(v.id for v in pool)}")
-
-    live = {v.id for v in svc.voices("standard")}
-    if not live:
-        rep.note("no live standard roster to check the built-in one against")
+    listed = live_roster(rec, svc.language)
+    if listed is None:
+        rep.check(False, "DescribeVoices answered",
+                  "no live roster: the app would be casting from its built-in "
+                  "fallback on standard and reporting /api/tts unavailable on any "
+                  "other engine")
         return
-    missing = sorted(v.id for v in STANDARD_ENGLISH if v.id not in live)
-    rep.check(not missing, "the built-in fallback roster is all standard voices",
-              f"not served here: {', '.join(missing)}" if missing else "")
-    extra = sorted(live - {v.id for v in STANDARD_ENGLISH})
+
+    for engine in dict.fromkeys((svc.engine, svc.monster_engine)):
+        pool = sorted(listed.get(engine, set()))
+        rep.check(bool(pool), f"{engine}: {svc.language} voices listed",
+                  f"{len(pool)} voices" if pool
+                  else "none — /api/tts reports unavailable and the page uses "
+                       "the browser's own voices")
+        if pool:
+            rep.say(f"         {', '.join(pool)}")
+
+    # What the app would actually fall back to here, which is `_fallback_pool`'s
+    # rule: `STANDARD_ENGLISH` narrowed to this language. Outside English that
+    # is empty by design — a French line read by an English voice is a wrong
+    # narrator, not a degraded one — so there is nothing to check rather than
+    # fifteen voices to complain about.
+    prefix = svc.language.split("-")[0].lower()
+    fallback = [v.id for v in STANDARD_ENGLISH if v.language.lower().startswith(prefix)]
+    standard = listed.get("standard", set())
+    if not fallback:
+        rep.note(f"the built-in fallback roster is English, so {svc.language} has no "
+                 f"fallback to check — a failed DescribeVoices means no voices at all")
+        return
+    if not standard:
+        rep.note("this region lists no standard voices for this language, so the "
+                 "built-in fallback roster cannot be checked against it")
+        return
+    missing = sorted(vid for vid in fallback if vid not in standard)
+    rep.check(not missing, "the built-in fallback roster is all served here",
+              f"not served: {', '.join(missing)}" if missing else "")
+    extra = sorted(standard - set(fallback))
     if extra:
         rep.note(f"standard voices this region has that the fallback roster lacks: "
                  f"{', '.join(extra)}")
@@ -212,7 +277,13 @@ def cast_or_builtin(svc: PollyTTS, key: str):
 def speak(svc: PollyTTS, rec: Recorder, key: str, text: str, rep: Report,
           out_dir: str = "") -> tuple[bytes, dict]:
     """One line, through the real client, reported in full."""
-    cast = svc.cast(key)
+    try:
+        cast = svc.cast(key)
+    except ValueError as exc:      # an empty pool: no roster for this engine
+        rep.say()
+        rep.say(f"{key}")
+        rep.check(False, f"a {svc.engine_for(key)} voice to cast from", str(exc))
+        return b"", {}
     ssml = svc.ssml(text, cast)
     rep.say()
     rep.say(f"{key}")
@@ -313,7 +384,10 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
 
         if not probe.available():
             print("no Polly client: boto3 is missing, or AWS credentials are not set.")
-            print("On the droplet the keys live in /var/www/dndsim/.env — see DEPLOY.md.")
+            print("On the droplet the keys are in .env, which `run.sh` sources and a")
+            print("hand-run python does not. Source it the same way run.sh does:")
+            print("  cd /var/www/dndsim && (set -a; . ./.env; set +a; "
+                  ".venv/bin/python -m tools.polly_check)")
             return 2
 
         rec = Recorder(probe.client())
@@ -323,7 +397,7 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
             os.makedirs(args.out, exist_ok=True)
 
         print()
-        report_rosters(svc, rep)
+        report_rosters(svc, rec, rep)
 
         table, table_req = speak(svc, rec, TABLE_KEY, args.text, rep, args.out)
         monster, monster_req = speak(svc, rec, MONSTER_KEY, args.monster_text, rep, args.out)
