@@ -19,10 +19,12 @@ import pytest
 from tts.voices import (
     ACCENTS,
     CHILD_VOICE_IDS,
+    AUDIBLE_SIZE_PCT,
     DEFAULT_SIZE_BAND,
     ENGINE_SSML,
     MONSTER_CAVE,
     MONSTER_GROWL,
+    MONSTER_GROWL_ALWAYS,
     MONSTER_SIZE,
     MONSTER_SIZE_BANDS,
     MONSTER_TEMPO,
@@ -127,6 +129,36 @@ def test_how_big_a_monster_sounds_is_the_creature_and_not_the_slot():
                    for sz in ("T", "S", "M", "L", "H", "G")]
         assert by_size == sorted(by_size), (slot, by_size)
         assert len(set(by_size)) == len(by_size)      # and never a tie across bands
+
+
+def test_every_monster_is_audibly_one():
+    """The barmaid problem, which the bands reintroduced by another door.
+
+    `MONSTER_VTL` and the size bands both exclude 0 so that no monster is dealt
+    no treatment. But the bands must be monotonic and non-overlapping and `M`
+    straddles zero — a person-sized creature IS the size of the voice it was
+    dealt — so a Medium creature's shift can only ever be small, and about one
+    in four was then dealt no grit and no room on top of it: an ordinary voice
+    reading a monster's lines. Medium is the commonest size at a table that
+    talks.
+    """
+    for band in MONSTER_SIZE_BANDS:
+        for slot in range(1, 200):
+            fx = cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size=band).fx
+            audible = (abs(fx.size_pct) >= AUDIBLE_SIZE_PCT or fx.growl_pct or fx.cave_pct)
+            assert audible, (band, slot, fx)
+
+    # The grit that fills in is real grit, and it is this creature's rather
+    # than one value for everyone it happens to.
+    filled = {cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size="M").fx.growl_pct
+              for slot in range(1, 200)}
+    assert MONSTER_GROWL_ALWAYS and 0 not in MONSTER_GROWL_ALWAYS
+    assert set(MONSTER_GROWL_ALWAYS) <= filled and len(filled - {0}) > 1
+
+    # A creature big enough to say it on its own keeps whatever it was dealt,
+    # including nothing: the rule fills a gap, it does not paint everyone.
+    assert any(not cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size="G").fx.growl_pct
+               for slot in range(1, 200))
 
 
 def test_two_of_one_creature_still_differ_from_each_other():

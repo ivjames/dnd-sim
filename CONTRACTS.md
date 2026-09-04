@@ -2047,11 +2047,23 @@ describing the effect as "a longer vocal tract is a bigger creature".
    which `cast_for` reads as `DEFAULT_SIZE_BAND` (`M`). Ignored for every
    non-monster seat: a PC has a stat sheet, not a stat block.
 
-3. **`size` is keyword-only through `PollyTTS.cast`, `cache_key_for`, `render`
+3. **Every monster stays audibly one.** The bands reintroduced the barmaid
+   problem by another door: they must be monotonic and non-overlapping, and
+   `M` straddles zero because a person-sized creature *is* the size of the
+   voice it was dealt — so a Medium creature's shift can only ever be small,
+   and about one in four was then dealt no grit and no room on top of it. An
+   ordinary voice reading a monster's lines, at the commonest size for a
+   creature that talks. Where `abs(size_pct) < AUDIBLE_SIZE_PCT` (10, roughly
+   a semitone and a half) and nothing else was dealt, the cast takes a growl
+   from `MONSTER_GROWL_ALWAYS` off its own slice of the hash. It fills a gap
+   rather than painting everyone: a creature big enough to say "creature" on
+   its own keeps whatever it was dealt, including nothing.
+
+4. **`size` is keyword-only through `PollyTTS.cast`, `cache_key_for`, `render`
    and `synthesize`**, because it is not a trait of the same kind as `gender`
    and `age` — those narrow the voice pool, this sets the treatment.
 
-4. **`web/routes/tts.py: _creature_size_for`** resolves it from the game, not
+5. **`web/routes/tts.py: _creature_size_for`** resolves it from the game, not
    from the request — `_member_for`'s argument, since this route spends money
    and a trait in the query string is a way to mint cache entries. The live
    `Combatant`'s `size` attribute first (an attribute read, where `snapshot()`
@@ -2064,7 +2076,10 @@ describing the effect as "a longer vocal tract is a bigger creature".
 
 Monster clips are re-keyed once more by this, which the `MonsterFX` token
 handles as before. `tests/tts/test_voices.py` pins the bands, the monotonicity,
-the default, and — walking every creature in every shipped scenario — that no
-two monsters in one game are dealt the same voice, size, grit, room and tempo
-together. That last one is the property the bands could plausibly have broken,
-since narrowing the size shift to a species takes distinctness out of it.
+the default, that no creature of any size is left sounding like a person, and
+— walking every creature in every shipped scenario — that no two monsters in
+one game are dealt the same voice, size, grit, room and tempo together. The
+last two are the properties the bands could plausibly have broken, since
+narrowing the size shift to a species takes distinctness out of it and takes
+the smallest species' shift down to almost nothing. Both fail when the rule
+they pin is removed.

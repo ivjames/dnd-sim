@@ -70,6 +70,8 @@ __all__ = [
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_SIZE_BANDS",
+    "MONSTER_GROWL_ALWAYS",
+    "AUDIBLE_SIZE_PCT",
     "CREATURE_SIZES",
     "DEFAULT_SIZE_BAND",
     "normalize_creature_size",
@@ -304,6 +306,24 @@ MONSTER_GROWL: tuple[int, ...] = (0, 0, 30, 55, 80)
 #: filter on a line the DM has just narrated dry is the one effect here a
 #: listener can mistake for a fault.
 MONSTER_CAVE: tuple[int, ...] = (0, 0, 0, 35, 55)
+
+#: Below this, a size shift is a different person rather than a different kind
+#: of thing. Roughly a semitone and a half: at 4% a resample is under a
+#: semitone and reads as nothing at all.
+AUDIBLE_SIZE_PCT = 10
+
+#: The grit a monster gets when nothing else would have marked it as one — the
+#: non-zero half of `MONSTER_GROWL`.
+#:
+#: `MONSTER_SIZE_BANDS` has to be monotonic and non-overlapping, and `M`
+#: straddles zero because a person-sized creature IS the size of the voice it
+#: was dealt. Those two together mean a Medium creature's shift can only ever
+#: be small — and a Medium creature dealt no grit and no room was then an
+#: ordinary voice reading a monster's lines, which is the barmaid problem
+#: `MONSTER_VTL` excluded 0 to avoid. It reached about one Medium monster in
+#: four, and Medium is the commonest size at a table that talks. So where size
+#: cannot say "creature", the voice does.
+MONSTER_GROWL_ALWAYS: tuple[int, ...] = tuple(g for g in MONSTER_GROWL if g)
 
 #: How fast a monster talks, as a percentage of normal, ON TOP of the
 #: compensation `MonsterFX.rate_pct` asks for. Same spread the VTL arrangement
@@ -589,11 +609,16 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
         # Both halves matter: without the band an ogre is only a slot number,
         # and without the hash four goblins are one goblin four times.
         band = MONSTER_SIZE_BANDS[normalize_creature_size(size) or DEFAULT_SIZE_BAND]
-        fx = MonsterFX(
-            size_pct=band[(h >> 12) % len(band)],
-            growl_pct=MONSTER_GROWL[(h >> 8) % len(MONSTER_GROWL)],
-            cave_pct=MONSTER_CAVE[(h >> 20) % len(MONSTER_CAVE)],
-        )
+        size_pct = band[(h >> 12) % len(band)]
+        growl = MONSTER_GROWL[(h >> 8) % len(MONSTER_GROWL)]
+        cave = MONSTER_CAVE[(h >> 20) % len(MONSTER_CAVE)]
+        # Every monster has to be audibly one. A shift under `AUDIBLE_SIZE_PCT`
+        # is a different person rather than a different kind of thing, so where
+        # the creature is person-sized and nothing else was dealt, it gets grit
+        # — off its own slice of the hash, so it is still this creature's.
+        if abs(size_pct) < AUDIBLE_SIZE_PCT and not growl and not cave:
+            growl = MONSTER_GROWL_ALWAYS[(h >> 24) % len(MONSTER_GROWL_ALWAYS)]
+        fx = MonsterFX(size_pct=size_pct, growl_pct=growl, cave_pct=cave)
         # Two things ride on one rate: undoing what the size shift does to
         # duration (`rate_pct`, exactly `100 + size_pct`) and how fast this
         # monster talks. They multiply — a creature dealt 90% tempo and a 24%
