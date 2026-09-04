@@ -23,6 +23,7 @@ from tts.voices import (
     billable_chars,
     cast_for,
     hash_key,
+    normalize_gender,
     ssml_for,
 )
 
@@ -114,3 +115,39 @@ def test_only_the_words_are_billed():
     text = "The cart still smoulders."
     doc = ssml_for(text, cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian"))
     assert billable_chars(text) == len(text) < len(doc)
+
+
+def test_a_stated_gender_narrows_the_pool_and_nothing_else():
+    women = {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+    men = {v.id for v in STANDARD_ENGLISH if v.gender == "Male"} - {"Brian"}   # Brian is the DM
+
+    for key in ("pc_1", "pc_2", "pc_3", "pc_4", "npc"):
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", "female").voice_id in women
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", "male").voice_id in men
+
+    # Narrowing is all it does: the seat is still dealt by the same hash, so a
+    # character keeps its voice as long as its gender and the roster hold.
+    once = cast_for("pc_2", STANDARD_ENGLISH, "Brian", "female")
+    assert once == cast_for("pc_2", list(reversed(STANDARD_ENGLISH)), "Brian", "FEMALE")
+    assert once.pitch_pct == cast_for("pc_2", STANDARD_ENGLISH, "Brian").pitch_pct
+
+
+def test_an_unstated_gender_is_not_a_guess():
+    """Polly's roster is Female and Male; there is no third voice to cast.
+
+    A character who is neither is dealt from the whole pool rather than pushed
+    into one of the two.
+    """
+    open_pool = cast_for("pc_1", STANDARD_ENGLISH, "Brian")
+    for said in ("", None, "nonbinary", "they/them", "unspecified", "  "):
+        assert cast_for("pc_1", STANDARD_ENGLISH, "Brian", said) == open_pool
+
+    assert normalize_gender("Female") == "female" and normalize_gender(" M ") == "male"
+    assert normalize_gender("nonbinary") == ""
+
+
+def test_a_gender_the_roster_cannot_answer_is_a_worse_match_not_a_silence():
+    """Korean and Swedish ship one standard voice; Icelandic ships two men."""
+    only_women = [Voice("Astrid", "sv-SE", "Female"), Voice("Elin", "sv-SE", "Female")]
+    cast = cast_for("pc_1", only_women, "Astrid", "male")
+    assert cast.voice_id == "Elin"          # dealt anyway, rather than raising

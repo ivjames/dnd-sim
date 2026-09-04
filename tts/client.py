@@ -196,16 +196,18 @@ class PollyTTS:
             return ()
         return tuple(out)
 
-    def cast(self, key: str) -> Cast:
-        return cast_for(key, self.voices(), self.dm_voice)
+    def cast(self, key: str, gender: str = "") -> Cast:
+        """The seat `key` sits in. `gender` is the character's, where the game
+        states one — it narrows the pool, it does not pick the voice."""
+        return cast_for(key, self.voices(), self.dm_voice, gender)
 
     # -- synthesis -----------------------------------------------------------
 
-    def cache_key_for(self, key: str, text: str) -> tuple[Cast, str]:
-        cast = self.cast(key)
+    def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]:
+        cast = self.cast(key, gender)
         return cast, cache_key(self.engine, cast.cache_key(), ssml_for(text, cast))
 
-    def synthesize(self, key: str, text: str) -> TTSResult:
+    def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
         """Audio for one line in one seat. Raises `TTSError` if it cannot be had."""
         text = str(text or "").strip()
         if not text:
@@ -213,7 +215,7 @@ class PollyTTS:
         if len(text) > self.max_chars:
             raise TTSError(f"line is {len(text)} characters; the cap is {self.max_chars}")
 
-        cast, ckey = self.cache_key_for(key, text)
+        cast, ckey = self.cache_key_for(key, text, gender)
         hit = self.cache.get(ckey)
         if hit is not None:
             return TTSResult(hit, cast, 0, 0.0, True, ckey)

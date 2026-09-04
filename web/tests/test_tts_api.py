@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 import pytest
 
 from llm.cost import Ledger
+from tts.voices import STANDARD_ENGLISH, cast_for
 from web.tests.test_api import create
 
 
@@ -152,3 +153,64 @@ def test_a_game_this_process_no_longer_runs_still_keeps_its_tab(tts_app, tts_cli
     # And the same budget stop applies to it.
     db.set_cost(game, entry.config["budget_usd"])
     assert tts_client.get(speak_url(game, text="More.")).status_code == 402
+
+
+# -- gender ------------------------------------------------------------------
+
+def test_a_pc_is_cast_from_the_gender_its_own_party_list_states(tts_client, sample_config):
+    party = [
+        {"id": "pc_1", "name": "Thorin", "race": "Dwarf (Hill)", "klass": "Fighter",
+         "level": 3, "gender": "male"},
+        {"id": "pc_2", "name": "Vessa", "race": "Halfling (Lightfoot)", "klass": "Rogue",
+         "level": 3, "gender": "female"},
+        {"id": "pc_3", "name": "Crick", "race": "Halfling (Lightfoot)", "klass": "Rogue",
+         "level": 3},                                    # no gender stated
+    ]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    def voice(key):
+        rv = tts_client.get(speak_url(game, key=key))
+        assert rv.status_code == 200
+        return rv.headers["X-Dnd-Voice"]
+
+    men = {v.id for v in STANDARD_ENGLISH if v.gender == "Male"}
+    women = {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+    assert voice("pc_1") in men
+    assert voice("pc_2") in women
+    # Unstated is dealt from the whole pool — which is the point of leaving it
+    # unstated, not a failure to state it.
+    assert voice("pc_3") == cast_for("pc_3", STANDARD_ENGLISH, "Brian").voice_id
+
+    # The DM, an NPC and a monster have no character record to read a gender
+    # from, and are cast exactly as they were before any of this.
+    for key in ("dm", "npc", "monster:goblin_1"):
+        assert voice(key) == cast_for(key, STANDARD_ENGLISH, "Brian").voice_id
+
+
+def test_the_caller_cannot_choose_the_voice(tts_client, sample_config):
+    """Gender is read from the game, never from the request.
+
+    This endpoint spends money: a gender in the query string would be a way to
+    walk the whole roster, minting a paid cache entry per step.
+    """
+    party = [{"id": "pc_1", "name": "Thorin", "race": "Dwarf (Hill)", "klass": "Fighter",
+              "level": 3, "gender": "male"}]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+
+    honest = tts_client.get(speak_url(game, key="pc_1"))
+    asked = tts_client.get(speak_url(game, key="pc_1") + "&gender=female")
+    assert honest.headers["X-Dnd-Voice"] == asked.headers["X-Dnd-Voice"]
+    assert honest.headers["ETag"] == asked.headers["ETag"]      # and it is the same clip
+
+
+def test_gender_survives_the_process_that_ran_the_game(tts_app, tts_client, sample_config):
+    """The party list is in the row too, so an archived game still casts right."""
+    party = [{"id": "pc_1", "name": "Vessa", "race": "Halfling (Lightfoot)", "klass": "Rogue",
+              "level": 3, "gender": "female"}]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+    tts_app.config["DND_REGISTRY"].get(game).shutdown()
+    tts_app.config["DND_REGISTRY"]._games.pop(game)
+
+    rv = tts_client.get(speak_url(game, key="pc_1"))
+    assert rv.status_code == 200
+    assert rv.headers["X-Dnd-Voice"] in {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}

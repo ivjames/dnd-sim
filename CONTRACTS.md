@@ -217,7 +217,7 @@ class GameConfig:
     seed: int
     setting: str                     # free text world/tone
     tone: str = "classic heroic"
-    party: list[dict]                # character specs (see build_character)
+    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "gender" (voice casting) — neither reaches the engine
     scenario: dict                   # {"opening": str, "encounters": [{"trigger":"scene_1", "monsters":[{"name":"Goblin","count":4}], "grid": {"width":12,"height":10,"party_start":[[1,4],[1,5],[2,4],[2,5]], "enemy_start":[[10,3],...], "difficult":[[5,5]], "walls":[]}}], "max_scenes": 3}
     dm_model: str; player_model: str; summary_model: str
     max_rounds_per_combat: int = 20
@@ -851,7 +851,8 @@ with the browser's voices kept as a real fallback rather than deleted.
    class Cast:   key: str; voice_id: str; language: str; pitch_pct: int; rate_pct: int; vtl_pct: int
    def hash_key(s: str) -> int                            # FNV-1a/32 over UTF-16 code units — the same
                                                           # number as speech.js `hashString`
-   def cast_for(key: str, pool, dm_voice: str = "") -> Cast   # ValueError on an empty pool
+   def normalize_gender(gender: str) -> str               # "female" | "male" | "" (no constraint)
+   def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast   # ValueError on an empty pool
    def ssml_for(text: str, cast: Cast) -> str             # <speak>[<amazon:effect vtl>][<prosody>]…
    def billable_chars(text: str) -> int                   # the words, not the markup
    STANDARD_ENGLISH: tuple[Voice, ...]                    # fallback roster, read 2026-09-04
@@ -872,9 +873,9 @@ with the browser's voices kept as a real fallback rather than deleted.
                     language="en-US", dm_voice="Brian", max_chars=400)
        def available(self) -> bool                        # False = no boto3, or no credentials
        def voices(self) -> tuple[Voice, ...]              # DescribeVoices once, else STANDARD_ENGLISH
-       def cast(self, key: str) -> Cast
-       def cache_key_for(self, key: str, text: str) -> tuple[Cast, str]
-       def synthesize(self, key: str, text: str) -> TTSResult    # raises TTSError
+       def cast(self, key: str, gender: str = "") -> Cast
+       def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
+       def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
    def from_env(cache_dir: str) -> PollyTTS | None
    ```
 
@@ -916,7 +917,31 @@ with the browser's voices kept as a real fallback rather than deleted.
    concurrent spectators, and safe only because nothing is writing snapshots
    over that row any more. The budget stop applies to it either way.
 
-5. **Casting differs from the browser's in two ways, both because Polly is not
+5. **A party member may state a `gender`, and it decides which voices that
+   character can be cast from.** New optional key in the party spec —
+   `{"id","name","race","klass","level",…,"gender": "female"|"male"}` — read by
+   the web layer out of the game's own config (live entry or DB row), never
+   from the request: this endpoint spends money, and a gender in the query
+   string would let a caller walk the roster a paid clip at a time. It narrows
+   the pool and nothing else; the choice within it is the same hash, so a
+   character keeps its voice for as long as its gender and the roster hold.
+
+   **This is not an engine field.** `CharacterSheet` (§1.3) is unchanged and
+   `build_character` ignores the key: gender has no rules meaning in 5e, the
+   engine stays pure, and the DM and player prompts do not see it. `dm`, `npc`
+   and `monster:<id>` have no character record and are cast from the whole pool
+   as before.
+
+   Polly reports `Gender` as exactly `Female` or `Male`, so a character who
+   states neither — or states nothing — is dealt from the **whole** pool rather
+   than pushed into one of the two; the roster's limitation is not laundered
+   into a character sheet. Where a language's voices are all one gender
+   (Korean, Swedish), a gender that cannot be answered still gets a voice: a
+   worse match, not a silence. The browser fallback ignores gender entirely —
+   `SpeechSynthesisVoice` has no gender attribute in any browser, and inferring
+   one from voice names would be a guess dressed as data.
+
+6. **Casting differs from the browser's in two ways, both because Polly is not
    a device voice list.** There are no novelty voices, so a speaking monster is
    an ordinary voice put through `<amazon:effect vocal-tract-length>` (never
    0%) with pitch and rate behind it; and the pool is the same for every seat,
@@ -924,7 +949,7 @@ with the browser's voices kept as a real fallback rather than deleted.
    chosen (`DND_TTS_DM_VOICE`, default `Brian`) rather than dealt, and no other
    seat is given it.
 
-6. **The `standard` engine is the default and is not an arbitrary one.** It is
+7. **The `standard` engine is the default and is not an arbitrary one.** It is
    the cheapest at $4/1M characters, and `<prosody pitch>` and
    `<amazon:effect vocal-tract-length>` — the two tags the casting depends on —
    are standard-only; Polly errors on an unsupported tag rather than ignoring
@@ -933,7 +958,7 @@ with the browser's voices kept as a real fallback rather than deleted.
    (<https://docs.aws.amazon.com/polly/latest/dg/limits.html>), which is what
    `billable_chars` counts.
 
-7. **Mock mode stays free.** `from_env` returns `None` under `DND_SIM_MOCK`
+8. **Mock mode stays free.** `from_env` returns `None` under `DND_SIM_MOCK`
    unless `DND_TTS=1`, and the route refuses a game whose own config is `mock`
    on the same terms. "Same config + seed ⇒ byte-identical game, costing
    nothing" is a property of this repo; paying Polly to read a mock game aloud

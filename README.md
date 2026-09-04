@@ -125,16 +125,21 @@ vars). A party member may carry its own `"model"`, which overrides
   "dm_model": "claude-sonnet-5",
   "player_model": "claude-haiku-4-5-20251001",
   "party": [
-    {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3},
+    {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3,
+     "gender": "male"},
     {"id": "pc_2", "name": "Vessa Quill", "race": "Halfling (Lightfoot)", "klass": "Rogue", "level": 3,
-     "model": "grok-4.3"},
+     "gender": "female", "model": "grok-4.3"},
     {"id": "pc_3", "name": "Sister Marigold Penn", "race": "Human", "klass": "Cleric", "level": 3,
-     "model": "gemini-2.5-flash"},
+     "gender": "female", "model": "gemini-2.5-flash"},
     {"id": "pc_4", "name": "Ilbrandt Ash", "race": "Elf (High)", "klass": "Wizard", "level": 3,
-     "model": "deepseek-v4-flash"}
+     "gender": "male", "model": "deepseek-v4-flash"}
   ]
 }
 ```
+
+`"gender"` is optional and decides which Polly voices that character can be
+cast from (see [Spoken narration](#spoken-narration)). It is not a rules field:
+the engine, the DM and the players never see it.
 
 Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
 other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,
@@ -225,6 +230,27 @@ line ("Goblin 2 hits Thorin for 6", "Round 3", "Vessa moves 30 feet") rather
 than the dice string, and **mute mechanics** silences them entirely. The DM has
 one voice; each PC gets its own, dealt deterministically so the same character
 sounds the same every session.
+
+A party member may state a `"gender"` — `female` or `male` — and is then dealt
+only from the voices Polly reports as that gender. It narrows who can be cast
+and nothing else: the choice within that set is the same hash as before, so a
+character keeps its voice for as long as its gender and the roster hold. The
+gender is read from the game's own party list, never from the request that asks
+for the clip — this endpoint spends money, and a gender in the query string
+would be a way to walk the whole roster a paid clip at a time.
+
+Polly's roster is `Female` and `Male`; there is no third kind of voice on it.
+So a character who states neither, or states nothing at all, is dealt from the
+**whole** pool rather than pushed into one of the two — the roster's limitation
+is not something to launder into a character sheet. `Crick` in
+`examples/crypt.json` is left that way on purpose. Where a language ships
+voices of only one gender (Korean and Swedish each ship one), a stated gender
+that cannot be answered gets a voice anyway: a worse match, not a silence.
+
+**The browser fallback ignores gender.** `SpeechSynthesisVoice` has no gender
+attribute in any browser, and inferring one from voice names across every OS
+and locale would be a guess dressed as data. A session on the fallback engine
+casts as it always did.
 
 ### Two engines, one narrator
 

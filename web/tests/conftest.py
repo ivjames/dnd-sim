@@ -235,24 +235,24 @@ class FakeTTS:
     def price_of(self, chars: int) -> float:
         return max(0, int(chars)) * self.price_per_million / 1_000_000.0
 
-    def cast(self, key: str):
+    def cast(self, key: str, gender: str = ""):
         from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
 
-        return cast_for(key, STANDARD_ENGLISH, "Brian")
+        return cast_for(key, STANDARD_ENGLISH, "Brian", gender)
 
-    def cache_key_for(self, key: str, text: str):
+    def cache_key_for(self, key: str, text: str, gender: str = ""):
         from tts.cache import cache_key  # noqa: PLC0415
 
-        cast = self.cast(key)
+        cast = self.cast(key, gender)
         return cast, cache_key(self.engine, cast.cache_key(), text)
 
-    def synthesize(self, key: str, text: str):
+    def synthesize(self, key: str, text: str, gender: str = ""):
         from tts.client import TTSError, TTSResult  # noqa: PLC0415
 
         self.calls.append((key, text))
         if self.fail:
             raise TTSError(self.fail)
-        cast, ckey = self.cache_key_for(key, text)
+        cast, ckey = self.cache_key_for(key, text, gender)
         if ckey in self.clips:
             return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
         audio = b"\xff\xfb" + text.encode("utf-8")

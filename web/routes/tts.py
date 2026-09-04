@@ -45,8 +45,27 @@ def _err(msg: str, code: int = 400):
 
 
 def _mock_game(entry: Any, row: Any) -> bool:
+    return bool(_config_of(entry, row).get("mock"))
+
+
+def _config_of(entry: Any, row: Any) -> dict:
     cfg = (entry.config if entry is not None else (row or {}).get("config")) or {}
-    return bool(isinstance(cfg, dict) and cfg.get("mock"))
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _gender_for(entry: Any, row: Any, key: str) -> str:
+    """The character's gender, from the game's own party list.
+
+    Read here rather than taken from the request on purpose: this endpoint
+    spends money, and a gender in the query string would be a way to pick any
+    voice on the roster (and to mint a fresh cache entry per pick). Only a party
+    member has a gender to state — `dm`, `npc` and `monster:<id>` have no
+    character record and are cast from the whole pool, as before.
+    """
+    for member in _config_of(entry, row).get("party") or []:
+        if isinstance(member, dict) and str(member.get("id") or "") == key:
+            return str(member.get("gender") or "")
+    return ""
 
 
 def _budget_of(entry: Any, row: Any) -> float:
@@ -167,8 +186,9 @@ def speak(game_id: str):
     # An unchanged clip is the common case — the playhead goes backwards, tabs
     # reload, two spectators hear the same line — so answer the revalidation
     # before touching the cache, let alone Polly.
+    gender = _gender_for(entry, row, key)
     try:
-        _cast, ckey = svc.cache_key_for(key, text)
+        _cast, ckey = svc.cache_key_for(key, text, gender)
     except Exception as exc:  # a pool that cannot be cast from
         current_app.logger.warning("tts casting failed: %s", exc)
         return _err(f"{type(exc).__name__}: {exc}", 503)
@@ -177,7 +197,7 @@ def speak(game_id: str):
         return Response(status=304, headers={"ETag": etag, "Cache-Control": IMMUTABLE})
 
     try:
-        result = svc.synthesize(key, text)
+        result = svc.synthesize(key, text, gender)
     except TTSError as exc:
         current_app.logger.info("tts unavailable: %s", exc)
         return _err(str(exc), 502)

@@ -36,6 +36,8 @@ __all__ = [
     "ssml_for",
     "billable_chars",
     "escape",
+    "normalize_gender",
+    "GENDERS",
 ]
 
 
@@ -83,6 +85,15 @@ STANDARD_ENGLISH: tuple[Voice, ...] = (
 
 MONSTER_PREFIX = "monster:"
 
+# Polly reports a voice's `Gender` as exactly "Female" or "Male" — there is no
+# third kind of voice to cast from. So a character whose gender is neither (or
+# is not stated) is dealt from the WHOLE pool rather than being pushed into one
+# of the two: the roster's limitation is not something to launder into a
+# character sheet. `_gender` returns "" for everything it does not recognise,
+# and "" means no constraint.
+GENDERS = {"f": "female", "female": "female", "woman": "female",
+           "m": "male", "male": "male", "man": "male"}
+
 # Timbre shifts dealt to monsters: never 0, because a monster whose only
 # treatment rounded to "no treatment" is a goblin that sounds like the barmaid.
 MONSTER_VTL: tuple[int, ...] = (-20, -10, 10, 20, 30, 40)
@@ -128,13 +139,21 @@ def _pick(pool: list[Voice], h: int) -> Voice:
     return pool[h % len(pool)]
 
 
-def cast_for(key: str, pool, dm_voice: str = "") -> Cast:
+def normalize_gender(gender: str) -> str:
+    """"female", "male", or "" for no constraint. See `GENDERS`."""
+    return GENDERS.get(str(gender or "").strip().lower(), "")
+
+
+def cast_for(key: str, pool, dm_voice: str = "", gender: str = "") -> Cast:
     """Deal `key` a voice out of `pool`, deterministically.
 
     `pool` is any iterable of `Voice`; it is sorted by id here so the casting
     does not depend on the order `DescribeVoices` happened to return. Raises
     `ValueError` on an empty pool — an empty pool is a configuration failure,
     and casting silently to nothing would be heard as the narrator going quiet.
+
+    `gender` narrows the pool to voices Polly reports as that gender. It comes
+    from the character, not from whoever asked for the clip.
     """
     voices = sorted({v.id: v for v in pool}.values(), key=lambda v: v.id)
     if not voices:
@@ -150,6 +169,19 @@ def cast_for(key: str, pool, dm_voice: str = "") -> Cast:
     # Everyone else is dealt out of the rest, so the DM's voice is not also a
     # player's. With one voice in the pool there is no "rest" to deal from.
     others = [v for v in voices if v.id != dm.id] or voices
+
+    # A stated gender narrows who can be dealt, and only that: the choice
+    # within the narrowed set is the same hash as ever, so a character keeps
+    # its voice for as long as its gender and the roster do.
+    want = normalize_gender(gender)
+    if want:
+        matching = [v for v in others if v.gender.lower() == want]
+        # A language whose standard voices are all one gender (Korean ships
+        # one, Swedish one) would otherwise go silent. A voice of the wrong
+        # gender is a worse match, not a worse failure.
+        if matching:
+            others = matching
+
     h = hash_key(key)
     voice = _pick(others, h)
 
