@@ -183,13 +183,21 @@ def test_the_pronoun_spellings_are_the_ones_tts_already_casts_on():
         assert gender_for_pronouns(narrated) == gender_for_pronouns(said)
 
 
-def test_the_view_gives_every_combatant_pronouns():
+def test_the_view_gives_every_combatant_pronouns_and_a_class():
+    """Both columns exist for the same reason: what is not in the view is guessed.
+
+    A narrator without the class column called the party's wizard "the downed
+    cleric" while the cleric was standing over him.
+    """
     state = make_state()
     view = dm_view(state, [], "")
-    assert "COMBATANTS (id | name | pronouns | side | HP | AC | pos | conditions)" in view
+    assert "COMBATANTS (id | name | pronouns | side | class | HP | AC | pos | conditions)" in view
     for cid, c in state.combatants.items():
         row = next(l for l in view.splitlines() if l.startswith(f"{cid} |"))
         assert f"| {pronouns_for(c)} |" in row
+        sheet = getattr(c, "sheet", None)
+        if sheet is not None:
+            assert f"| {sheet.klass} {sheet.level} |" in row
 
 
 # --- across a whole game ---------------------------------------------------

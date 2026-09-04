@@ -161,6 +161,19 @@ def _active_id(state: Any) -> str | None:
     return str(cid) if cid else None
 
 
+def _role(c: Any) -> str:
+    """What a character is, for a view that otherwise carries only a name.
+
+    A narrator with no class column calls the wizard who just went down "the
+    downed cleric", for the same reason it guesses pronouns from a name: the
+    fact was never in front of it.
+    """
+    sheet = getattr(c, "sheet", None)
+    if sheet is not None:
+        return f"{getattr(sheet, 'klass', '?')} {getattr(sheet, 'level', 1)}"
+    return "—"
+
+
 def _sheet_line(c: Any) -> str:
     """One dense line describing a PC's own capabilities."""
     sheet = getattr(c, "sheet", None)
@@ -335,7 +348,7 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
         lines.append(f"TURN: {actor_id} {getattr(actor, 'name', '?')}")
 
     lines.append("")
-    lines.append("COMBATANTS (id | name | pronouns | side | HP | AC | pos | conditions)")
+    lines.append("COMBATANTS (id | name | pronouns | side | class | HP | AC | pos | conditions)")
     for cid, c in combatants.items():
         status = ""
         if getattr(c, "dead", False):
@@ -345,7 +358,7 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
         pos = _pos(c)
         lines.append(
             f"{cid} | {getattr(c, 'name', '?')} | {pronouns_for(c)} | "
-            f"{getattr(c, 'side', '?')} | "
+            f"{getattr(c, 'side', '?')} | {_role(c)} | "
             f"{getattr(c, 'hp', 0)}/{getattr(c, 'max_hp', 0)} | AC {getattr(c, 'ac', 10)} | "
             f"({pos[0]},{pos[1]}) | {_conds(c)}{status}"
         )

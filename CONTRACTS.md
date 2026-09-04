@@ -104,7 +104,7 @@ class Grid:
     width: int; height: int
     difficult: set[tuple[int,int]]; walls: set[tuple[int,int]]; cover: dict[tuple[int,int], str]   # "half"|"three_quarters"
     def distance_ft(a, b) -> int      # 5e simplified diagonal (every diagonal 5 ft)
-    def path(state, start, goal, max_ft) -> list[tuple[int,int]] | None   # BFS respecting walls/occupancy, difficult terrain costs double
+    def path(state, start, goal, max_ft, mover_id=None, threat=None) -> list[tuple[int,int]] | None   # BFS respecting walls/occupancy, difficult terrain costs double; with threat={square: frozenset(enemy_ids)} an equal-length route that provokes fewer opportunity attacks wins the tie
 ```
 
 ### 1.5 Events — `engine/events.py`
@@ -1782,3 +1782,69 @@ casting. `tests/engine/test_pronouns.py` keeps only what those cover between
 them — that the sheet carries both keys verbatim, that both survive the
 round-trip a restart puts them through (including a row written before either
 existed), and that neither touches a rule.
+
+
+### 2026-09-04 — engine, agents — a move that does not walk through a reach, and a log that can be checked
+
+A recorded game (`examples/cellar_rats.json`, seed 11) was read line by line
+for continuity. Four things in it looked like rules bugs. Three were not, and
+the fourth had been invisible behind one of them.
+
+**The real one.** `Grid.path` is a shortest-path search that knows nothing
+about who threatens what, and ties are broken by whichever square sorts
+lowest. Leaving (7,1) for anywhere south of it, Giant Rat 3 was routed through
+(6,2) — inside the rogue's reach — and straight back out to (7,3), taking a
+rapier that killed it. (7,2) is the same 20 ft and never enters the reach at
+all; so is every other case on that board, all twenty-four of them. The rat
+paid for nothing.
+
+`path` now takes `threat`, a map of square to the enemies whose reach covers
+it, and compares cost as `(feet, opportunity attacks provoked)`. Feet still
+decide: a route that dodges a reach by costing 5 ft more does not win, and a
+mover standing in a reach still gets hit on the way out, because there is no
+route that does not leave it. Only the tie changes. `threat_map` in
+`engine/actions.py` builds the map from the same predicate `reactions_for`
+uses — the two must agree or the pathfinder optimises against a rule the
+resolver does not apply.
+
+**The three that were not bugs** are worth more than the one that was, because
+of why they looked like bugs. Each was the log omitting the number that made
+the line add up:
+
+1. **An opportunity attack named no squares.** The move event that follows it
+   reports where the mover started and where it was stopped, never the square
+   it was leaving when the reaction fired — those differ whenever the mover got
+   a step in first. Comparing the attacker against the move's `from`/`to` says
+   the engine fired on a creature moving *into* reach. It did not. The attack
+   line now carries `leaving reach (a,b)→(c,d)` in the reasons bracket it
+   already had.
+
+2. **A heal printed the die and not the modifier**: `regains 7 HP from Healing
+   Word (1d4 → 1)`, which is four points of Wisdom and Disciple of Life short
+   of arithmetic. Now `(1d4 → 1 + 6)`.
+
+3. **A crit printed the dice it did not roll.** `roll_damage` doubles dice and
+   labelled the result `1d4+2 (crit)`. Two dice were thrown; the expression
+   said one, which reads as a crit that forgot to double. Now `2d4+2 (crit)`.
+
+**And one narration fix.** `dm_view`'s combatant table has a class column now,
+for the same reason it gained a pronouns column: what is not in the view is
+guessed. Without it the narrator called the party's wizard "the downed cleric"
+while the actual cleric was standing over him healing him. `party_summary`
+carries the class, but that primes the scene once and is gone by round 1.
+`player_view` is deliberately not changed — it is built four times a turn and
+the error observed was the DM's.
+
+**Not done, deliberately: a rules-lawyer agent watching the transcript.** The
+question that started this was whether to add one. It would have found all
+three phantom bugs above and none of the real one, because it reads the same
+text a human does and the text was the problem. It would also cost a model
+call per action against an engine whose rules are already deterministic and
+already asserted. Anything a watcher could check about the rules is cheaper as
+a test; anything it could check about the *story* — that two speaking kobolds
+died in round 1 and the closing narration called the dead "six dead vermin"
+and said nothing was learned — is a scene-level judgement, one call at scene
+end, not one per turn. That one is still open.
+
+`tests/engine/test_threat_pathing.py` pins the lot, replaying the recorded
+board.

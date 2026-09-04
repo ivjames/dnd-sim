@@ -100,6 +100,23 @@ def average_of(expr: str) -> float:
     return total
 
 
+def _doubled_expr(terms: list[tuple[int, int, int]]) -> str:
+    """Render crit terms as they were actually rolled: "1d8+3" -> "2d8+3".
+
+    The expression is what a reader checks the total against, so it has to name
+    the dice that were thrown. Printing the undoubled expression beside a
+    doubled total reads as a crit that forgot to double.
+    """
+    out = ""
+    for sign, count, faces in terms:
+        body = f"{count * 2}d{faces}" if faces else str(count)
+        if not out:
+            out = ("-" if sign < 0 else "") + body
+        else:
+            out += ("-" if sign < 0 else "+") + body
+    return out or "0"
+
+
 class RNG:
     """Seeded random source. Snapshot with `state()`, restore with `from_state()`."""
 
@@ -197,7 +214,7 @@ class RNG:
                 rolls.append(v)
                 total += sign * v
         return RollResult(
-            expr=f"{expr} (crit)",
+            expr=f"{_doubled_expr(terms)} (crit)",
             rolls=rolls,
             kept=list(rolls),
             modifier=modifier,
