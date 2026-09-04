@@ -25,11 +25,14 @@ the root shell's copies — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
-The one hand step: make sure the keys are in `/etc/environment`. `dndsim
-deploy` also consults `/var/www/ffc/server/.env`, second, because that is
-where this box's platform keys were found on 2026-09-03; the first file that
-holds a key wins, and `DNDSIM_KEY_SOURCE` (below) changes the list. The known
-names, one per LLM platform the app can seat at the table:
+The one hand step: make sure the keys are in `/etc/environment`, which is the
+only file `dndsim deploy` reads them from. Until 2026-09-04 it also consulted
+`/var/www/ffc/server/.env` — another site's untracked runtime state, which is
+not this site's to depend on, and which a deploy would have adopted once and
+then held stale through any rotation there. It no longer does.
+`DNDSIM_KEY_SOURCE` (below) still takes a colon-separated list, so a second
+file remains possible and is now a deliberate act rather than a default. The
+known names, one per LLM platform the app can seat at the table:
 
 | key | platform |
 |---|---|
@@ -229,9 +232,8 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 
 `DNDSIM_FQDN` (default `dndsim.lab980.com`), `DNDSIM_BRANCH` (`main`),
 `DNDSIM_PORT` (`8071`), `DNDSIM_KEY_SOURCE` (colon-separated list of files the
-keys are adopted from, first hit wins; default
-`/etc/environment:/var/www/ffc/server/.env` — set it to just
-`/etc/environment` to stop the second file being consulted),
+keys are adopted from, first hit wins; default `/etc/environment` alone —
+any other file is consulted only because you named it here),
 `DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
 to adopt, report and unset for pm2; default is the eleven known keys above —
 setting it replaces the list, so include `ANTHROPIC_API_KEY`).

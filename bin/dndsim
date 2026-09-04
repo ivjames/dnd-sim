@@ -41,8 +41,8 @@
 #   DNDSIM_BRANCH       default main
 #   DNDSIM_PORT         default 8071
 #   DNDSIM_KEY_SOURCE   colon-separated files the keys are adopted from, first hit wins
-#                       (default /etc/environment:/var/www/ffc/server/.env — the second
-#                       is where this box's platform keys were found on 2026-09-03)
+#                       (default /etc/environment, this box's known-key store — and only
+#                       that: a deploy here must not read another site's runtime state)
 #   DNDSIM_ENV_FILE     default <app dir>/.env    (where they are adopted to)
 #   DNDSIM_KEYS         space-separated list of key names to adopt/unset
 #                       (default: the KNOWN_KEYS list below)
@@ -58,7 +58,7 @@ ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
 PORT="${DNDSIM_PORT:-8071}"
-KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment:/var/www/ffc/server/.env}"
+KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
 IFS=: read -r -a KEY_SOURCES <<< "$KEY_SOURCE"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
 # The platform API keys, one per LLM platform, and the AWS credentials Polly
@@ -130,7 +130,7 @@ needs, and a seat whose platform has no key fails at game creation naming it):
   which costs nothing and sounds like it.
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
-     DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment:/var/www/ffc/server/.env),
+     DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment),
      DNDSIM_ENV_FILE (default ./.env),
      DNDSIM_KEYS (space-separated key names; replaces the known list above).
 USAGE
