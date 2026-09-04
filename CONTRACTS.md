@@ -217,7 +217,7 @@ class GameConfig:
     seed: int
     setting: str                     # free text world/tone
     tone: str = "classic heroic"
-    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "gender"/"age" (voice casting) — none of them reaches the engine
+    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "pronouns"/"age" (voice casting) — none of them reaches the engine
     scenario: dict                   # {"opening": str, "encounters": [{"trigger":"scene_1", "monsters":[{"name":"Goblin","count":4}], "grid": {"width":12,"height":10,"party_start":[[1,4],[1,5],[2,4],[2,5]], "enemy_start":[[10,3],...], "difficult":[[5,5]], "walls":[]}}], "max_scenes": 3}
     dm_model: str; player_model: str; summary_model: str
     max_rounds_per_combat: int = 20
@@ -1479,3 +1479,76 @@ still in the air.
 
 Deaths from failed death saves are untouched. `advance_turn` rolls them
 between turns, where there is no narration for them to wait behind.
+
+### 2026-09-04 — tts/ + web/ — a character states pronouns, not a gender
+
+The narration amendment gave a party member a `gender`, `female` or `male`,
+because Polly's roster is `Female` and `Male` and that is the field
+`DescribeVoices` answers. It is the wrong end of the mapping. What a character
+actually carries — in its own persona, where the shipped-party rule already
+reads it from — is its pronouns; the gender is a second fact somebody has to
+infer from them in order to write the config, and once written it is a fact
+about a person recorded to serve a two-item voice list.
+
+1. **New optional key, `pronouns`, replacing `gender` in every shipped party.**
+   `{"id","name",…,"pronouns": "he/him" | "she/her" | "they/them" | …}`, read
+   by the web layer out of the game's own config and never from the request,
+   for the reason every other voice trait is (the narration amendment's §5:
+   this endpoint spends money). `tts.voices.gender_for_pronouns` is the one
+   place that turns a stated set into a pool: the FIRST pronoun decides, `he` →
+   `PRONOUN_GENDERS["he"]` → the male voices, `she` → the female ones, and
+   everything else → `""`, the whole roster. So `he/him`, `he/him/his` and a
+   bare `He` are one answer, and `she/they` is read the way its author wrote
+   it. Any set at all may be stated; the function answers what the roster can
+   do about it, not what the character is.
+
+   **Not an engine field**, exactly as `gender` was not: `CharacterSheet`
+   (§1.3) is unchanged, `build_character` ignores the key, and neither the DM
+   nor the players see it.
+
+2. **`they/them` becomes sayable, and it is not the same statement as silence.**
+   Both cast from the whole pool — Polly has no third voice and inventing one
+   by pushing the character into one of the two would launder the roster's
+   limitation into a character sheet — but a config could previously only reach
+   that casting by omitting the key, which reads as *nobody decided*. The two
+   are now distinguishable in the config even though the audio is identical,
+   which is the point: the file is also read by people.
+
+3. **`gender` is still read, and stated pronouns beat it.** A game persists its
+   config and its clips are cached per cast, so a row written before this — or
+   a stranger's config — would otherwise re-cast mid-transcript and pay Polly
+   again to do it. `_pool_gender_of` in `web/routes/tts.py` reads `pronouns`
+   where the key is present and non-blank, `gender` otherwise; a stated
+   `pronouns` decides **including when it narrows nothing**, or a config
+   updated to `they/them` would go on being narrowed by the key that update
+   replaced. No example or preset states `gender` any more, and
+   `web/tests/test_tts_api.py` holds them to that.
+
+4. **The panel asks, where it could not ask for a gender.** `#ng-party`'s rows
+   gain a pronoun select beside the age one (`renderPartySeats` /
+   `applyPartySeats`, renamed from `renderPartyAges` / `applyPartyAges`). The
+   age amendment's §5 refused a gender dropdown, and the refusal stands: a
+   picker inviting an operator to choose a *gender* for someone else's
+   character is the opposite of the shipped-party rule. Pronouns are a fact the
+   character already carries, so the row reads one back rather than assigning
+   one — and the default is *not stated*, which, like *adult*, **deletes** its
+   key rather than writing it.
+
+   Three sets are offered and they are not a taxonomy: a config stating
+   something else keeps it verbatim as its own option, and a spelling that
+   differs only in case (`He/Him`) wins over the offered one, so opening the
+   panel and touching nothing cannot restate a character on submit. A config
+   stating only the legacy `gender` shows an unstated pronoun row: filling it
+   in from that key would run the mapping backwards, which is the inference
+   this amendment exists to stop making.
+
+5. **Casting is unchanged; the clips are not.** `she/her` narrows exactly as
+   `female` did and the hash within the narrowed set is untouched, so every
+   converted character keeps the voice it had. But `config_id()` hashes
+   `voices.py`'s own source (§ narration, `source_fingerprint`), and this
+   commit changes that file — so every cached clip is paid for once more, as it
+   was when the age amendment landed. `DND_TTS_MAX_USD` and each game's own
+   budget still bound it.
+
+6. **The browser fallback is unaffected.** `SpeechSynthesisVoice` reports no
+   gender and no age in any browser, so `speech.js` casts as it always did.

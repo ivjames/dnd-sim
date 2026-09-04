@@ -361,10 +361,10 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.party-ages { display: grid; gap: 6px; }
-.party-age { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
-.party-age span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.party-age select { margin: 0; }
+.party-seats { display: grid; gap: 6px; }
+.party-seat { display: grid; grid-template-columns: 1fr 130px 100px; gap: 10px; align-items: center; }
+.party-seat span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-seat select { margin: 0; min-width: 0; }
 
 /* ---------- responsive: iPad portrait & phones ---------- */
 @media (max-width: 1100px) {
@@ -379,6 +379,9 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
   .col-right { flex-direction: column; }
   .transcript { height: 55vh; }
   .row, .row-4 { grid-template-columns: 1fr; }
+  /* three columns leave a phone about 90px for the name; stack instead */
+  .party-seat { grid-template-columns: 1fr 1fr; }
+  .party-seat span { grid-column: 1 / -1; }
   .topbar-right { width: 100%; }
   .cost-bar { width: 50px; }
 }

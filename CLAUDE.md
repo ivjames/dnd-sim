@@ -142,6 +142,14 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   document the app can emit against Amazon's published matrix, and
   `python -m tools.polly_check` sends two real lines from the droplet, with
   `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
+  **A party spec states `pronouns`, not a gender.** `he/him` narrows the pool
+  to Polly's male voices, `she/her` to its female ones, and `they/them` — or
+  any other set, or nothing said — is dealt from the whole roster, because the
+  roster is two voices deep and its limitation is not something to write into
+  someone's character sheet. `gender_for_pronouns` in `tts/voices.py` is the
+  only place that mapping happens and it runs one way; the older `gender` key
+  is still read where a config states it alone. The New game panel has a
+  pronoun row per seat, which a gender picker could never have been.
   **Every seat is cast as an adult unless its party spec says otherwise.**
   Polly's roster carries three children's voices (`Ivy`, `Justin`, `Kevin`) and
   they used to be dealt to anyone, which is how a cleric called Father Bexley

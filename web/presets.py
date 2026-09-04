@@ -59,7 +59,7 @@ BUILTIN: list[dict[str, Any]] = [
                     "abilities": "standard_array",
                     "equipment": "default",
                     "spells": "default",
-                    "gender": "female",
+                    "pronouns": "she/her",
                     "persona": "Stern priestess of the dawn. Heals grudgingly, lectures freely.",
                 },
                 {
@@ -71,7 +71,7 @@ BUILTIN: list[dict[str, Any]] = [
                     "abilities": "standard_array",
                     "equipment": "default",
                     "spells": "default",
-                    "gender": "female",
+                    "pronouns": "she/her",
                     "persona": "Precise elven scholar. Narrates her own spellcasting like a lecture.",
                 },
             ],

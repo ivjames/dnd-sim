@@ -61,23 +61,71 @@ def test_the_panel_offers_a_voice_age_per_seat():
     assert 'id="ng-party"' in html and "$('ng-party')" in js
     # Rendered from the chosen preset's own party, and read back into the
     # config that is submitted — a control that is only rendered is a decoration.
-    assert "renderPartyAges(cfg.party)" in js
-    assert "applyPartyAges(cfg.party)" in js
+    assert "renderPartySeats(cfg.party)" in js
+    assert "applyPartySeats(cfg.party)" in js
     # Rows are built per seat and keyed by index, which is the same order the
     # submitted `cfg.party` is in (it is a deep copy of the preset's).
     assert "'ng-age-' + i" in js
 
 
-def test_choosing_adult_states_nothing_at_all():
-    """An unstated age already casts as an adult, so the panel writes only the
-    answer that changes something. Stating "adult" back into every scenario's
-    config would be writing a fact about a character that nobody chose."""
+def test_the_panel_offers_pronouns_per_seat():
+    """The other trait that narrows who a seat can be dealt.
+
+    A character's pronouns are a fact its persona already carries, which is why
+    this row can be asked at all where a gender picker could not: the panel is
+    reading back what the character says about itself, not choosing for it.
+    """
     js = read(APP_JS)
-    m = re.search(r"function applyPartyAges\((.+?)\n  \}", js, re.S)
-    assert m, "the panel no longer writes ages back"
+    assert "'ng-pronouns-' + i" in js
+    m = re.search(r"var PRONOUN_CHOICES = \[([^\]]*)\]", js)
+    assert m, "the panel no longer offers a pronoun set"
+    assert [s.strip().strip("'") for s in m.group(1).split(",")] == \
+        ["she/her", "he/him", "they/them"]
+
+
+def test_every_pronoun_the_panel_offers_is_one_the_server_reads():
+    """The panel's list and `gender_for_pronouns` have to agree, or the row
+    shows an answer the casting does not act on."""
+    from tts.voices import gender_for_pronouns      # noqa: PLC0415
+
+    js = read(APP_JS)
+    offered = re.findall(r"'([a-z]+/[a-z]+)'", re.search(
+        r"var PRONOUN_CHOICES = \[([^\]]*)\]", js).group(1))
+    assert {said: gender_for_pronouns(said) for said in offered} == {
+        "she/her": "female", "he/him": "male", "they/them": "",
+    }
+
+
+def test_a_config_that_states_something_else_keeps_it_verbatim():
+    """The three offered are not a taxonomy of who a character may be. A
+    scenario that states a set the panel does not list gets that set as its own
+    option, so opening the panel and touching nothing cannot round a character
+    off to a neighbour on submit."""
+    js = read(APP_JS)
+    m = re.search(r"function pronounOptions\((.+?)\n  \}", js, re.S)
+    assert m, "the panel no longer keeps a config's own pronouns"
+    body = m.group(1)
+    assert "opts.push(s)" in body          # unlisted: added rather than dropped
+    assert "opts[at] = s" in body          # listed but spelled differently: theirs wins
+
+
+def test_choosing_adult_or_unstated_states_nothing_at_all():
+    """An unstated age already casts as an adult and unstated pronouns already
+    cast from the whole pool, so the panel writes only the answers that change
+    something. Stating either back into every scenario's config would be
+    writing a fact about a character that nobody chose."""
+    js = read(APP_JS)
+    m = re.search(r"function applyPartySeats\((.+?)\n  \}", js, re.S)
+    assert m, "the panel no longer writes its answers back"
     body = m.group(1)
     assert "member.age = 'child'" in body
     assert "delete member.age" in body
+    assert "member.pronouns = pro.value" in body
+    assert "delete member.pronouns" in body
+    # Stated pronouns drop a legacy `gender`, which the server ignores anyway
+    # once pronouns are present; leaving both would leave the config arguing
+    # with itself.
+    assert "delete member.gender" in body
 
 
 #: Strings the two implementations of "is this a child" have to agree on. The

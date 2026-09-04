@@ -23,6 +23,7 @@ from tts.voices import (
     Voice,
     billable_chars,
     cast_for,
+    gender_for_pronouns,
     hash_key,
     is_child_voice,
     normalize_age,
@@ -149,6 +150,44 @@ def test_an_unstated_gender_is_not_a_guess():
 
     assert normalize_gender("Female") == "female" and normalize_gender(" M ") == "male"
     assert normalize_gender("nonbinary") == ""
+
+
+def test_pronouns_name_a_pool_and_that_is_all_they_name():
+    """A party spec states pronouns; `gender_for_pronouns` is the one place
+    that turns them into a set of voices, and it reads the first pronoun so
+    "he/him", "he/him/his" and a bare "He" are one answer."""
+    for said in ("he/him", "He/Him", " he/him/his ", "he", "he / him", "he him"):
+        assert gender_for_pronouns(said) == "male", said
+    for said in ("she/her", "SHE/HER", "she/her/hers", "she"):
+        assert gender_for_pronouns(said) == "female", said
+
+    # Written the way it is read: the pool, not the character.
+    women = {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+    men = {v.id for v in STANDARD_ENGLISH if v.gender == "Male"} - {"Brian"}
+    for key in ("pc_1", "pc_2", "pc_3", "pc_4", "npc"):
+        assert cast_for(key, STANDARD_ENGLISH, "Brian",
+                        gender_for_pronouns("she/her")).voice_id in women
+        assert cast_for(key, STANDARD_ENGLISH, "Brian",
+                        gender_for_pronouns("he/him")).voice_id in men
+
+
+def test_pronouns_the_roster_has_no_voice_for_leave_the_pool_whole():
+    """Polly reports `Female` and `Male` and there is no third voice to deal.
+
+    they/them, a neopronoun set and a stated nothing are all cast from the
+    whole roster — the same casting, because the alternative is to push a
+    character into one of two boxes the roster happens to have and call that a
+    fact about them.
+    """
+    open_pool = cast_for("pc_1", STANDARD_ENGLISH, "Brian")
+    for said in ("they/them", "they", "ze/hir", "xe/xem", "any", "", None, "  ", "—"):
+        assert gender_for_pronouns(said) == "", said
+        assert cast_for("pc_1", STANDARD_ENGLISH, "Brian", gender_for_pronouns(said)) == open_pool
+
+    # A multi-set is read by its first pronoun, which is the one its author
+    # put first: "she/they" narrows, "they/she" does not.
+    assert gender_for_pronouns("she/they") == "female"
+    assert gender_for_pronouns("they/she") == ""
 
 
 def test_a_gender_the_roster_cannot_answer_is_a_worse_match_not_a_silence():

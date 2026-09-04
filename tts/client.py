@@ -260,10 +260,12 @@ class PollyTTS:
     def cast(self, key: str, gender: str = "", age="") -> Cast:
         """The seat `key` sits in, on the engine that will speak it.
 
-        `gender` and `age` are the character's, where the game states them —
-        they narrow the pool, they do not pick the voice. An unstated age is an
-        adult, so Polly's children's voices are dealt only where a character
-        asks for one.
+        `gender` and `age` come from the character, where the game states them
+        — they narrow the pool, they do not pick the voice. The first is the
+        constraint the character's `pronouns` name (`gender_for_pronouns`, and
+        the older `gender` key it replaced), not a fact about the character. An
+        unstated age is an adult, so Polly's children's voices are dealt only
+        where a character asks for one.
         """
         engine = self.engine_for(key)
         return cast_for(key, self.voices(engine), self.dm_voice, gender, engine, age)
