@@ -313,6 +313,12 @@ body {
 .ctl-note { margin: 8px 0 0; font-size: 12px; font-family: var(--mono); color: var(--ink-dim); }
 .ctl-note.bad { color: #e0a294; }
 .ctl-note[hidden] { display: none; }
+/* The write half of the Controls panel. `.controls` and `.note-form` set
+   `display: flex`, which beats the UA stylesheet's `[hidden]`, so the wrapper
+   is what gets hidden — and it is a plain block for exactly that reason. */
+#write-controls[hidden] { display: none; }
+#write-locked[hidden] { display: none; }
+#write-locked { margin: 0; }
 
 input, select, textarea {
   font: inherit; font-size: 16px; /* 16px avoids iOS zoom-on-focus */

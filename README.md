@@ -164,7 +164,8 @@ world stay the engine's and the DM's.
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
 | `DND_TTS_CACHE_MB` | `512` | Cache ceiling; least-recently-played clips go first. |
 | `DND_TTS_MAX_CHARS` | `400` | Longest line the endpoint will synthesize. |
-| `DND_TTS_MAX_USD` | `10.00` | Server-owned ceiling on a game's spend before narration stops, whatever `budget_usd` says. |
+| `DND_TTS_MAX_USD` | `10.00` | Server-owned ceiling on a game's spend before narration stops, whatever `budget_usd` says. It caps one game; `DND_WRITE_TOKEN` caps how many can be started. |
+| `DND_WRITE_TOKEN` | unset | The shared secret the write routes require in an `X-Dnd-Token` header: `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. **Unset → those routes answer 503**; reading a game, listing games, the SSE stream, `/api/tts` and the narration hold are anonymous either way. Any long random string (`openssl rand -hex 32`). |
 
 Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
 may name a model on any platform above — the platform is chosen from the
@@ -261,13 +262,14 @@ seating a model for real money.
 GET  /                                  spectator UI
 GET  /api/health                        {"ok":true,"mock":bool,"games_running":n}
 GET  /api/presets                       [{name, description, config}]
-POST /api/games          {config}       → 201 {"id","status"}  (creates + starts)
+GET  /api/auth                          {"writes":"token"|"unconfigured", header, authenticated}
+POST /api/games          {config}       → 201 {"id","status"}  (creates + starts)   ← token
 GET  /api/games                         [{id, status, created_at, title, round, cost_usd}]
 GET  /api/games/<id>                    snapshot + config + ledger
 GET  /api/games/<id>/events?after=seq   transcript from SQLite
 GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on finish
-POST /api/games/<id>/pause|resume|stop  → 202
-POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)
+POST /api/games/<id>/pause|resume|stop  → 202                                       ← token
+POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)             ← token
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
@@ -276,6 +278,51 @@ GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
 resumes from `Last-Event-ID` instead of replaying the whole game. Heartbeat
 comments go out every 15s.
+
+### Write access
+
+Reading is anonymous and stays that way — that is what the site is. The routes
+marked `← token` above mutate a game or spend on it, and they require a shared
+secret in a header:
+
+```bash
+curl -H "X-Dnd-Token: $DND_WRITE_TOKEN" -H 'Content-Type: application/json' \
+     -d "{\"config\": $(cat examples/goblin_ambush.json)}" \
+     https://dndsim.lab980.com/api/games
+```
+
+`POST /api/games` starts a real game against real API keys, and
+`POST /api/games/<id>/note` feeds up to 2,000 characters into a `dm_note` that
+the page speaks at Polly's neural rate — roughly 3¢ a call. Left open, the
+per-game cap below bounds one game and nothing bounds how many are started.
+
+- Wrong or missing header → `401 {"code": "unauthorized"}`.
+- **`DND_WRITE_TOKEN` unset → `503 {"code": "writes_unconfigured"}`.** It fails
+  closed: the app starts, the page loads, every read and the stream work, and a
+  running game keeps running and stays audible — but nobody can start a new one
+  until the token is set. Failing open would be a hole that looks closed.
+- The token is read from the header only, never a query string: a query string
+  is in nginx's access log, in `Referer` and in the browser's history.
+- `GET /api/auth` reports whether this server takes a token and whether the
+  caller's is accepted. It never echoes the token.
+
+Three POSTs deliberately take no token. `POST /api/games/<id>/hold` is the
+narration lease — every anonymous listener renews one every few seconds, it
+spends nothing, it leaves `status` alone and it expires by itself.
+`GET /api/games/<id>/tts` does spend, and stays open because an anonymous
+spectator cannot hear the game without it and what it spends is capped per line
+(`DND_TTS_MAX_CHARS`), per game (`min(budget_usd, DND_TTS_MAX_USD)`) and once
+for good by the on-disk cache.
+
+In the browser: the New game button, the pause/resume/stop row and the DM-note
+form are not rendered until the page holds a token the server accepts — an
+anonymous visitor never sees a control that can only 401. **Unlock** takes the
+token, validates it against `/api/auth` before keeping it, and stores it in
+`localStorage` for that browser only; **Forget** clears it.
+
+There is no per-writer identity and no revocation short of rotating the value
+in `.env` and restarting. With one writer, that is the whole story rather than
+an oversight.
 
 ## Cost control
 
@@ -381,10 +428,10 @@ narration is a few cents.
 
 Narration stops at the **lower** of the game's own `budget_usd` and
 `DND_TTS_MAX_USD` (default $10), a ceiling the server owns and a submitted
-config cannot raise — `POST /api/games` takes no credential, so left alone a
-stranger picks the ceiling (`TTS-COSTS.md` §1). That bounds one game; it does
-not bound how many games a stranger may create, which needs spectator
-authentication the app does not have.
+config cannot raise — `budget_usd` comes from the caller, so left alone a
+stranger picks the ceiling (`TTS-COSTS.md` §1). That bounds one game; how many
+games can be started is bounded separately, by the write token on `POST
+/api/games` (see "Write access" above).
 
 A `budget_usd` that is not a finite number is refused outright at game
 creation: `float("NaN")` passes coercion and then compares False against

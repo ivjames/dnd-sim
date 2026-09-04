@@ -8,6 +8,8 @@ Env:
     DND_SIM_DB        SQLite path (default ./data/dndsim.sqlite3)
     DND_SIM_MOCK      "1" → MockLLMClient, no API calls
     ANTHROPIC_API_KEY required for live mode (on lab980: /etc/environment)
+    DND_WRITE_TOKEN   shared secret for the write routes (see web/auth.py).
+                      Unset → reads and the stream still work, writes are 503.
     DND_TTS           "0" → no server voices; "1" → on even for mock games
     DND_TTS_*         Polly engine/region/voice/cache — see tts/client.py
     AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION   read by boto3
@@ -22,6 +24,7 @@ from typing import Any, Callable
 
 from flask import Flask, jsonify
 
+from web.auth import ENV_VAR as WRITE_TOKEN_ENV
 from web.db import Database
 from web.factory import default_game_factory, mock_mode
 from web.registry import GameRegistry
@@ -53,6 +56,12 @@ def create_app(
     app.config["DND_REGISTRY"] = GameRegistry()
     app.config["DND_GAME_FACTORY"] = game_factory or default_game_factory
     app.config["DND_MOCK"] = mock_mode()
+
+    # The shared secret the write routes require (web/auth.py). Snapshotted
+    # here so tests can inject one and so a route never reads the environment
+    # mid-request; absent, every write is a 503 and every read is unaffected.
+    if WRITE_TOKEN_ENV not in app.config:
+        app.config[WRITE_TOKEN_ENV] = os.environ.get(WRITE_TOKEN_ENV, "")
 
     # Server-rendered narration. `None` means the page uses the browser's own
     # voices, which is the whole fallback: nothing below this line is required
@@ -109,6 +118,12 @@ def main() -> None:
              app.config["DND_DB"].path)
     if not app.config["DND_MOCK"] and not os.environ.get("ANTHROPIC_API_KEY"):
         log.warning("ANTHROPIC_API_KEY not set — live games will fail to start")
+    if not app.config.get(WRITE_TOKEN_ENV):
+        log.warning(
+            "%s not set — creating games, notes and pause/resume/stop will "
+            "answer 503; reading games and the stream are unaffected",
+            WRITE_TOKEN_ENV,
+        )
     tts = app.config.get("DND_TTS")
     if tts is not None and tts.available():
         log.info("server voices: polly %s/%s (cache %s)", tts.engine, tts.language, tts.cache.root)

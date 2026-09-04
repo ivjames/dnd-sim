@@ -6,7 +6,8 @@ import threading
 import time
 
 from web.app import create_app
-from web.tests.conftest import fake_factory
+from web.auth import ENV_VAR as WRITE_TOKEN_ENV
+from web.tests.conftest import WRITE_TOKEN, fake_factory, write_client
 from web.tests.test_api import create, wait_for
 
 
@@ -99,14 +100,15 @@ def test_stream_last_event_id_header(client, sample_config):
 
 
 def test_stream_of_dead_game_replays_from_db_and_ends(db_file, sample_config):
-    app1 = create_app(game_factory=fake_factory, db_path=db_file)
-    c1 = app1.test_client()
+    cfg = {WRITE_TOKEN_ENV: WRITE_TOKEN}
+    app1 = create_app(game_factory=fake_factory, db_path=db_file, config=dict(cfg))
+    c1 = write_client(app1)
     gid = create(c1, sample_config)["id"]
     wait_for(lambda: len(c1.get("/api/games/%s/events?after=-1" % gid).get_json()) >= 7)
     app1.config["DND_REGISTRY"].shutdown()
 
-    app2 = create_app(game_factory=fake_factory, db_path=db_file)
-    c2 = app2.test_client()
+    app2 = create_app(game_factory=fake_factory, db_path=db_file, config=dict(cfg))
+    c2 = write_client(app2)
     _, body = read_stream(c2, "/api/games/%s/stream?after=-1" % gid, timeout=10)
     events = parse_events(body)
     assert events[-1][1] == "end"

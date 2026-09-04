@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 
 from web.app import create_app
-from web.tests.conftest import fake_factory
+from web.auth import ENV_VAR as WRITE_TOKEN_ENV
+from web.tests.conftest import WRITE_TOKEN, fake_factory, write_client
 
 
 def wait_for(fn, timeout=5.0, interval=0.02):
@@ -165,15 +166,16 @@ def test_dm_note(client, sample_config):
 
 
 def test_restart_marks_stale_games_stopped(db_file, sample_config):
-    app1 = create_app(game_factory=fake_factory, db_path=db_file)
-    c1 = app1.test_client()
+    cfg = {WRITE_TOKEN_ENV: WRITE_TOKEN}
+    app1 = create_app(game_factory=fake_factory, db_path=db_file, config=dict(cfg))
+    c1 = write_client(app1)
     gid = create(c1, sample_config)["id"]
     app1.config["DND_DB"].set_status(gid, "running")
     app1.config["DND_REGISTRY"].shutdown()
 
     # fresh process: registry is empty, so nothing can still be running
-    app2 = create_app(game_factory=fake_factory, db_path=db_file)
-    c2 = app2.test_client()
+    app2 = create_app(game_factory=fake_factory, db_path=db_file, config=dict(cfg))
+    c2 = write_client(app2)
     row = [g for g in c2.get("/api/games").get_json() if g["id"] == gid][0]
     assert row["status"] == "stopped"
     assert row["live"] is False

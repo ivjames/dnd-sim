@@ -36,7 +36,9 @@
       <span class="cost-bar"><i style="width:0%"></i></span>
       <span class="cost-tokens">0 tok</span>
     </div>
-    <button id="btn-new" class="btn btn-primary" type="button">New game</button>
+    <button id="btn-unlock" class="btn" type="button" hidden
+            title="Enter the write token to create games and talk to the table">Unlock</button>
+    <button id="btn-new" class="btn btn-primary" type="button" hidden>New game</button>
   </div>
 </header>
 
@@ -118,22 +120,45 @@
     </div>
     <div class="panel">
       <h2 class="panel-title">Controls</h2>
-      <div class="controls">
-        <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
-        <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
-        <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
-      </div>
       <p id="ctl-note" class="ctl-note" hidden></p>
-      <form id="note-form" class="note-form">
-        <label class="lbl" for="note-text">DM note from the table</label>
-        <textarea id="note-text" rows="2" maxlength="2000"
-                  placeholder="A raven lands on the cart&hellip;"></textarea>
-        <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
-      </form>
+      <p id="write-locked" class="hint" hidden></p>
+      <div id="write-controls" hidden>
+        <div class="controls">
+          <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
+          <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
+          <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
+        </div>
+        <form id="note-form" class="note-form">
+          <label class="lbl" for="note-text">DM note from the table</label>
+          <textarea id="note-text" rows="2" maxlength="2000"
+                    placeholder="A raven lands on the cart&hellip;"></textarea>
+          <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
+        </form>
+      </div>
       <p id="conn" class="conn conn-off">stream: offline</p>
     </div>
   </section>
 </main>
+
+<!-- UNLOCK PANEL -->
+<div id="unlock" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ul-title">
+    <h2 id="ul-title">Write token</h2>
+    <p class="hint">Watching a game needs nothing. Starting one, sending the table a note
+      or pausing it needs the server&rsquo;s write token &mdash; <code>DND_WRITE_TOKEN</code>
+      on the droplet. It is kept in this browser only.</p>
+    <form id="unlock-form">
+      <label class="lbl" for="ul-token">Token</label>
+      <input id="ul-token" type="password" autocomplete="off" spellcheck="false">
+      <p id="ul-error" class="err" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="ul-forget" class="btn">Forget</button>
+        <button type="button" id="ul-cancel" class="btn">Cancel</button>
+        <button type="submit" id="ul-save" class="btn btn-primary">Unlock</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- NEW GAME PANEL -->
 <div id="newgame" class="modal" hidden>

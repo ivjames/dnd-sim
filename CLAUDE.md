@@ -127,10 +127,22 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   Charged to the game's `budget_usd` as `by_role.narrator`, every clip
   cached in `data/tts` so a line is paid for once, and stopped at the lower of
   the game's `budget_usd` and the server-owned `DND_TTS_MAX_USD` (default $10),
-  because `POST /api/games` is unauthenticated and the config's budget is
-  whatever the caller asked for. `DND_TTS=0` turns it off; mock games never
+  because the config's budget is whatever the caller asked for. That caps one
+  game; how many games can be started is capped by `DND_WRITE_TOKEN` — see
+  **Write access** below. `DND_TTS=0` turns it off; mock games never
   touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
   its §6 records what Polly changed and what is still open.
+- **Writes take a token; reads never do.** `POST /api/games`, `/note`,
+  `/pause`, `/resume` and `/stop` require `X-Dnd-Token` to match
+  `DND_WRITE_TOKEN` (`web/auth.py`). Everything a spectator does stays
+  anonymous — reading a game, listing games, the SSE stream, `/api/tts`, the
+  paid narration endpoint and the narration hold — because the public
+  spectator UI is the product. **Unset, the token fails closed**: writes answer
+  503 and everything else works, so a deploy that forgets it does not take the
+  site down but nobody can start a game until it is in
+  `/var/www/dndsim/.env`. The page keeps it in `localStorage` and hides the New
+  game button, the pause/resume/stop row and the note form until the server
+  accepts it.
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal
