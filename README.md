@@ -215,6 +215,15 @@ one voice; each PC gets its own, picked deterministically from the voices the
 browser has, with a pitch/rate nudge when there are too few to go round (an
 iPad often has one or two).
 
+A monster that can speak — one whose SRD stat block names a language it uses
+aloud, so a goblin or an ogre but not a wolf or a zombie — is cast instead from
+the novelty voices the OS ships beside the real ones (Bubbles, Trinoids, Zarvox
+and the rest, on Apple devices), one per monster, pitch and rate spread wide so
+the ogre and the goblin still differ when that handful runs out. Nobody else is
+ever dealt one: not the DM, not a PC, not an NPC that isn't a monster. A device
+that ships none — Windows, Android, most of Linux — leaves speaking monsters on
+the shared NPC voice, as before.
+
 ### The playhead
 
 Narration is a **playhead over the transcript**, not a queue of things to say:

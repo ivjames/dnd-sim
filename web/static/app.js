@@ -182,7 +182,12 @@
     }
     if (node) node.setAttribute('data-seq', String(ev.seq));
     voiceOnEvent();
-    if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
+    // Monsters are spawned mid-game and announced by this one event; every
+    // later trigger is debounced 700 ms, which at tempo_ms 0 is several turns
+    // of a creature the page has never heard of — no name for it, no voice
+    // for it. Fetch on the spawn itself instead of waiting.
+    if (ev.kind === 'system' && ev.data && ev.data.encounter) refreshSnapshot();
+    else if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
   }
 
   function nameOf(id) {
@@ -569,7 +574,9 @@
 
   // {id: true} for every party member: the snapshot's combatants with side
   // 'party', plus the config's party ids when the snapshot carries them (before
-  // combat the combatant list can be empty). Cached — voicePump asks per line.
+  // combat the combatant list can be empty), the display names, and the
+  // monsters whose stat block names a language they can speak — the seats a
+  // novelty voice may be cast to. Cached: voicePump asks for it per line.
   function voiceCtx() {
     if (!V.ctx) {
       var cs = combatants(), names = {}, party = {};
@@ -580,7 +587,7 @@
       });
       var cfg = (S.game || {}).config || {};
       if (Array.isArray(cfg.party)) cfg.party.forEach(function (m) { if (m && m.id) party[m.id] = true; });
-      V.ctx = { names: names, party: party };
+      V.ctx = { names: names, party: party, monsters: Speech.speakingMonsters(cs) };
     }
     return V.ctx;
   }
@@ -727,7 +734,11 @@
       V.current = cur;
       if (node) { node.classList.add('speaking'); voiceFollow(node); }
       voiceSavePos();
-      voiceSpeakChunk(cur, voiceProfile(Speech.voiceKeyFor(ev, voiceCtx().party)));
+      // Cast at the playhead, not on arrival: a monster's first line can beat
+      // the snapshot that first names it, and every moment the line waits its
+      // turn is a moment that fetch has to land.
+      var ctx = voiceCtx();
+      voiceSpeakChunk(cur, voiceProfile(Speech.voiceKeyFor(ev, ctx.party, ctx.monsters)));
       voiceRenderControls();
       return;
     }

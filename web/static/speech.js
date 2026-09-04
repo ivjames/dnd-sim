@@ -87,7 +87,8 @@
         if (!sp.said) return null;
         var who = sp.who || nameFrom(names, ev.actor);
         // PCs have their own voice; the voice is the attribution. Everyone
-        // else shares the NPC voice, so keep the name.
+        // else keeps the name: NPCs share one voice, and a speaking monster's
+        // novelty voice is a costume rather than a name anyone can place.
         return isPC(ev.actor, party) || !who ? sp.said : who + ': ' + sp.said;
       }
 
@@ -198,13 +199,59 @@
   }
 
   // Which voice speaks the event: the DM narrates everything except a line of
-  // dialogue, which belongs to its speaker — each PC its own voice, all
-  // monsters/NPCs one shared voice.
-  function voiceKeyFor(ev, party) {
+  // dialogue, which belongs to its speaker — each PC its own voice, each
+  // monster that can speak its own, every other NPC one shared voice.
+  // `monsters` is the {id: true} map from speakingMonsters(); without it
+  // nothing is a monster and the old shared NPC voice is what everyone gets.
+  var MONSTER_PREFIX = 'monster:';
+
+  function isMonsterKey(key) {
+    return String(key || '').indexOf(MONSTER_PREFIX) === 0;
+  }
+
+  function voiceKeyFor(ev, party, monsters) {
     if (!ev) return 'dm';
     if (ev.kind !== 'dialogue') return 'dm';
     if (!ev.actor || ev.actor === 'dm') return 'dm';
-    return isPC(ev.actor, party) ? ev.actor : 'npc';
+    if (isPC(ev.actor, party)) return ev.actor;
+    return (monsters && monsters[ev.actor]) ? MONSTER_PREFIX + ev.actor : 'npc';
+  }
+
+  // Whether a stat block's `languages` string names something the creature can
+  // say out loud. SRD writes it as prose — "Common, Goblin", "—", "any one
+  // language (usually Common)", "understands all it knew in life but can't
+  // speak" — so this reads the two ways it says no: nothing at all, and
+  // understanding without speech. A parenthetical is dropped first, which
+  // leaves "— (telepathy 60 ft.)" as the dash it is.
+  var NO_LANGUAGE = { '': 1, '-': 1, '\u2014': 1, '\u2013': 1, 'none': 1, 'n/a': 1 };
+  var CANNOT_SPEAK = /\b(?:can'?t|cannot|does\s?n'?t|do\s?n'?t|unable to)\s+speak\b/;
+
+  function canSpeakLanguages(languages) {
+    var s = String(languages === null || languages === undefined ? '' : languages)
+      .toLowerCase()
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/\([^()]*\)/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (NO_LANGUAGE[s]) return false;
+    return !CANNOT_SPEAK.test(s);
+  }
+
+  // {id: true} for every combatant that is a monster and can speak, built from
+  // the snapshot's combatants (a map of id → combatant, or an array of them).
+  // "Monster" is the engine's own word: `kind === 'monster'`, which is every
+  // stat-blocked creature at the table whichever side it is on. A monster with
+  // no stat block reaching the page is left out rather than guessed at.
+  function speakingMonsters(combatants) {
+    var out = {};
+    if (!combatants || typeof combatants !== 'object') return out;
+    Object.keys(combatants).forEach(function (k) {     // ids, or array indices
+      var c = combatants[k];
+      if (!c || typeof c !== 'object' || c.kind !== 'monster') return;
+      var id = c.id || (Array.isArray(combatants) ? null : k);
+      if (id && canSpeakLanguages((c.stat_block || {}).languages)) out[String(id)] = true;
+    });
+    return out;
   }
 
   // FNV-1a, 32-bit, so the same actor id lands on the same voice every load.
@@ -229,10 +276,14 @@
   //   pc_*/npc → hash into the remaining same-language voices; when there are
   //   too few to tell actors apart (iPad Safari often ships one or two), vary
   //   pitch and rate deterministically as well.
+  //   monster:<id> → hash into the same-language novelty voices instead,
+  //   falling back to the npc voice on a device that has none.
   // Apple ships novelty voices in the same list as the real ones — Bubbles
   // gurgles, Whisper has no voicing, Zarvox is a robot. None of them can carry
-  // narration, so they are never cast at the table. The name may arrive with a
-  // language in parentheses ("Bubbles (English (US))"), so match the head of it.
+  // narration, so they are never cast for the DM, a PC or an ordinary NPC.
+  // A monster that can speak is the one seat where that is the point: the
+  // goblin *should* sound wrong. The name may arrive with a language in
+  // parentheses ("Bubbles (English (US))"), so match the head of it.
   var NOVELTY = {
     'albert': 1, 'bad news': 1, 'bahh': 1, 'bells': 1, 'boing': 1, 'bubbles': 1,
     'cellos': 1, 'deranged': 1, 'good news': 1, 'hysterical': 1, 'jester': 1,
@@ -244,6 +295,24 @@
     var n = String((v && v.name) || '').toLowerCase().trim();
     n = n.replace(/\s*\(.*$/, '').trim();
     return !!NOVELTY[n];
+  }
+
+  // Deal one voice out of `pool` for a key, deterministically.
+  // Always a small per-actor pitch offset (two actors can hash to one voice);
+  // with too few voices to go round, lean on pitch and rate much harder.
+  function castFrom(key, pool, few) {
+    var h = hashString(key);
+    var pitch = Math.round((1 + (((h >>> 8) % 5) - 2) * 0.05) * 100) / 100;   // 0.90 … 1.10
+    var rate = 1;
+    if (few) {
+      pitch = Math.round((0.75 + ((h >>> 8) % 6) * 0.1) * 100) / 100;   // 0.75 … 1.25
+      rate = Math.round((0.92 + ((h >>> 16) % 5) * 0.04) * 100) / 100;  // 0.92 … 1.08
+    }
+    return { voice: pool[h % pool.length], pitch: pitch, rate: rate, key: key };
+  }
+
+  function sameLang(list, pref) {
+    return list.filter(function (v) { return langPrefix(v.lang) === pref; });
   }
 
   function voiceProfileFor(key, voices, lang) {
@@ -260,7 +329,7 @@
     // real voice anywhere falls back to them, rather than going silent.
     var real = all.filter(function (v) { return !isNoveltyVoice(v); });
     var base = real.length ? real : all;
-    var pool = base.filter(function (v) { return langPrefix(v.lang) === pref; });
+    var pool = sameLang(base, pref);
     if (!pool.length) pool = base;
     if (!pool.length) return { voice: null, pitch: 1, rate: 1, key: key };
 
@@ -268,20 +337,31 @@
     for (var i = 0; i < pool.length; i++) { if (pool[i]['default']) { dmIdx = i; break; } }
     if (key === 'dm') return { voice: pool[dmIdx], pitch: 1, rate: 1, key: key };
 
+    // A monster that can speak is cast out of the novelty voices instead —
+    // one each, so the ogre and the goblin are told apart by voice. Only
+    // same-language ones: the reason a real voice beats Bubbles for narration
+    // is that it can be understood, and an English Zarvox reading French is
+    // the same failure. A device with no novelty voice to give (Windows,
+    // Android, most of Linux) leaves the monster on the shared NPC voice,
+    // exactly as before.
+    var castKey = key;
+    if (isMonsterKey(key)) {
+      var gimmicks = sameLang(all.filter(isNoveltyVoice), pref);
+      // Always the wide pitch/rate spread here, however many novelty voices
+      // the device has: there are rarely more than a handful, two monsters
+      // hashing to one of them is common, and a monster has no natural pitch
+      // to distort — where a PC would sound processed, the ogre just sounds
+      // bigger than the goblin.
+      if (gimmicks.length) return castFrom(key, gimmicks, true);
+      castKey = 'npc';
+    }
+
     var others = pool.filter(function (v, idx) { return idx !== dmIdx; });
     var few = others.length < 4;          // not enough distinct voices for a party
     if (!others.length) { others = pool; few = true; }
-    var h = hashString(key);
-    var voice = others[h % others.length];
-    // Always a small per-actor pitch offset (two PCs can hash to one voice);
-    // with too few voices to go round, lean on pitch and rate much harder.
-    var pitch = Math.round((1 + (((h >>> 8) % 5) - 2) * 0.05) * 100) / 100;   // 0.90 … 1.10
-    var rate = 1;
-    if (few) {
-      pitch = Math.round((0.75 + ((h >>> 8) % 6) * 0.1) * 100) / 100;   // 0.75 … 1.25
-      rate = Math.round((0.92 + ((h >>> 16) % 5) * 0.04) * 100) / 100;  // 0.92 … 1.08
-    }
-    return { voice: voice, pitch: pitch, rate: rate, key: key };
+    var prof = castFrom(castKey, others, few);
+    prof.key = key;
+    return prof;
   }
 
   // Split a phrase into utterance-sized pieces at sentence boundaries.
@@ -312,6 +392,9 @@
     phraseFor: phraseFor,
     voiceKeyFor: voiceKeyFor,
     voiceProfileFor: voiceProfileFor,
+    canSpeakLanguages: canSpeakLanguages,
+    speakingMonsters: speakingMonsters,
+    isMonsterKey: isMonsterKey,
     chunksFor: chunksFor,
     isStory: isStory,
     isMechanic: isMechanic,
