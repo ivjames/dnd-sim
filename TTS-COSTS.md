@@ -107,8 +107,13 @@ Two consequences:
   and prices tokens; a character-priced, non-LLM cost needs a second entry
   point and a `narrator` role. That is a `CONTRACTS.md` amendment, not a
   quiet change.
-- `budget_usd: 1.00` in the example configs would no longer buy a whole game
-  with narration on. Either it rises or narration is budgeted separately.
+- The example budgets absorb it unevenly. `crypt.json` budgets $1.50 against
+  $0.86 of model spend, so Aura-1 at full narration ($0.35) still lands inside
+  it at $1.21 — but ElevenLabs v3 ($2.31) would take it to $3.18 and halt the
+  game. `goblin_ambush.json` is a separate problem TTS did not cause: it
+  budgets $1.00 against $1.47 of model spend, and run at its own budget it
+  stops at `budget_exceeded` 408 events into 610. Narration would only make an
+  existing shortfall louder.
 
 ## 4. The two design facts
 
@@ -126,21 +131,36 @@ Storage is cheap by comparison: 35 minutes at 48 kbps is ~13 MB per game, so
 100 cached games is ~1.3 GB in `data/` — worth a retention policy, not worth
 worrying about.
 
-**The phrasing lives in JavaScript.** `phraseFor()` is ~400 lines in
-`web/static/speech.js`, and it decides both what is said and which voice says
-it. Server-side synthesis needs that same string. Two ways:
+**The phrasing lives in JavaScript, and so does the casting.**
+`web/static/speech.js` is 411 lines and splits three ways. `phraseFor()`
+(lines 74-198) decides *what* is said and returns only text. `voiceKeyFor()`
+(211-217), with `speakingMonsters()` and `canSpeakLanguages()` beside it,
+decides *who* says it. Everything from `hashString()` to `voiceProfileFor()`
+(258-366) maps a voice key onto whatever voices the browser happens to have.
+
+That third part is not portable and is not meant to be: server-side it becomes
+a fixed key → vendor-voice table. Which also kills a feature — the speaking
+monsters are cast from the OS novelty voices (Bubbles, Trinoids, Zarvox), and
+no vendor sells those. About 275 lines are browser-independent and would have
+to move; ~110 are replaced rather than ported.
+
+Two ways to get the phrase to the vendor:
 
 - **`POST /api/tts` with the phrase.** The page sends the text and voice key it
-  already computed; the server caches by hash and returns audio. Phrasing stays
-  in one place, the cache is shared across spectators, and it is a small
-  change. The risk is an open TTS proxy — it must be bound to a live game id
-  and rate-limited, or it is a free TTS API for anyone who finds it.
-- **Port `phraseFor()` to Python** and synthesise ahead of the playhead. Better
-  latency and no proxy to abuse, at the price of duplicating the phrasing logic
-  or moving it wholesale, which is a contract change and a large one.
+  already computed; the server caches by hash and returns audio. Phrasing and
+  casting stay in one place and the cache is shared across spectators. But
+  `POST /api/games` in `web/routes/api.py` takes no credential, so anyone can
+  mint a live game id — binding the endpoint to one gates nothing, and rate
+  limiting only caps how fast a stranger spends the credits. Making this safe
+  means authenticating spectators, which the app does not currently do at all.
+- **Port phrasing and casting to Python** and derive the phrase server-side
+  from `(game_id, seq)`, so no caller-supplied text ever reaches the vendor.
+  Better latency, nothing to abuse, and it is what you would need anyway for
+  narration without a browser attached — at the price of ~275 lines moved and
+  a `CONTRACTS.md` amendment.
 
-The first is the cheaper path and the one to cost against. The second is what
-you would do if narration ever needed to run without a browser attached.
+The first looked cheaper until the auth question; it is only cheaper if
+spectator authentication already exists, and it does not. Cost the second.
 
 ## 5. Recommendation
 
