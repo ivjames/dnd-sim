@@ -560,6 +560,28 @@
     return node;
   }
 
+  // Whose turn it is, or nothing. An initiative order OUTLIVES the fight it was
+  // rolled for — `combat_end` sets the mode back to exploration and leaves the
+  // order in the state — so both the order and the turn pointer are only ever
+  // read while the mode says combat. Read them after, and the roster spends the
+  // next scene sorted by a finished fight with a ring around whoever happened
+  // to be acting when it ended.
+  function inCombat() {
+    var st = gameState();
+    return st.mode === 'combat' && (st.initiative || []).length > 0;
+  }
+
+  function activeCombatantId() {
+    if (!inCombat()) return null;
+    var st = gameState();
+    var init = st.initiative || [];
+    if (typeof st.turn_index === 'number' && init.length) {
+      var cur = init[st.turn_index % init.length];
+      if (cur) return Array.isArray(cur) ? cur[0] : (cur.id || null);
+    }
+    return st.active_id || S.activeId || null;
+  }
+
   // The table: everyone at it, in initiative order, in one list. Three panels
   // of the same people sorted three ways is what this replaces — the order is
   // the thing you read a fight in, and a combatant's side, hit points and
@@ -570,14 +592,9 @@
   function renderTable() {
     var box = $('roster');
     clear(box);
-    var st = gameState();
     var cs = combatants();
-    var init = st.initiative || [];
-    var activeId = st.active_id || S.activeId;
-    if (typeof st.turn_index === 'number' && init.length) {
-      var cur = init[st.turn_index % init.length];
-      if (cur) activeId = Array.isArray(cur) ? cur[0] : (cur.id || activeId);
-    }
+    var init = inCombat() ? (gameState().initiative || []) : [];
+    var activeId = activeCombatantId();
 
     // In initiative order where there is one, and anyone the order has not
     // heard of (a monster that walked in mid-round) after it, never dropped.
@@ -711,7 +728,7 @@
     }
 
     var cs = combatants();
-    var activeId = st.active_id || S.activeId;
+    var activeId = activeCombatantId();
     Object.keys(cs).forEach(function (id) {
       var c = cs[id] || {};
       var pos = c.position;
@@ -2343,6 +2360,22 @@
       transcriptEl().classList.toggle('hide-mech', !this.checked);
     });
     window.addEventListener('resize', function () { drawGrid(); });
+    // The canvas is sized in pixels by drawGrid, so it goes stale whenever its
+    // box changes without the window doing anything — and the box changes a
+    // lot: unlocking the write controls or a TTS probe revealing the narration
+    // bar grows the feed, and the board gives that height up out of the map.
+    // The observer is the general answer; the guard is because a redraw can
+    // itself change the box by a scrollbar's width, and that must not loop.
+    if (window.ResizeObserver) {
+      var wrap = $('grid').parentElement;
+      var lastW = 0, lastH = 0;
+      new ResizeObserver(function () {
+        var w = wrap.clientWidth, h = wrap.clientHeight;
+        if (w === lastW && h === lastH) return;
+        lastW = w; lastH = h;
+        drawGrid();
+      }).observe(wrap);
+    }
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) {
         // Backgrounded synthesis is suspended and comes back garbled, so stop —

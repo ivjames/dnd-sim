@@ -339,7 +339,16 @@ body {
 .card.side-party   { border-left: 3px solid var(--party); }
 .card.side-enemy   { border-left: 3px solid var(--enemy); }
 .card.side-neutral { border-left: 3px solid var(--neutral); }
-.card.is-active { border-color: var(--accent-line); box-shadow: inset 3px 0 0 var(--accent); }
+/* Active takes the other three edges, never the left one: the stripe is the
+   only thing saying which side a combatant is on now that the roster is one
+   list, and `border-color` would have taken it from exactly the card you are
+   looking at. The accent sits just inside it as the inset shadow. */
+.card.is-active {
+  border-top-color: var(--accent-line);
+  border-right-color: var(--accent-line);
+  border-bottom-color: var(--accent-line);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .card.is-down .card-name { color: var(--ink-dim); }
 /* The initiative roll, as the card's first column. A fixed width so the names
    line up down the list rather than stepping in and out by a digit. */
