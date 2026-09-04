@@ -200,7 +200,8 @@ def test_an_age_is_read_for_intent_not_guessed_at():
     assert normalize_age("elder") == "adult" and normalize_age("elderly") == "adult"
     # Nothing said, and nothing that can be read as an age, are the same thing:
     # no constraint. Both cast as an adult, because that is what the pool does.
-    for said in ("", None, "  ", "ancient-ish", "old enough", True, False, 0, -3, 4000, float("nan")):
+    for said in ("", None, "  ", "ancient-ish", "old enough", True, False, 0, -3, 4000,
+                 float("nan"), float("inf"), "1e999", 10 ** 400, [12], {"years": 9}):
         assert normalize_age(said) == "", said
 
 

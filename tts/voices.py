@@ -244,18 +244,22 @@ def normalize_age(age) -> str:
     if isinstance(age, bool):        # True is not an age; bool is an int in Python
         return ""
     if isinstance(age, (int, float)):
-        years: float | None = float(age)
+        raw: object = age
     else:
         said = str(age or "").strip().lower()
         if not said:
             return ""
         if said in AGES:
             return AGES[said]
-        try:
-            years = float(said)
-        except ValueError:
-            return ""
-    if years is None or years != years or years <= 0 or years > 1000:
+        raw = said
+    try:
+        years = float(raw)               # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is not hypothetical: a JSON config may carry an
+        # integer too big for a float, and this endpoint answers anonymous
+        # callers — an unreadable age is "nothing said", never a 500.
+        return ""
+    if years != years or years <= 0 or years > 1000:      # NaN, and nothing anyone has been
         return ""
     return "child" if years <= CHILD_MAX_AGE else "adult"
 
