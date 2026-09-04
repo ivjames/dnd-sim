@@ -1927,7 +1927,14 @@ def source_fingerprint() -> str     # folded into `voices.source_fingerprint`
    configured engine to have a roster — still holds and is still exercised,
    because the split is still reachable.
 
-6. **`DND_TTS_MONSTER_FX=0` restores the whole old arrangement**: no
+6. **`allowed_ssml(engine)` is the one place the `ENGINE_SSML` lookup happens**,
+   its default included. `ssml_for` writes the document with it and
+   `tools/polly_check.py` reports what the document will contain with it, so
+   the two cannot disagree about an engine neither recognises — which they did:
+   the tool spelled the fallback as "no tags" where `ssml_for` writes
+   standard's.
+
+7. **`DND_TTS_MONSTER_FX=0` restores the whole old arrangement**: no
    post-processing, `vocal-tract-length` back in the SSML, and the monster
    engine defaulting to `standard` because that tag exists nowhere else. It is
    the way back if the treatment turns out to sound worse, and it is a

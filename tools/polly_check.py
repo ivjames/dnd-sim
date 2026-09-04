@@ -75,7 +75,7 @@ from tts.client import (
     TTSError,
     env_flag,
 )
-from tts.voices import ENGINE_SSML, STANDARD_ENGLISH, billable_chars
+from tts.voices import STANDARD_ENGLISH, allowed_ssml, billable_chars
 
 #: The two lines. Short on purpose — this is a check, not a demo — and
 #: different from each other so a mixed-up cache entry could not hide.
@@ -205,7 +205,7 @@ def build(args: argparse.Namespace, cache_dir: str, client: Any) -> PollyTTS:
 def _how_monsters_are_made(svc: PollyTTS) -> str:
     """The header's one-phrase summary of the monster arrangement.
 
-    Asked of `ENGINE_SSML` rather than assumed, because the answer for the
+    Asked of `allowed_ssml` rather than assumed, because the answer for the
     untreated arrangement depends on the engine: `<amazon:effect
     vocal-tract-length>` exists only where the matrix says it does, and an
     untreated monster anywhere else is a plain voice reading a monster's lines.
@@ -213,10 +213,13 @@ def _how_monsters_are_made(svc: PollyTTS) -> str:
     `DND_TTS_MONSTER_ENGINE` that is not `standard`) and is exactly what this
     tool is for, so the header says so rather than naming a tag that will not
     be written.
+
+    Through the same function `ssml_for` writes the document with, so the two
+    cannot disagree about an engine neither of them recognises.
     """
     if svc.monster_fx:
         return "+ post-processing"
-    if "vtl" in ENGINE_SSML.get(svc.monster_engine, frozenset()):
+    if "vtl" in allowed_ssml(svc.monster_engine):
         return "(vocal-tract-length)"
     return "(UNTREATED: this engine has no vocal-tract-length)"
 

@@ -18,6 +18,7 @@ import pytest
 from tts.voices import (
     ACCENTS,
     CHILD_VOICE_IDS,
+    ENGINE_SSML,
     MONSTER_CAVE,
     MONSTER_GROWL,
     MONSTER_SIZE,
@@ -26,6 +27,7 @@ from tts.voices import (
     STANDARD_ENGLISH,
     Cast,
     Voice,
+    allowed_ssml,
     billable_chars,
     cast_for,
     gender_for_pronouns,
@@ -321,6 +323,15 @@ def test_each_engine_is_only_sent_what_it_accepts():
     # An engine nobody has heard of is written for the one this is built around
     # rather than sent bare — being wrong loudly beats being wrong quietly.
     assert ssml_for("Fee fi.", monster, "chorus") == standard
+    # And that default belongs to ONE function, because more than one caller
+    # needs the answer: `tools/polly_check.py` reports what the document will
+    # contain, and spelled the fallback as "no tags" while `ssml_for` went on
+    # writing a vocal-tract-length for the same engine.
+    assert allowed_ssml("chorus") == allowed_ssml("standard") == ENGINE_SSML["standard"]
+    assert allowed_ssml("") == ENGINE_SSML["standard"]
+    assert allowed_ssml("NEURAL") == ENGINE_SSML["neural"]      # named, and case-folded
+    for engine, tags in ENGINE_SSML.items():
+        assert allowed_ssml(engine) == tags
 
 
 def test_the_engine_travels_with_the_cast():

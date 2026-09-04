@@ -66,6 +66,7 @@ __all__ = [
     "CHILD_VOICE_IDS",
     "CHILD_MAX_AGE",
     "ENGINE_SSML",
+    "allowed_ssml",
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_GROWL",
@@ -593,6 +594,24 @@ ENGINE_SSML: dict[str, frozenset[str]] = {
 }
 
 
+def allowed_ssml(engine: str) -> frozenset[str]:
+    """Which of pitch/rate/vtl this engine will accept.
+
+    The one place the `ENGINE_SSML` lookup happens, including its default: an
+    engine nobody has heard of is written for the one this app is built around
+    rather than sent bare, because being wrong loudly (an error naming the
+    engine) beats being wrong quietly (a flat reading nothing reports).
+
+    A function rather than a bare `.get` because more than one caller needs the
+    answer — `ssml_for` writes the document, `tools/polly_check.py` reports what
+    the document will contain — and a second copy of the rule is a second copy
+    of the default to get wrong. It was: the tool spelled the fallback as "no
+    tags", so an unrecognised engine was reported as carrying no
+    vocal-tract-length while `ssml_for` went on writing one.
+    """
+    return ENGINE_SSML.get(str(engine or "standard").strip().lower(), ENGINE_SSML["standard"])
+
+
 def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
     """The `<speak>` document for a line in its seat's voice.
 
@@ -604,8 +623,7 @@ def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
     pitch and no vocal-tract-length, two characters dealt the same voice cannot
     be told apart, and a monster is only a voice rather than a big one.
     """
-    name = str(engine or cast.engine or "standard").strip().lower()
-    allowed = ENGINE_SSML.get(name, ENGINE_SSML["standard"])
+    allowed = allowed_ssml(engine or cast.engine)
     body = escape(text)
     prosody = []
     if cast.pitch_pct and "pitch" in allowed:
