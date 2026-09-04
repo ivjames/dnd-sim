@@ -499,12 +499,28 @@
     var subEl = el('span', 'card-sub', sub.join(' · '));
     var init = score === undefined || score === null
       ? null : el('span', 'card-init', String(score));
+
+    // Which side, in words as well as in the colour of the stripe. One list
+    // means the stripe is the only thing left saying it, and a stripe says
+    // nothing to a screen reader and little to a reader who cannot separate
+    // those two browns: the short form is what a sighted reader scans, the
+    // hidden one is what gets read out.
+    var sideWord = c.side === 'party' ? 'party' : (c.side === 'enemy' ? 'enemy' : 'neutral');
+    var sideShort = c.side === 'party' ? 'pc' : (c.side === 'enemy' ? 'foe' : 'npc');
+    var sideEl = el('span', 'card-side');
+    var sideMark = el('span', '', sideShort);
+    sideMark.setAttribute('aria-hidden', 'true');
+    sideEl.appendChild(sideMark);
+    sideEl.appendChild(el('span', 'sr-only', sideWord + '. '));
+
     if (compact) {
       if (init) node.appendChild(init);
+      node.appendChild(sideEl);
       node.appendChild(name);
     } else {
       var top = el('div', 'card-top');
       if (init) top.appendChild(init);
+      top.appendChild(sideEl);
       top.appendChild(name);
       top.appendChild(subEl);
       node.appendChild(top);

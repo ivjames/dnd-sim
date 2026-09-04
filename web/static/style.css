@@ -350,6 +350,19 @@ body {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .card.is-down .card-name { color: var(--ink-dim); }
+/* Which side, in three letters, beside the stripe that says it in colour —
+   because colour on its own says nothing to a screen reader and little to a
+   reader who cannot separate those two browns. The full word is on the card
+   too, hidden, for the reader who is being read to. */
+.card-side {
+  flex: 0 0 auto; width: 3.4ch;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  color: var(--ink-faint);
+}
+.card.side-party .card-side   { color: var(--party); }
+.card.side-enemy .card-side   { color: var(--enemy); }
+.card.side-neutral .card-side { color: var(--neutral); }
+
 /* The initiative roll, as the card's first column. A fixed width so the names
    line up down the list rather than stepping in and out by a digit. */
 .card-init {
