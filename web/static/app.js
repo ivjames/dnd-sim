@@ -165,7 +165,12 @@
     }
     if (node) node.setAttribute('data-seq', String(ev.seq));
     voiceOnEvent(ev);
-    if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
+    // Monsters are spawned mid-game and announced by this one event; every
+    // later trigger is debounced 700 ms, which at tempo_ms 0 is several turns
+    // of a creature the page has never heard of — no name for it, no voice
+    // for it. Fetch on the spawn itself instead of waiting.
+    if (ev.kind === 'system' && ev.data && ev.data.encounter) refreshSnapshot();
+    else if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
   }
 
   function nameOf(id) {
@@ -517,6 +522,12 @@
     return out;
   }
 
+  // {id: true} for every monster in the snapshot whose stat block names a
+  // language it can speak — the seats a novelty voice may be cast to.
+  function voiceMonsters() {
+    return Speech.speakingMonsters(combatants());
+  }
+
   function voiceNames() {
     var cs = combatants(), out = {};
     Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].name) out[id] = cs[id].name; });
@@ -526,10 +537,9 @@
   function voiceOnEvent(ev) {
     if (!voiceArmed() || !ev || !(ev.seq > V.sinceSeq)) return;
     if (!Speech.shouldSpeak(ev, V.settings)) return;
-    var party = voiceParty();
-    var phrase = Speech.phraseFor(ev, voiceNames(), party);
+    var phrase = Speech.phraseFor(ev, voiceNames(), voiceParty());
     if (!phrase) return;
-    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party) });
+    V.queue.push({ ev: ev, phrase: phrase });
     voiceTrimQueue();
     voicePump();
   }
@@ -550,7 +560,10 @@
     var item = V.queue.shift();
     var chunks = Speech.chunksFor(item.phrase);
     if (!chunks.length) { voicePump(); return; }
-    var prof = voiceProfile(item.key);
+    // Cast on the way out rather than on arrival: a monster's first line can
+    // beat the snapshot that first names it, and every moment the line waits
+    // its turn in the queue is a moment that fetch has to land.
+    var prof = voiceProfile(Speech.voiceKeyFor(item.ev, voiceParty(), voiceMonsters()));
     var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
     var node = transcriptEl().querySelector('[data-seq="' + item.ev.seq + '"]');
     var cur = { item: item, chunks: chunks, idx: 0, node: node, timer: null, utt: null };
