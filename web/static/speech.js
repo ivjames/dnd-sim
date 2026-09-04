@@ -227,6 +227,23 @@
   //   pc_*/npc → hash into the remaining same-language voices; when there are
   //   too few to tell actors apart (iPad Safari often ships one or two), vary
   //   pitch and rate deterministically as well.
+  // Apple ships novelty voices in the same list as the real ones — Bubbles
+  // gurgles, Whisper has no voicing, Zarvox is a robot. None of them can carry
+  // narration, so they are never cast at the table. The name may arrive with a
+  // language in parentheses ("Bubbles (English (US))"), so match the head of it.
+  var NOVELTY = {
+    'albert': 1, 'bad news': 1, 'bahh': 1, 'bells': 1, 'boing': 1, 'bubbles': 1,
+    'cellos': 1, 'deranged': 1, 'good news': 1, 'hysterical': 1, 'jester': 1,
+    'organ': 1, 'pipe organ': 1, 'superstar': 1, 'trinoids': 1, 'whisper': 1,
+    'wobble': 1, 'zarvox': 1
+  };
+
+  function isNoveltyVoice(v) {
+    var n = String((v && v.name) || '').toLowerCase().trim();
+    n = n.replace(/\s*\(.*$/, '').trim();
+    return !!NOVELTY[n];
+  }
+
   function voiceProfileFor(key, voices, lang) {
     var pref = langPrefix(lang);
     var all = (voices || []).slice().sort(function (a, b) {
@@ -235,6 +252,12 @@
     });
     var pool = all.filter(function (v) { return langPrefix(v.lang) === pref; });
     if (!pool.length) pool = all;
+    // Drop the novelty voices before anyone is cast — including the DM, who
+    // takes pool[0] when no voice is flagged default, and alphabetically that
+    // is "Albert" on a Mac. A device with nothing but novelty voices keeps
+    // them rather than going silent.
+    var speakable = pool.filter(function (v) { return !isNoveltyVoice(v); });
+    if (speakable.length) pool = speakable;
     if (!pool.length) return { voice: null, pitch: 1, rate: 1, key: key };
 
     var dmIdx = 0;
@@ -289,6 +312,8 @@
     isStory: isStory,
     isMechanic: isMechanic,
     hashString: hashString,
+    isNoveltyVoice: isNoveltyVoice,
+    NOVELTY: NOVELTY,
     stripDice: stripDice,
     STORY: STORY,
     MECH: MECH
