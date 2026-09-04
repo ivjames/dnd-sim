@@ -1,0 +1,99 @@
+{
+  "title": "The Toll at Grieve's Cross",
+  "seed": 23,
+  "setting": "A crossroads on the Amberway two days from anywhere, where a burned-out tollhouse has been rebuilt by people the crown did not appoint.",
+  "tone": "talky, wary, spaghetti-western; violence is a failure state everyone can see coming",
+  "budget_usd": 1.75,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 20,
+  "player_temperature": 1.0,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Captain Isolde Rooke",
+      "race": "Human",
+      "klass": "Fighter",
+      "level": 3,
+      "abilities": {"STR": 16, "DEX": 13, "CON": 15, "INT": 11, "WIS": 13, "CHA": 12},
+      "equipment": "default",
+      "persona": "Militia officer of a town that disbanded its militia. Wants the road open and the toll gone, in that order, and will pay the toll herself to buy an hour of talk. Reads every room for exits. Grows short-tempered when the party stalls, and says the quiet part at the worst moment."
+    },
+    {
+      "id": "pc_2",
+      "name": "Sadi Marchetti",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 3,
+      "abilities": {"STR": 9, "DEX": 17, "CON": 14, "INT": 13, "WIS": 12, "CHA": 15},
+      "equipment": "default",
+      "persona": "Ran contraband on this road for six years and knows half these bandits by their first names, which she has not mentioned. Wants to settle this with money and leverage. Lies fluently and to the party as well when it is convenient. Will slip out of a conversation to go look at something."
+    },
+    {
+      "id": "pc_3",
+      "name": "Father Bexley Crane",
+      "race": "Dwarf (Hill)",
+      "klass": "Cleric",
+      "level": 3,
+      "abilities": {"STR": 13, "DEX": 10, "CON": 16, "INT": 11, "WIS": 17, "CHA": 12},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Buried the last tollkeeper and is not eager to bury the next. Wants somebody to admit out loud who burned the old tollhouse. Believes a man robbing travellers is still a man, argues it at length, and will heal anyone bleeding in front of him regardless of side. This gets him hit."
+    },
+    {
+      "id": "pc_4",
+      "name": "Adept Weylin Doss",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 3,
+      "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 17, "WIS": 12, "CHA": 10},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Crown surveyor with a writ nobody out here respects. Wants the ledger from the tollhouse more than he wants the tollhouse. Treats bandits as an administrative irregularity until one is close enough to touch him. Escalates far too quickly, then defends it with citations."
+    }
+  ],
+  "scenario": {
+    "opening": "A chain across the road at hip height, a rebuilt tollhouse with fresh timber on old char, and six people who are pretending to be four. The woman at the chain has a ledger open on a barrel and asks your names before she asks for money, which is the part that should worry you.",
+    "location": "The crossroads and tollhouse at Grieve's Cross",
+    "objectives": [
+      "Find out who is collecting this toll and on whose authority",
+      "Recover the old tollhouse ledger",
+      "Reopen the road — a fight is one way and the worst one"
+    ],
+    "max_scenes": 3,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "The Chain",
+        "description": "A toll, a ledger, and a negotiation with archers in the treeline who think they are hidden.",
+        "location": "The chain across the Amberway"
+      },
+      {
+        "title": "Inside the Tollhouse",
+        "description": "New timber, old char, a strongbox, and a captain who has decided which way this goes.",
+        "location": "The tollhouse yard"
+      },
+      {
+        "title": "What the Ledger Says",
+        "description": "Names, dates, and a seal that should not be on a bandit's paperwork.",
+        "location": "The road east of the cross"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Bandit", "count": 4},
+          {"name": "Bandit Captain", "count": 1}
+        ],
+        "grid": {
+          "width": 14,
+          "height": 12,
+          "party_start": [[2, 5], [2, 6], [3, 5], [3, 6]],
+          "enemy_start": [[11, 4], [11, 7], [12, 5], [12, 6], [10, 6]],
+          "difficult": [[6, 4], [6, 5], [6, 6], [7, 4], [7, 5], [7, 6]],
+          "walls": [[8, 0], [8, 1], [8, 2], [8, 9], [8, 10], [8, 11]]
+        }
+      }
+    ]
+  }
+}

@@ -21,9 +21,11 @@ class ScriptedClient:
         self.texts = list(texts)
         self.prompts = []
         self.systems = []
+        self.temperatures = []
 
     def complete(self, *, model, system, messages, max_tokens, temperature=0.7, json_only=False):
         self.systems.append(system)
+        self.temperatures.append(temperature)
         self.prompts.append(messages[-1]["content"] if messages else "")
         text = self.texts.pop(0) if self.texts else "{}"
         return LLMResponse(text, 100, 20, 0, 0, model, "end_turn")
@@ -335,3 +337,31 @@ def test_agents_work_against_the_mock_client():
         action = a.choose_action(player_view(state, "pc_1", events(3), ""), templates())
         assert action.template_id in {"a1", "a2", "a3"}
     assert led.total_usd > 0
+
+
+# --- sampling temperature --------------------------------------------------
+
+
+def test_players_sample_at_the_configured_temperature():
+    c = ScriptedClient('{"action": "a1", "params": {}, "speech": "For the hold."}')
+    a = PlayerAgent(c, "m", make_state().combatants["pc_1"].sheet, Ledger(), engine=eng, temperature=0.4)
+    a.choose_action("v", templates())
+    assert c.temperatures == [0.4]
+
+
+def test_players_run_hot_by_default():
+    c = ScriptedClient('{"action": "a1", "params": {}}', '{"speech": "Aye."}')
+    a = agent(c)
+    a.choose_action("v", templates())
+    a.speak("v", "What now?")
+    assert c.temperatures == [player.DEFAULT_TEMPERATURE] * 2
+    assert player.DEFAULT_TEMPERATURE == 1.0  # the top of the Anthropic range
+
+
+@pytest.mark.parametrize(
+    "given,expect",
+    [(2.5, 1.0), (1.0, 1.0), (0.0, 0.0), (-3, 0.0), ("0.5", 0.5), (None, 1.0), ("hot", 1.0), (float("nan"), 1.0)],
+)
+def test_temperature_is_clamped_not_rejected(given, expect):
+    """A silly number in a scenario file costs variety; it must never 400 mid-game."""
+    assert player.clamp_temperature(given) == expect

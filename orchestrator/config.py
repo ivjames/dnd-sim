@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from agents.player import DEFAULT_TEMPERATURE, clamp_temperature
 from llm.client import DM_MODEL, PLAYER_MODEL, SUMMARY_MODEL
 
 __all__ = ["GameConfig"]
@@ -21,6 +22,7 @@ class GameConfig:
     dm_model: str = DM_MODEL
     player_model: str = PLAYER_MODEL
     summary_model: str = SUMMARY_MODEL
+    player_temperature: float = DEFAULT_TEMPERATURE
     max_rounds_per_combat: int = 20
     budget_usd: float = 1.00
     tempo_ms: int = 800
@@ -35,6 +37,7 @@ class GameConfig:
         cfg.seed = int(cfg.seed)
         cfg.budget_usd = float(cfg.budget_usd)
         cfg.tempo_ms = int(cfg.tempo_ms)
+        cfg.player_temperature = clamp_temperature(cfg.player_temperature)
         cfg.max_rounds_per_combat = int(cfg.max_rounds_per_combat)
         cfg.mock = bool(cfg.mock)
         if not cfg.title:
@@ -63,6 +66,13 @@ class GameConfig:
     def player_model_for(self, spec: dict) -> str:
         """The model serving one party member: its own `model`, else player_model."""
         return str((spec or {}).get("model") or self.player_model)
+
+    def player_temperature_for(self, spec: dict) -> float:
+        """How hot one party member samples: its own `temperature`, else the game's."""
+        value = (spec or {}).get("temperature")
+        if value is None:
+            return self.player_temperature
+        return clamp_temperature(value, self.player_temperature)
 
     def seat_models(self) -> dict[str, str]:
         """Every seat at the table -> model id (dm, summary, player:<id>...)."""

@@ -1,0 +1,108 @@
+{
+  "title": "The Nixie Shaft",
+  "seed": 5,
+  "setting": "A silver working abandoned when the water came in, half a mile under a hill the local kobolds have been calling theirs for two generations.",
+  "tone": "close, wet, dark; the good kind of claustrophobic",
+  "budget_usd": 2.5,
+  "tempo_ms": 800,
+  "max_rounds_per_combat": 20,
+  "player_temperature": 1.0,
+  "party": [
+    {
+      "id": "pc_1",
+      "name": "Gunnar Volk",
+      "race": "Dwarf (Hill)",
+      "klass": "Fighter",
+      "level": 2,
+      "abilities": {"STR": 16, "DEX": 12, "CON": 16, "INT": 10, "WIS": 13, "CHA": 9},
+      "equipment": "default",
+      "persona": "Worked this shaft before the flood and has opinions about every prop and pit in it. Wants the mine reopened, not cleared — a difference he considers important and nobody else does. Reads the roof constantly. Talks about the mine as if it can hear him, because down here that is only sensible."
+    },
+    {
+      "id": "pc_2",
+      "name": "Nell Sixpence",
+      "race": "Halfling (Lightfoot)",
+      "klass": "Rogue",
+      "level": 2,
+      "abilities": {"STR": 8, "DEX": 17, "CON": 13, "INT": 14, "WIS": 12, "CHA": 13},
+      "equipment": "default",
+      "persona": "Hired as a scout, staying for the silver nobody has counted. Wants to go first, always, and resents being told to wait. Keeps a running estimate of the party's chances aloud, which is not encouraging. Terrified of spiders in a way she covers with volume."
+    },
+    {
+      "id": "pc_3",
+      "name": "Sister Vey Kalloran",
+      "race": "Human",
+      "klass": "Cleric",
+      "level": 2,
+      "abilities": {"STR": 12, "DEX": 11, "CON": 15, "INT": 12, "WIS": 16, "CHA": 12},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Came for the eleven miners nobody recovered and considers everything else a detour. Wants bodies out before ore. Practical to the point of coldness, tender only at the moment of actual injury. Will spend her last slot on a stranger and let the party argue about it afterwards."
+    },
+    {
+      "id": "pc_4",
+      "name": "Thessaly Orn",
+      "race": "Elf (High)",
+      "klass": "Wizard",
+      "level": 2,
+      "abilities": {"STR": 8, "DEX": 15, "CON": 13, "INT": 16, "WIS": 11, "CHA": 12},
+      "equipment": "default",
+      "spells": "default",
+      "persona": "Studying how kobolds organise, which she finds more interesting than the silver and says so at unhelpful moments. Wants to talk to them before anyone stabs them. Light-obsessed: unhappy without a light source, unwise about making one in a place where being seen is the danger."
+    }
+  ],
+  "scenario": {
+    "opening": "The adit still has rails in it, warped where the water reached. Someone has re-timbered the first hundred feet with fresh, wrong-sized props and hung a line of dried-out fish heads across the passage at knee height. Chalk marks on the wall count something in a hand too small to be a miner's.",
+    "location": "The flooded silver working under Nixie Hill",
+    "objectives": [
+      "Find out who has re-timbered the shaft",
+      "Reach the lower gallery where the miners were lost",
+      "Do not drown, and do not fall"
+    ],
+    "max_scenes": 2,
+    "beats_per_scene": 2,
+    "scenes": [
+      {
+        "title": "The Fish-Head Line",
+        "description": "Fresh props, chalk tallies, and a passage narrow enough that going first means going alone.",
+        "location": "The upper adit"
+      },
+      {
+        "title": "The Drowned Gallery",
+        "description": "Standing water to the knee, silk between the props, and shapes on the roof that are not props.",
+        "location": "The lower gallery"
+      }
+    ],
+    "encounters": [
+      {
+        "trigger": "scene_1",
+        "monsters": [
+          {"name": "Kobold", "count": 6}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 8,
+          "party_start": [[1, 3], [1, 4], [2, 3], [2, 4]],
+          "enemy_start": [[9, 2], [9, 5], [10, 3], [10, 4], [11, 2], [11, 5]],
+          "difficult": [[5, 3], [5, 4], [6, 3], [6, 4]],
+          "walls": [[6, 0], [6, 1], [6, 6], [6, 7]]
+        }
+      },
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Giant Spider", "count": 3},
+          {"name": "Giant Rat", "count": 3}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 12,
+          "party_start": [[1, 5], [1, 6], [2, 5], [2, 6]],
+          "enemy_start": [[9, 4], [9, 7], [10, 5], [8, 2], [8, 9], [10, 6]],
+          "difficult": [[4, 4], [4, 5], [4, 6], [4, 7], [5, 5], [5, 6], [6, 4], [6, 7]],
+          "walls": [[7, 0], [7, 1], [7, 10], [7, 11]]
+        }
+      }
+    ]
+  }
+}

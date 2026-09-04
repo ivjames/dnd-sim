@@ -114,6 +114,7 @@ class Game:
         self.dm: DMAgent | None = None
         self.players: dict[str, PlayerAgent] = {}
         self.seat_models: dict[str, str] = {}  # combatant id -> model serving it
+        self.seat_temperatures: dict[str, float] = {}  # combatant id -> sampling temp
 
     # ------------------------------------------------------------------
     # controls
@@ -365,6 +366,7 @@ class Game:
             pos = starts[i] if i < len(starts) else (1, 1 + i)
             combatants[sheet.id] = self._pc_combatant(sheet, tuple(pos))
             self.seat_models[sheet.id] = self.cfg.player_model_for(spec)
+            self.seat_temperatures[sheet.id] = self.cfg.player_temperature_for(spec)
         scene = {
             "title": self.cfg.title,
             "description": self.cfg.opening,
@@ -388,6 +390,7 @@ class Game:
                 c.sheet,
                 self.ledger,
                 engine=self.engine,
+                temperature=self.seat_temperatures.get(cid, self.cfg.player_temperature),
             )
 
     def _party_starts(self) -> list[tuple[int, int]]:

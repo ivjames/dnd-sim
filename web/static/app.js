@@ -1340,6 +1340,8 @@
     if (cfg.seed !== undefined) $('ng-seed').value = cfg.seed;
     if (cfg.budget_usd !== undefined) $('ng-budget').value = cfg.budget_usd;
     if (cfg.tempo_ms !== undefined) $('ng-tempo').value = cfg.tempo_ms;
+    // always reset: a preset without a temperature must not inherit the last one's
+    $('ng-temp').value = cfg.player_temperature !== undefined ? cfg.player_temperature : 1;
     $('ng-setting').value = cfg.setting || '';
     $('ng-tone').value = cfg.tone || 'classic heroic';
   }
@@ -1353,6 +1355,7 @@
     cfg.seed = num($('ng-seed').value, 0);
     cfg.budget_usd = num($('ng-budget').value, 1);
     cfg.tempo_ms = num($('ng-tempo').value, 800);
+    cfg.player_temperature = Math.min(1, Math.max(0, num($('ng-temp').value, 1)));
     cfg.setting = $('ng-setting').value;
     cfg.tone = $('ng-tone').value;
 

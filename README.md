@@ -69,6 +69,69 @@ Tests:
 .venv/bin/python -m pytest web/tests -q  # web layer alone (uses fakes)
 ```
 
+## Scenarios
+
+`examples/*.json` is the whole scenario set; the new-game panel offers every
+file in that directory (`DND_SIM_EXAMPLES` moves it), and the CLI takes one by
+path. All of them are SRD 5.1 content only.
+
+| File | Party | Shape | What it exercises |
+|---|---|---|---|
+| `cellar_rats.json` | level 1 | one scene, one fight | The cheapest live smoke test there is: giant rats and two kobolds in a fish cellar. |
+| `spider_mine.json` | level 2 | two scenes, two fights | Kobold pack tactics underground, then giant spiders, webs, and a lot of difficult terrain. |
+| `goblin_ambush.json` | level 3 | two scenes, one fight | The reference game: goblins and a boss on an open road. |
+| `tollhouse.json` | level 3 | three scenes, one fight | Talk first: two full social scenes before anyone draws, and a fight that arrives when the talking runs out. |
+| `gnoll_pyre.json` | level 4 | two scenes, two fights | Gnoll Rampage and worg speed on open ground, then an ogre at a fire. |
+| `crypt.json` | level 5 | two scenes, two fights | Undead: turn undead, ghoul paralysis, a party that can be locked down. |
+| `troll_fen.json` | level 5 | two scenes, two fights | A troll. Regeneration stops for a round on fire or acid damage, so the wizard's slots decide the fight. |
+
+Each carries a `budget_usd` sized from a full mock run of that scenario with
+headroom, because the budget is a stop, not an estimate: a game that exceeds it
+halts mid-scene. A mock run is the cheap way to re-check one after editing:
+
+```sh
+.venv/bin/python -m orchestrator.cli --config examples/troll_fen.json --mock --tempo 0
+```
+
+Writing a new one: copy the nearest file. `scenario.scenes[i]` and
+`scenario.encounters[].trigger: "scene_<i>"` line up by index — and that
+encounter **always** runs, after that scene's beats, however the talking went;
+there is no conditional trigger, so a scenario cannot offer a fight the party
+can talk its way out of (the DM can start combat *earlier* by adjudicating
+`start_combat`, never later). `grid` coordinates must sit inside
+`width`/`height` and off the walls, and every
+monster name must resolve in `engine/data/monsters.json` (29 of them, CR ⅛–5).
+The test suite checks all of that for every file in `examples/`, so a broken
+scenario fails `pytest`, not a live game.
+
+## How improvised the players are
+
+Player seats sample at **`player_temperature`** (default `1.0`, the top of the
+Anthropic range). At the old 0.8 a character would converge — the same opening
+line, the same attack, every round — and the transcript's repetition guard then
+dropped the repeat, so the character went quiet instead of saying something
+new. Set it per game in the config, per seat in a party spec, or from the
+**Improv (0–1)** field in the new-game panel:
+
+```json
+{
+  "player_temperature": 1.0,
+  "party": [
+    {"id": "pc_1", "name": "Thorin", "temperature": 0.6, "...": "..."}
+  ]
+}
+```
+
+Out-of-range and unreadable values are clamped to `[0, 1]` rather than
+rejected. The DM and the summarizer are deliberately not affected: the DM owns
+world facts and runs at 0.8, the summarizer at 0.3.
+
+The other half of this is the player prompt, which asks for reaction over
+routine — vary the action when the fight has changed, hold your own read of it,
+never reuse a line. What improvisation is scoped to is unchanged: motive,
+voice, and which legal action to take. Dice, outcomes and the contents of the
+world stay the engine's and the DM's.
+
 ## Environment variables
 
 | Var | Default | Meaning |
