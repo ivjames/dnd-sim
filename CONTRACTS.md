@@ -1427,3 +1427,55 @@ children, because there is nothing to ask.
    reports no age, exactly as it reports no gender, and inferring one from
    voice names across every OS and locale would be a guess dressed as data. A
    session on the fallback engine casts as it always did.
+
+### 2026-09-04 — orchestrator/ + web/ — a knockout is announced after its narration
+
+The loop in §4 publishes a turn's engine events and *then* asks the DM to
+narrate it. That is right for everything the engine says except the two lines
+that are the reveal: `down` and `dead` are reported the instant the HP reaches
+0, which is a paragraph before the prose describing the same swing. On the page
+it merely reads oddly. Spoken — and `speech.js` classes both kinds as STORY, so
+they are read aloud even with *mute mechanics* on — it is the spoiler said over
+the top of its own reveal: "Bandit 3 dies", and then, seconds later, the axe is
+still in the air.
+
+1. **`Game._emit_turn` holds them; `Game._flush_reveals` releases them.** The
+   per-turn emission in `_run_turn` now routes through `_emit_turn`, which
+   diverts events whose kind is in `REVEAL_KINDS = ("down", "dead")` into
+   `_pending_reveals` and emits everything else unchanged. `_run_combat`
+   flushes after `_narrate` and before `advance_turn`, so the reveal lands
+   inside its own turn, after the paragraph, ahead of `turn_end`/`round_start`.
+
+   The flush is **unconditional**: `_narrate` returns early for a turn with
+   nothing worth describing, and the DM may answer with nothing at all. A
+   knockout held for a narration that never comes still has to be said.
+
+2. **The order is the only thing that changes.** The attack, the damage and
+   the HP line stay where they happened — §6 requires the narration not to
+   contradict the numbers, and moving the numbers with the beat would take
+   that check away with them. `dm.narrate` is still handed the turn's *whole*
+   event list, reveals included, so the DM writes from the same facts as
+   before. A mock run at a fixed seed emits an identical multiset of events;
+   only the position of the `down`/`dead` lines differs.
+
+3. **Reveals held at the end of a game are released on the way out.**
+   `_narrate` gates and checks the budget, so a stop or an exhausted budget can
+   land between the blow and the line that says it landed. `run()`'s `finally`
+   calls `_flush_reveals(gated=False)` — `_emit` gained that keyword, which
+   skips the tempo sleep and the pause/hold/stop gate — before the closing cost
+   event. A transcript in which someone is hit to 0 HP and nothing ever says
+   they fell is worse than one where the beat arrives late. `_flush_reveals`
+   pops one at a time for the same reason: a stop raised mid-flush must leave
+   the rest still pending for that last pass to find.
+
+4. **The transcript closes the mechanics group at a narration.** In `app.js`
+   the `narration` branch now clears `S.group`/`S.groupBody`. A turn's
+   mechanics group is a node already appended *above* the paragraph, and the
+   mechanics branch files any line into `S.groupBody` while one is open — so
+   leaving it open would put the released reveal back inside the group, above
+   the prose it is meant to follow, and send the playhead scrolling up to it.
+   Nothing else lands there today: `turn_end` already closed the group for the
+   end-of-turn ticks that follow it.
+
+Deaths from failed death saves are untouched. `advance_turn` rolls them
+between turns, where there is no narration for them to wait behind.

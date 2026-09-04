@@ -331,6 +331,13 @@
     } else if (ev.kind === 'turn_end') {
       S.group = null; S.groupBody = null;
     } else if (ev.kind === 'narration') {
+      // Close the turn's mechanics group. The orchestrator holds a turn's
+      // `down`/`dead` back until after its narration, so the line that lands
+      // the beat arrives AFTER this paragraph — and the group node sits ABOVE
+      // it, so leaving the group open would file that line back up inside it:
+      // out of order on screen, and out of order for the playhead, which
+      // scrolls to whichever node carries the seq it is speaking.
+      S.group = null; S.groupBody = null;
       node = el('p', 'narration', ev.text);
       appendNode(node);
     } else if (ev.kind === 'dialogue') {
