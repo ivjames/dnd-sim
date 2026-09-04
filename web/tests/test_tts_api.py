@@ -649,3 +649,41 @@ def test_a_charge_is_not_overwritten_by_another_snapshot_writer(tts_app, tts_cli
     expected = len(text) * 4.0 / 1_000_000
     assert entry.game.ledger.total_usd == pytest.approx(expected, rel=1e-6)
     assert db.get_game(game)["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_line_polly_refuses_costs_nothing_and_holds_nothing(tts_app, tts_client, tts,
+                                                              game, caplog):
+    """A monster line failing is the refusal this app is least likely to
+    notice: the page speaks that one line in the browser's own voice, so the
+    spectator hears speech either way and only `dndsim logs` shows it. The
+    least it can do is be free — nothing charged, nothing cached under a key
+    served `immutable` for a year, and no budget still held against the game
+    once the request is over.
+    """
+    from web.routes.tts import _RESERVED
+
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+    tts.engine, tts.monster_engine = "neural", "standard"   # the shipped split
+    tts.fail = "InvalidSsmlException: vtl on neural"
+
+    with caplog.at_level("WARNING", logger=tts_app.logger.name):
+        rv = tts_client.get(speak_url(game, key="monster:goblin_1"))
+    assert rv.status_code == 502
+
+    # Which seat, on which engine, in which voice. A monster fails on its own
+    # engine with SSML no other seat writes, and nothing else in the system
+    # says so — the page speaks the line and the spectator hears speech.
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "monster:goblin_1" in logged and "standard/" in logged
+
+    assert entry.game.ledger.total_usd == 0.0
+    assert "narrator" not in entry.game.ledger.by_role
+    assert _RESERVED.get(game) is None            # the reservation was given back
+
+    # And the failure is not remembered: the same line is asked for again
+    # rather than being answered from a cache entry that never held audio.
+    tts.fail = ""
+    again = tts_client.get(speak_url(game, key="monster:goblin_1"))
+    assert again.status_code == 200
+    assert entry.game.ledger.by_role["narrator"]["clips"] == 1
