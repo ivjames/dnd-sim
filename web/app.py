@@ -8,6 +8,9 @@ Env:
     DND_SIM_DB        SQLite path (default ./data/dndsim.sqlite3)
     DND_SIM_MOCK      "1" → MockLLMClient, no API calls
     ANTHROPIC_API_KEY required for live mode (on lab980: /etc/environment)
+    DND_TTS           "0" → no server voices; "1" → on even for mock games
+    DND_TTS_*         Polly engine/region/voice/cache — see tts/client.py
+    AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION   read by boto3
 """
 
 from __future__ import annotations
@@ -51,6 +54,21 @@ def create_app(
     app.config["DND_GAME_FACTORY"] = game_factory or default_game_factory
     app.config["DND_MOCK"] = mock_mode()
 
+    # Server-rendered narration. `None` means the page uses the browser's own
+    # voices, which is the whole fallback: nothing below this line is required
+    # for the app to work, so a missing boto3 or a droplet with no AWS
+    # credentials must never be a start-up failure. Clips are cached beside the
+    # SQLite file — in `data/`, which is gitignored and survives a deploy.
+    if "DND_TTS" not in app.config:
+        from tts.client import from_env as tts_from_env  # noqa: PLC0415
+
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(db.path)) or "data", "tts")
+        try:
+            app.config["DND_TTS"] = tts_from_env(cache_dir)
+        except Exception:  # pragma: no cover - defensive
+            app.logger.exception("could not set up server voices; using browser voices")
+            app.config["DND_TTS"] = None
+
     # Restart safety: this process owns no games yet, so nothing in the DB can
     # legitimately still be running.
     stale = db.mark_stale_games_stopped()
@@ -91,6 +109,11 @@ def main() -> None:
              app.config["DND_DB"].path)
     if not app.config["DND_MOCK"] and not os.environ.get("ANTHROPIC_API_KEY"):
         log.warning("ANTHROPIC_API_KEY not set — live games will fail to start")
+    tts = app.config.get("DND_TTS")
+    if tts is not None and tts.available():
+        log.info("server voices: polly %s/%s (cache %s)", tts.engine, tts.language, tts.cache.root)
+    else:
+        log.info("server voices off — the page will use the browser's own")
     # threaded=True is required: SSE connections are long-lived and the game
     # runs in its own daemon thread.
     app.run(host=host, port=port, threaded=True, debug=False, use_reloader=False)

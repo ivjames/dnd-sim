@@ -32,7 +32,10 @@ A **proxied app**: nginx fronts a pm2-managed **Python 3.11 / Flask** process
 on `127.0.0.1:8071`. Not Node — there is no `package.json`, no `npm ci`, no
 build. The install is `python3 -m venv .venv && .venv/bin/pip install -r
 requirements.txt`, and `requirements.txt` is deliberately tiny (Flask, httpx,
-anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
+anthropic, boto3, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
+boto3 is there for one thing, Amazon Polly narration, and narration falls back
+to the browser's own voices without it — so it is the one dependency an install
+can lack and still run.
 
 - Repo: `ivjames/dnd-sim` · droplet dir: `/var/www/dndsim`
 - pm2 process: **`dnd-sim`** (from `ecosystem.config.js`; note it is not the
@@ -58,9 +61,11 @@ anthropic, pytest; ranges, not pins — no Pydantic, per CONTRACTS.md).
   are written `siliconflow:<id>` / `deepinfra:<id>` — any subset; only the
   Anthropic one is warned about, since the default DM needs it, and a seat
   whose platform has no key fails at game creation naming the variable;
-  `CARTESIA_API_KEY` on the droplet is text-to-speech and is not one of these),
-  `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides (full table in
-  README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
+  `CARTESIA_API_KEY` on the droplet is a text-to-speech key this app does not
+  use and is not one of these), the AWS trio `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` that Polly narration reads through
+  boto3, `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides and the
+  `DND_TTS*` narration knobs (full table in README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
   no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600) and adopts
   every known key it lacks into it from `/etc/environment`, then from
   `/var/www/ffc/server/.env` (first file holding a key wins; the list is
@@ -111,13 +116,29 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   and test that way; `.venv/bin/python -m orchestrator.cli --config
   examples/goblin_ambush.json --mock --seed 42` is the headless integration
   test.
+- **Narration is Polly, and it is also real money.** The spectator page asks
+  `/api/games/<id>/tts` for each line and plays the audio; where the server has
+  no Polly (no AWS credentials, a mock game, the budget spent) the page speaks
+  it with the browser's own `speechSynthesis`, which is what it did before and
+  is still the fallback for a single failed line. Standard engine, $4/1M
+  characters on neural — the table's engine — and $4/1M on standard, which is
+  where speaking monsters stay because `vocal-tract-length` exists nowhere else.
+  Charged to the game's `budget_usd` as `by_role.narrator`, every clip
+  cached in `data/tts` so a line is paid for once, and stopped at the lower of
+  the game's `budget_usd` and the server-owned `DND_TTS_MAX_USD` (default $10),
+  because `POST /api/games` is unauthenticated and the config's budget is
+  whatever the caller asked for. `DND_TTS=0` turns it off; mock games never
+  touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
+  its §6 records what Polly changed and what is still open.
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal
   actions, prompt-cached rules digest, summaries by the cheap model) — keep
   them that way.
 - **Layering is strict and one-way**: `web → orchestrator → agents → llm`,
-  with `engine/` pure (no I/O, no LLM, no threads) underneath. `CONTRACTS.md`
+  with `engine/` pure (no I/O, no LLM, no threads) underneath. `tts/` hangs off
+  `web` alone and imports none of the others — it is a priced outside service
+  like `llm/`, not a layer under it. `CONTRACTS.md`
   is the binding interface spec; a contract change is recorded under its
   "Amendments" section with rationale, not made silently. Game content is
   SRD 5.1 (CC-BY-4.0) only — no non-SRD Wizards content, ever.

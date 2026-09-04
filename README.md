@@ -32,6 +32,7 @@ web  →  orchestrator  →  agents  →  llm
 | `llm/` | Anthropic client, OpenAI-compatible client, per-seat router, `MockLLMClient`, token/cost ledger. |
 | `agents/` | Prompt construction and output parsing for DM and players. |
 | `orchestrator/` | Game loop, scenes, turns, memory, event bus, controls. |
+| `tts/` | Amazon Polly: voice casting, SSML, the clip cache, and what a clip costs. |
 | `web/` | Flask app, SQLite transcripts, SSE stream, static spectator UI. |
 | `deploy/` | Fallback nginx vhost (used by `dndsim setup`); install notes point at DEPLOY.md. |
 
@@ -154,6 +155,16 @@ world stay the engine's and the DM's.
 | `DND_PLAYER_MODEL` | `claude-haiku-4-5-20251001` | Player model. |
 | `DND_SUMMARY_MODEL` | = player model | Rolling-summary model. |
 | `DND_SIM_LOGLEVEL` | `INFO` | Server log level. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | — | Amazon Polly, which reads the game aloud. Read by boto3 in the ordinary way, so an instance profile works too. Without them the spectator's own browser speaks the game. |
+| `DND_TTS` | unset (auto) | `0` → no server voices at all. `1` → on even for mock games, which otherwise stay free. |
+| `DND_TTS_ENGINE` | `neural` | Polly engine for the table: `standard`, `neural`, `long-form` or `generative`. Each is sent only the SSML it accepts. |
+| `DND_TTS_MONSTER_ENGINE` | `standard` | Engine for speaking monsters, which is separate because `vocal-tract-length` is standard-only. Set it equal to `DND_TTS_ENGINE` to put the whole table on one engine. |
+| `DND_TTS_LANG` | `en-US` | The language the voice pool is drawn from. |
+| `DND_TTS_DM_VOICE` | `Brian` | The DM's voice; the rest of the table is dealt from the other voices. |
+| `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
+| `DND_TTS_CACHE_MB` | `512` | Cache ceiling; least-recently-played clips go first. |
+| `DND_TTS_MAX_CHARS` | `400` | Longest line the endpoint will synthesize. |
+| `DND_TTS_MAX_USD` | `10.00` | Server-owned ceiling on a game's spend before narration stops, whatever `budget_usd` says. |
 
 Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
 may name a model on any platform above — the platform is chosen from the
@@ -179,16 +190,21 @@ vars). A party member may carry its own `"model"`, which overrides
   "dm_model": "claude-sonnet-5",
   "player_model": "claude-haiku-4-5-20251001",
   "party": [
-    {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3},
+    {"id": "pc_1", "name": "Thorin Cragmantle", "race": "Dwarf (Hill)", "klass": "Fighter", "level": 3,
+     "gender": "male"},
     {"id": "pc_2", "name": "Vessa Quill", "race": "Halfling (Lightfoot)", "klass": "Rogue", "level": 3,
-     "model": "grok-4.3"},
+     "gender": "female", "model": "grok-4.3"},
     {"id": "pc_3", "name": "Sister Marigold Penn", "race": "Human", "klass": "Cleric", "level": 3,
-     "model": "gemini-2.5-flash"},
+     "gender": "female", "model": "gemini-2.5-flash"},
     {"id": "pc_4", "name": "Ilbrandt Ash", "race": "Elf (High)", "klass": "Wizard", "level": 3,
-     "model": "deepseek-v4-flash"}
+     "gender": "male", "model": "deepseek-v4-flash"}
   ]
 }
 ```
+
+`"gender"` is optional and decides which Polly voices that character can be
+cast from (see [Spoken narration](#spoken-narration)). It is not a rules field:
+the engine, the DM and the players never see it.
 
 Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
 other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,
@@ -252,6 +268,9 @@ GET  /api/games/<id>/events?after=seq   transcript from SQLite
 GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on finish
 POST /api/games/<id>/pause|resume|stop  → 202
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)
+POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
+GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
+GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -274,18 +293,132 @@ narration, scene openings, the epilogue, every line of dialogue and any DM note
 from the table are spoken. Mechanics are spoken too, but shaped into a short
 line ("Goblin 2 hits Thorin for 6", "Round 3", "Vessa moves 30 feet") rather
 than the dice string, and **mute mechanics** silences them entirely. The DM has
-one voice; each PC gets its own, picked deterministically from the voices the
-browser has, with a pitch/rate nudge when there are too few to go round (an
-iPad often has one or two).
+one voice; each PC gets its own, dealt deterministically so the same character
+sounds the same every session.
 
-A monster that can speak — one whose SRD stat block names a language it uses
-aloud, so a goblin or an ogre but not a wolf or a zombie — is cast instead from
-the novelty voices the OS ships beside the real ones (Bubbles, Trinoids, Zarvox
-and the rest, on Apple devices), one per monster, pitch and rate spread wide so
-the ogre and the goblin still differ when that handful runs out. Nobody else is
-ever dealt one: not the DM, not a PC, not an NPC that isn't a monster. A device
-that ships none — Windows, Android, most of Linux — leaves speaking monsters on
-the shared NPC voice, as before.
+A party member may state a `"gender"` — `female` or `male` — and is then dealt
+only from the voices Polly reports as that gender. It narrows who can be cast
+and nothing else: the choice within that set is the same hash as before, so a
+character keeps its voice for as long as its gender and the roster hold. The
+gender is read from the game's own party list, never from the request that asks
+for the clip — this endpoint spends money, and a gender in the query string
+would be a way to walk the whole roster a paid clip at a time.
+
+Polly's roster is `Female` and `Male`; there is no third kind of voice on it.
+So a character who states neither, or states nothing at all, is dealt from the
+**whole** pool rather than pushed into one of the two — the roster's limitation
+is not something to launder into a character sheet.
+
+The shipped parties follow one rule, and it is worth stating because it decides
+what a stranger's config should look like too: **a character states a gender
+only where their own persona already does** — an explicit pronoun, or a
+gendered form of address (`Dame`, `Sister`, `Brother`, `Father`, `Mother`).
+Where the persona says nothing, the config says nothing, and that character is
+dealt from the whole pool. Five of the twenty-eight in `examples/` are like
+that — Crick, Vessa Quill, Ilbrandt Ash, Pib Underbough, Ozric Talleyrand — and
+so are two of the four in the built-in preset. Choosing for them would be
+writing a fact into someone else's character. Where a language ships
+voices of only one gender (Korean and Swedish each ship one), a stated gender
+that cannot be answered gets a voice anyway: a worse match, not a silence.
+
+**The browser fallback ignores gender.** `SpeechSynthesisVoice` has no gender
+attribute in any browser, and inferring one from voice names across every OS
+and locale would be a guess dressed as data. A session on the fallback engine
+casts as it always did.
+
+### Two engines, one narrator
+
+The voices come from **Amazon Polly**, rendered on the server and played as
+audio. Where the server has no Polly — no AWS credentials, a mock game, the
+game's budget spent — the page reads the line with the **browser's own**
+`speechSynthesis` instead, which is what it always did. The narration panel
+says which one is speaking.
+
+The fallback is per line, not per session: a single refused clip is spoken by
+the browser and the next line asks Polly again. Three failures running, or one
+settled refusal (no budget, a mock game, a server with no Polly at all), and the
+page stops asking until the game changes. Nothing above that decision changes —
+same playhead, same transport, same holds — so a session can cross between the
+two without the listener losing their place.
+
+What each engine does with a monster differs, because the material does. A
+monster that can speak — one whose SRD stat block names a language it uses
+aloud, so a goblin or an ogre but not a wolf or a zombie — gets a voice of its
+own either way. In the browser it is cast from the **novelty** voices the OS
+ships beside the real ones (Bubbles, Trinoids, Zarvox and the rest, on Apple
+devices); Polly has no such thing, so there it is an ordinary voice put through
+`<amazon:effect vocal-tract-length>` — a longer vocal tract is a bigger
+creature — with pitch and rate behind it. Nobody else is ever treated: not the
+DM, not a PC, not an NPC that isn't a monster.
+
+That effect is the reason **a monster is synthesized on a different engine from
+everyone else**. It is standard-only, and so is pitch, while the table itself
+sounds better on neural — so the DM, the players and the NPCs are cast on
+`DND_TTS_ENGINE` (neural) and speaking monsters on `DND_TTS_MONSTER_ENGINE`
+(standard). The engine travels on the cast rather than being read from a
+setting when the clip is made, so a line cannot be cast for one engine and
+rendered on another; each engine keeps its own voice roster, its own cached
+clips and its own rate in the ledger. Set the two equal for one engine
+throughout.
+
+One thing the neural default costs: the built-in fallback roster is standard's
+and English's, so if `DescribeVoices` cannot be reached the table has nothing to
+cast from and the page falls back to the browser's voices. Under a standard,
+English default that call failing was survivable. It is deliberate in both
+directions — a French line read by an English voice is not a degraded narrator
+but a wrong one, and the probe would report it as working.
+
+### What it costs
+
+Polly is **$16.00 per million characters** on the neural engine and **$4.00**
+on standard, and the table uses both — neural for the DM, the players and the
+NPCs, standard for speaking monsters (see above). That works out around $0.45 a
+game. The spend is
+charged to the game's own `budget_usd` alongside the model calls — it shows up
+as `by_role.narrator` in the ledger, and a game that has spent its budget goes back
+to the browser's voices rather than quietly spending more. A whole game's
+narration is a few cents.
+
+Narration stops at the **lower** of the game's own `budget_usd` and
+`DND_TTS_MAX_USD` (default $10), a ceiling the server owns and a submitted
+config cannot raise — `POST /api/games` takes no credential, so left alone a
+stranger picks the ceiling (`TTS-COSTS.md` §1). That bounds one game; it does
+not bound how many games a stranger may create, which needs spectator
+authentication the app does not have.
+
+A `budget_usd` that is not a finite number is refused outright at game
+creation: `float("NaN")` passes coercion and then compares False against
+everything, so a NaN budget is not a large budget — it is the absence of every
+budget check in the app, `Game._check_budget` included.
+
+A game that states no `budget_usd` gets `GameConfig`'s default rather than a
+blank cheque, and a zero or negative budget refuses everything — the
+orchestrator halts at `total_usd >= budget_usd`, so zero is a game already over
+rather than a game with no ceiling.
+
+A clip about to be synthesized **holds its own cost against the game** until it
+is charged or abandoned, so eight spectators asking for eight different lines
+at the same moment cannot each read the same below-budget total and each go to
+Polly. Eight asking for the *same* line is the other half of that: they queue
+on one gate, one pays, and the rest are served free — being refused for a clip
+someone else is a moment from making free would be read by the page as a
+settled refusal and cost server voices for the whole game. A clip that would
+take the game over is refused before the call, which is stricter than the
+model-call check (that one stops the game once it already has) — erring toward
+stopping is the house style. A clip **already paid for is
+served whatever the budget says**: the budget governs spend, and re-reading a
+line is not spend, so a game that has run out of money stays listenable to the
+end of its transcript.
+
+Every clip is cached on disk under `data/tts`, keyed by the voice and the exact
+SSML document sent, so a line is paid for once however many times it is replayed — which matters,
+because the playhead is designed to be run backwards. Deleting the cache is
+safe and costs only the re-synthesis. Clip URLs carry the probe's `config` fingerprint — the engine, the language,
+the DM's voice, the roster, and a digest of `tts/voices.py` itself, since the
+casting and the SSML decide the audio too — so changing any of them retires the
+copies in every browser rather than leaving them to be replayed for a year.
+`DND_TTS=0` switches server voices off entirely; mock games never use them unless `DND_TTS=1` says so, because mock
+mode is the mode that costs nothing.
 
 ### The playhead
 
@@ -349,12 +482,19 @@ The other half of the fix is upstream — the DM's word ceilings
 (`agents/dm.py`) are a *listening* budget, roughly 150 words a minute of
 speech, not just a token budget.
 
-This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
-the device and it costs nothing, so voice quality is whatever the OS ships.
-Server-rendered voices (Amazon Polly, Cartesia and the like) would be a later,
-paid option. Selection and wording live in `web/static/speech.js`, a
-dependency-free module that `node` can exercise directly; the playhead, the
-transport and the speech calls are in `app.js`.
+Which words are said, and by whom, is decided in one place for both engines:
+`web/static/speech.js`, a dependency-free module that `node` can exercise
+directly. It turns an event into a phrase and a **voice key** (`dm`, a party
+member's id, `npc`, `monster:<id>`); the browser either speaks that itself or
+sends the key and the words to `GET /api/games/<id>/tts`, which deals the key a
+Polly voice — the same FNV-1a hash on both sides, so an actor keeps its seat.
+Casting, SSML and the cache are in `tts/`; the playhead, the transport and both
+sets of playback calls are in `app.js`.
+
+A tab in the background still stops the narrator. Server audio would play there
+perfectly well, but a tab nobody is looking at would go on holding the game for
+a narrator nobody is listening to, so the rule stays until that is decided
+separately.
 
 ## Sourcing audio
 

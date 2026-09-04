@@ -30,7 +30,8 @@
 # the root shell's copies. The process gets them from run.sh, not from pm2.
 #
 # The set of keys is KNOWN_KEYS below (one per LLM platform or inference host
-# the app can seat at the table — llm/providers.py PROVIDERS, same names). Any subset is fine: only ANTHROPIC_API_KEY is warned about
+# the app can seat at the table — llm/providers.py PROVIDERS, same names —
+# plus the AWS pair that Amazon Polly reads the game aloud with). Any subset is fine: only ANTHROPIC_API_KEY is warned about
 # when missing, because the default DM needs it; a seat whose platform has
 # no key fails at game creation with a message naming the variable. A new
 # platform needs no code change here — DNDSIM_KEYS overrides the list.
@@ -60,11 +61,18 @@ PORT="${DNDSIM_PORT:-8071}"
 KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment:/var/www/ffc/server/.env}"
 IFS=: read -r -a KEY_SOURCES <<< "$KEY_SOURCE"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
-# The platform API keys, one per LLM platform: adopted from KEY_SOURCE into
-# ENV_FILE by deploy, unset for pm2's launch, reported by status/keys. Names
-# only ever appear in output — never values. DNDSIM_KEYS (space-separated)
-# replaces the list, so a new platform needs no code change.
-DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY SILICONFLOW_API_KEY DEEPINFRA_API_KEY"
+# The platform API keys, one per LLM platform, and the AWS credentials Polly
+# narration needs: adopted from KEY_SOURCE into ENV_FILE by deploy, unset for
+# pm2's launch, reported by status/keys. Names only ever appear in output —
+# never values. DNDSIM_KEYS (space-separated) replaces the list, so a new
+# platform needs no code change.
+#
+# AWS_REGION is on the list and is not a secret; it is here because boto3 has
+# to read it from the same .env as the pair it goes with, and because a
+# credential adopted without its region is a narrator that cannot start.
+# CARTESIA_API_KEY stays off the list: it is text-to-speech this app does not
+# use, and adopting a key nothing reads only spreads it further.
+DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY SILICONFLOW_API_KEY DEEPINFRA_API_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION"
 read -r -a KNOWN_KEYS <<< "${DNDSIM_KEYS:-$DEFAULT_KNOWN_KEYS}"
 REQUIRED_KEY="ANTHROPIC_API_KEY"   # the default DM's platform; the only key whose absence is a warning
 REPO="ivjames/dnd-sim"
@@ -115,8 +123,11 @@ needs, and a seat whose platform has no key fails at game creation naming it):
   ANTHROPIC_API_KEY  OPENAI_API_KEY  GEMINI_API_KEY (or GOOGLE_API_KEY, adopted
   under the GEMINI name)  XAI_API_KEY  MISTRAL_API_KEY  DEEPSEEK_API_KEY
   SILICONFLOW_API_KEY  DEEPINFRA_API_KEY  (the last two are hosts, seated as
-  siliconflow:<id> / deepinfra:<id>; CARTESIA_API_KEY in the store is
-  text-to-speech, not an LLM platform, and is deliberately not on this list)
+  siliconflow:<id> / deepinfra:<id>; CARTESIA_API_KEY in the store is a
+  text-to-speech key this app does not use, and is deliberately not on this list)
+  AWS_ACCESS_KEY_ID  AWS_SECRET_ACCESS_KEY  AWS_REGION  — Amazon Polly, which
+  reads the game aloud. Without them the spectator's browser speaks it instead,
+  which costs nothing and sounds like it.
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
      DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment:/var/www/ffc/server/.env),

@@ -527,11 +527,17 @@ class Game:
             tb = traceback.format_exc()[-1500:]
             self._safe_emit("error", self.error, data={"traceback": tb})
         finally:
+            # From the locked snapshot, not from `by_role` directly: narration
+            # is charged from request threads, and `Ledger._row` can insert a
+            # key mid-iteration — which raises "dictionary changed size during
+            # iteration" while building these arguments, and takes the final
+            # cost event and `bus.close()` down with it.
+            spend = self.ledger.to_dict()
             self._safe_emit(
                 "cost",
-                f"Total spend ${self.ledger.total_usd:.4f} over "
-                f"{sum(v['calls'] for v in self.ledger.by_role.values())} model calls.",
-                data=self.ledger.to_dict(),
+                f"Total spend ${spend['total_usd']:.4f} over "
+                f"{spend['calls']} model calls.",
+                data=spend,
             )
             self.bus.close()
 
