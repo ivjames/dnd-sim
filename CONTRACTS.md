@@ -1479,3 +1479,40 @@ still in the air.
 
 Deaths from failed death saves are untouched. `advance_turn` rolls them
 between turns, where there is no narration for them to wait behind.
+
+### 2026-09-04 — web — `api()` errors carry their status; the hold latches only on one
+
+The spectator page's narration hold is a lease renewed every 4 s (the
+2026-09-04 amendment above). `voiceHoldSend`'s rejection handler latched
+`V.holdBroken = true` — stop asking for the rest of this game — on **any**
+rejection, its comment naming 404/409/501 as though those were the only ones
+possible. They are not: `api()` rejects on a dropped connection, a 502 while
+nginx restarts under a deploy, any 5xx. One of those ended holding for the rest
+of the page's life, and nothing re-armed it short of switching games or
+reloading; the game then ran on at `tempo_ms` and the narrator fell arbitrarily
+far behind, silently. A spectator reported 43 lines.
+
+1. **`api()` attaches the status to the error it throws**: `err.status =
+   r.status`, alongside the unchanged message. Additive — every existing catch
+   reads `err.message` and is untouched — and deliberately absent when `fetch`
+   itself rejects, so no `status` means "no server answered" rather than some
+   code standing in for one. It is the only way a caller can tell a refusal
+   from a blip: the message is the server's own words whenever there are any,
+   and carries no code.
+
+2. **The hold gives up only on 404 / 409 / 501** — the three `hold()` in
+   `web/routes/api.py` returns that mean this game cannot be held (no such
+   game, running in another process, a game object without the method). Not the
+   400 for a non-numeric `seconds`, which is the page's own bug, and not a 5xx.
+
+3. **Anything else is retried, with a bounded back-off.** The hold stays wanted
+   and the next tick asks again, delayed by one `HOLD_TICK` per consecutive
+   failure up to `HOLD_RETRY_MAX` (60 s), cleared by a success and by
+   `voiceReset`. So a blip costs one tick and a genuinely dead endpoint is
+   asked once a minute rather than every four seconds forever. This is the one
+   qualification on "the client renews every 4 s" in the amendment above.
+
+Client-side only: no route, no payload and no `Game` method changes.
+`voiceOnGameEnd` still sets `holdBroken` outright — the game is over, there is
+nothing left to hold — and a backgrounded tab still drops its lease, which is a
+separate deliberate rule and not this bug.
