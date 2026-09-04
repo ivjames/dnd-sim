@@ -27,7 +27,13 @@ MAX_RECENT_EVENTS = 12
 _SKIP_KINDS = {"roll", "turn_start", "turn_end", "round_start", "system", "cost"}
 
 
-#: How a character's stated gender is read as pronouns for narration.
+#: How a character's LEGACY stated gender is read as pronouns for narration.
+#:
+#: A party spec states `pronouns` now, and where it does this table is not
+#: consulted at all: the authored answer is already the thing this column
+#: wants, and reading it needs no inference. The table remains for the older
+#: `gender` key, which a stranger's config and a game persisted before the
+#: change still carry.
 #:
 #: The spellings are exactly those `tts.voices.GENDERS` accepts, and
 #: `tests/orchestrator/test_narration_attribution.py` runs the two against each other
@@ -58,11 +64,19 @@ DEFAULT_PRONOUNS = "they/them"
 def pronouns_for(c: Any) -> str:
     """The pronouns narration should use for `c` — from its sheet, or the default.
 
+    A stated `pronouns` is used **as written**: it is already the answer this
+    column asks for, and the same authored string is what `tts.voices` reads to
+    pick a voice, so the DM narrates a character in the pronouns it is spoken
+    in. A spec that states only the older `gender` is read through `PRONOUNS`.
+
     Only a character sheet can carry an answer, and only where the party spec
     that built it stated one. Nothing is inferred from a name, a class or a
     stat block.
     """
     sheet = getattr(c, "sheet", None)
+    said = str(getattr(sheet, "pronouns", "") or "").strip()
+    if said:
+        return said
     stated = str(getattr(sheet, "gender", "") or "").strip().lower()
     return PRONOUNS.get(stated, DEFAULT_PRONOUNS)
 

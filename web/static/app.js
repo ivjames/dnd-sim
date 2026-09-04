@@ -1972,21 +1972,69 @@
     return isFinite(n) && n > 0 && n <= CHILD_MAX_AGE;
   }
 
-  // One row per seat: the character's name, and whether its voice is an
-  // adult's or a child's. Polly's roster has children's voices in it, and the
-  // server deals one only to a seat whose party spec asks for it — this is
-  // where a scenario is asked. Age is the only voice trait editable here: it
-  // is the one a config is routinely silent about and a listener notices
-  // immediately, where choosing a character's gender for them is writing a
-  // fact into someone else's character sheet (README, Spoken narration).
-  function renderPartyAges(party) {
+  // The pronoun sets the panel offers, and the empty answer that is the
+  // default. A character states pronouns rather than a gender: pronouns are a
+  // fact its own persona already carries, and `gender_for_pronouns` in
+  // tts/voices.py is the one place that turns them into a voice pool (he →
+  // Polly's male voices, she → its female ones, everything else → the whole
+  // roster). The list is not a taxonomy of who a character may be: a config
+  // may state any set it likes, and one it states that is not offered here is
+  // added to its own row below rather than rounded off to a neighbour.
+  var PRONOUN_CHOICES = ['she/her', 'he/him', 'they/them'];
+  var PRONOUN_UNSTATED = '— not stated —';
+
+  // What a stated `pronouns` looks like in a select: an option value is a
+  // string, and a config's is whatever JSON held.
+  function pronounText(said) {
+    return String(said === null || said === undefined ? '' : said).trim();
+  }
+
+  // What this seat's select offers: the three above, plus whatever the config
+  // already says if that is something else. A config's own spelling wins where
+  // the two differ only in case ("He/Him"), so the row shows the character as
+  // written rather than a tidied-up version of it.
+  function pronounOptions(said) {
+    var opts = PRONOUN_CHOICES.slice();
+    var s = pronounText(said);
+    if (!s) return opts;
+    var at = -1;
+    opts.forEach(function (o, i) { if (o.toLowerCase() === s.toLowerCase()) at = i; });
+    if (at >= 0) opts[at] = s; else opts.push(s);
+    return opts;
+  }
+
+  // One row per seat: the character's name, the pronouns it goes by, and
+  // whether its voice is an adult's or a child's. Both narrow who the server
+  // may deal the seat and nothing else — the engine never sees either, and the
+  // browser's fallback voices cannot answer them at all.
+  //
+  // A config that states only the older `gender` key shows its pronoun row as
+  // unstated, and leaving it that way changes nothing: the server still reads
+  // that key. Filling the row in from it would be inferring pronouns from a
+  // gender, which is the direction this deliberately does not run — the
+  // mapping is pronouns -> a set of voices, and it is not reversible.
+  function renderPartySeats(party) {
     var host = $('ng-party');
     if (!host) return;
     clear(host);
     (party || []).forEach(function (member, i) {
       if (!member || typeof member !== 'object') return;
-      var row = el('div', 'party-age');
+      var row = el('div', 'party-seat');
       row.appendChild(el('span', null, member.name || member.id || 'Seat ' + (i + 1)));
+
+      var pro = el('select');
+      pro.id = 'ng-pronouns-' + i;
+      var blank = el('option', null, PRONOUN_UNSTATED);
+      blank.value = '';
+      pro.appendChild(blank);
+      pronounOptions(member.pronouns).forEach(function (said) {
+        var o = el('option', null, said);
+        o.value = said;
+        pro.appendChild(o);
+      });
+      pro.value = pronounText(member.pronouns);
+      row.appendChild(pro);
+
       var sel = el('select');
       sel.id = 'ng-age-' + i;
       ['adult', 'child'].forEach(function (age) {
@@ -2001,13 +2049,33 @@
   }
 
   // Write the panel's answers back into the party spec that is about to be
-  // submitted. "adult" DELETES the key rather than stating it: an unstated age
-  // already casts as an adult, and a config should not claim a fact about a
+  // submitted. Both defaults DELETE their key rather than stating it: an
+  // unstated age already casts as an adult and unstated pronouns already cast
+  // from the whole pool, and a config should not claim a fact about a
   // character that nobody chose to state.
-  function applyPartyAges(party) {
+  //
+  // Stating pronouns also drops a legacy `gender`, which the server would
+  // ignore anyway once pronouns are present — the panel has just answered that
+  // question, and leaving both would leave the config arguing with itself.
+  // Leaving the row unstated touches neither key: an answer nobody gave is not
+  // an answer to write down.
+  //
+  // A row still showing the config's own answer is not written back AT ALL,
+  // rather than written back as the string the select holds. The select can
+  // only hold a trimmed string, so re-stating one would rewrite `" they/them "`
+  // and turn a `pronouns` that JSON gave as a list or an object into
+  // "[object Object]" — a config nobody touched, quietly corrupted by opening
+  // the panel.
+  function applyPartySeats(party) {
     (party || []).forEach(function (member, i) {
+      if (!member || typeof member !== 'object') return;
+      var pro = $('ng-pronouns-' + i);
+      if (pro && pro.value !== pronounText(member.pronouns)) {
+        if (pro.value) { member.pronouns = pro.value; delete member.gender; }
+        else delete member.pronouns;
+      }
       var sel = $('ng-age-' + i);
-      if (!sel || !member || typeof member !== 'object') return;
+      if (!sel) return;
       if (sel.value === 'child') member.age = 'child';
       else delete member.age;
     });
@@ -2025,7 +2093,7 @@
     $('ng-temp').value = cfg.player_temperature !== undefined ? cfg.player_temperature : 1;
     $('ng-setting').value = cfg.setting || '';
     $('ng-tone').value = cfg.tone || 'classic heroic';
-    renderPartyAges(cfg.party);
+    renderPartySeats(cfg.party);
   }
 
   function submitNewGame(e) {
@@ -2040,7 +2108,7 @@
     cfg.player_temperature = Math.min(1, Math.max(0, num($('ng-temp').value, 1)));
     cfg.setting = $('ng-setting').value;
     cfg.tone = $('ng-tone').value;
-    applyPartyAges(cfg.party);
+    applyPartySeats(cfg.party);
 
     var btn = $('ng-start');
     btn.disabled = true;

@@ -16,7 +16,7 @@
       "level": 3,
       "abilities": {"STR": 16, "DEX": 13, "CON": 15, "INT": 11, "WIS": 13, "CHA": 12},
       "equipment": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "Militia officer of a town that disbanded its militia. Wants the road open and the toll gone, in that order, and will pay the toll herself to buy an hour of talk. Reads every room for exits. Grows short-tempered when the party stalls, and says the quiet part at the worst moment."
     },
     {
@@ -27,7 +27,7 @@
       "level": 3,
       "abilities": {"STR": 9, "DEX": 17, "CON": 14, "INT": 13, "WIS": 12, "CHA": 15},
       "equipment": "default",
-      "gender": "female",
+      "pronouns": "she/her",
       "persona": "Ran contraband on this road for six years and knows half these bandits by their first names, which she has not mentioned. Wants to settle this with money and leverage. Lies fluently and to the party as well when it is convenient. Will slip out of a conversation to go look at something."
     },
     {
@@ -39,7 +39,7 @@
       "abilities": {"STR": 13, "DEX": 10, "CON": 16, "INT": 11, "WIS": 17, "CHA": 12},
       "equipment": "default",
       "spells": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "Buried the last tollkeeper and is not eager to bury the next. Wants somebody to admit out loud who burned the old tollhouse. Believes a man robbing travellers is still a man, argues it at length, and will heal anyone bleeding in front of him regardless of side. This gets him hit."
     },
     {
@@ -51,7 +51,7 @@
       "abilities": {"STR": 8, "DEX": 14, "CON": 13, "INT": 17, "WIS": 12, "CHA": 10},
       "equipment": "default",
       "spells": "default",
-      "gender": "male",
+      "pronouns": "he/him",
       "persona": "Crown surveyor with a writ nobody out here respects. Wants the ledger from the tollhouse more than he wants the tollhouse. Treats bandits as an administrative irregularity until one is close enough to touch him. Escalates far too quickly, then defends it with citations."
     }
   ],
