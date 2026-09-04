@@ -465,9 +465,16 @@ body {
 }
 
 /* ---------- map ---------- */
+/* Centred, but SAFELY centred: below the cell floor the map is bigger than
+   this box, and a plain `center` puts half of that overflow before the scroll
+   origin where no scroll can reach it — on a short laptop a 12-row map lost
+   the top half of its first row. `safe` falls back to start alignment exactly
+   when the item overflows, which is the only case that matters here; the
+   unprefixed pair stays first for the browsers that do not know the keyword. */
 .canvas-wrap {
   flex: 1 1 auto; min-height: 0; width: 100%;
   display: flex; align-items: center; justify-content: center;
+  align-items: safe center; justify-content: safe center;
   overflow: auto;
 }
 /* Both dimensions are set by drawGrid(), which is the only thing that knows
