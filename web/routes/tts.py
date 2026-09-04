@@ -316,6 +316,84 @@ def capability():
     )
 
 
+#: How many seats one cast preview will answer for.
+#:
+#: A party is four, and the largest scenario in `examples/` is four. The cap is
+#: here because the route is anonymous and takes a list: it bounds the work a
+#: caller can ask for, and a config that somehow carried fifty seats would be a
+#: fifty-line panel nobody could read anyway.
+MAX_CAST_SEATS = 16
+
+
+@bp.post("/tts/cast")
+def cast_preview():
+    """Who will read each seat: the voice, its accent, and its gender.
+
+    The new-game panel lets a seat be cast as a child, and that is one visible
+    control over an outcome — which of Polly's voices reads your cleric, and
+    what it sounds like — that is otherwise decided silently. This answers it
+    before the game exists, so the panel can show the casting it is about to
+    buy rather than only the one trait it can change.
+
+    Anonymous, like the rest of the read side, and safe to be: it spends
+    nothing, synthesises nothing and writes no cache entry. It is `cast_for`
+    over the roster the service has already listed — the same function, the
+    same roster and the same hash that `speak` will use, which is the point.
+    Being the same call is what makes the panel's answer true rather than a
+    second implementation of the casting rules that agrees with the first
+    until someone edits one of them.
+
+    Traits come from the request here, unlike `speak` (see `_member_for`),
+    because there is nothing to protect: no clip is rendered, no money moves
+    and the reply is three strings a caller could have worked out from the
+    roster anyway. What it must not become is a way to *hear* an arbitrary
+    voice; it never renders one.
+    """
+    svc = _service()
+    if svc is None or not svc.available():
+        # The same shape as `/api/tts` refusing, so a page that has already
+        # decided to use its own voices does not need a second vocabulary for
+        # the reason. A cast nobody will hear is worse than no cast.
+        return jsonify({"available": False, "seats": []})
+
+    body = request.get_json(silent=True) or {}
+    party = body.get("party")
+    if not isinstance(party, list):
+        return _err("party must be a list")
+    if len(party) > MAX_CAST_SEATS:
+        return _err(f"at most {MAX_CAST_SEATS} seats")
+
+    from tts.voices import accent_for  # noqa: PLC0415 - keep `web` importable without boto3
+
+    seats = []
+    for member in party:
+        member = member if isinstance(member, dict) else {}
+        key = str(member.get("id") or "")[:MAX_KEY]
+        if not key:
+            # A seat with no id has no seat: `cast_for` reads an empty key as
+            # the DM, and showing the narrator's voice against a player's name
+            # would be a confident wrong answer.
+            seats.append({"id": "", "voice": None})
+            continue
+        age = member.get("age")
+        cast = svc.cast(key, str(member.get("gender") or ""), "" if age is None else str(age))
+        voice = next(
+            (v for v in svc.voices(cast.engine) if v.id == cast.voice_id), None
+        )
+        seats.append(
+            {
+                "id": key,
+                "voice": cast.voice_id,
+                "language": cast.language,
+                "accent": accent_for(cast.language),
+                # Polly's word for the voice, lowercased: it describes the
+                # recording, not the character, and the panel says so.
+                "gender": (getattr(voice, "gender", "") or "").lower(),
+            }
+        )
+    return jsonify({"available": True, "seats": seats})
+
+
 @bp.get("/games/<game_id>/tts")
 def speak(game_id: str):
     """One line, in one seat's voice, as `audio/mpeg`.

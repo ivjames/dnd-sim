@@ -591,9 +591,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .party-ages { display: grid; gap: 6px; }
-.party-age { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
-.party-age span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Name, the one control, and — on the line under both — who that casting has
+   actually dealt the seat. The cast spans the full width so a long voice line
+   does not squeeze the name. */
+.party-age {
+  display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 4px 10px;
+  align-items: center;
+}
+.party-age > span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .party-age select { margin: 0; }
+.party-cast {
+  grid-column: 1 / -1;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+}
+.party-cast:empty { display: none; }
 
 /* ---------- responsive ----------
    Down to a tablet the deck stays above the transcript, which is the point of

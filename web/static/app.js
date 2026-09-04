@@ -35,6 +35,7 @@
     snapTimer: null,
     pollTimer: null,
     loadGen: 0,         // bumped per selectGame; a stale load must not finish
+    castToken: 0,       // bumped per cast preview; a stale answer must not land
     presets: [],
     // Write access. Reading a game, listing games and the stream are anonymous
     // and stay that way; creating a game, talking to the table and pause/
@@ -1993,9 +1994,60 @@
         sel.appendChild(o);
       });
       sel.value = isChildAge(member.age) ? 'child' : 'adult';
+      sel.addEventListener('change', function () { refreshPartyCast(party); });
       row.appendChild(sel);
+      var cast = el('span', 'party-cast', '');
+      cast.id = 'ng-cast-' + i;
+      row.appendChild(cast);
       host.appendChild(row);
     });
+    refreshPartyCast(party);
+  }
+
+  // What the age dropdown actually buys: the voice that will read the seat,
+  // its accent and its gender. The panel could show the one trait it lets you
+  // change and stay silent about the outcome, which is the state it was in —
+  // but the outcome is the interesting half, and gender is the one voice trait
+  // the config states and the panel never showed at all.
+  //
+  // Asked of the server, never worked out here. `tts/voices.py: cast_for` is
+  // the one place that decides this; a copy of the rules in JS would agree
+  // with it exactly until somebody edited one of them, and the failure would
+  // be a panel that names a voice the game does not use.
+  function refreshPartyCast(party) {
+    var seats = (party || []).map(function (m) {
+      return (m && typeof m === 'object')
+        ? { id: m.id, gender: m.gender, age: m.age } : {};
+    });
+    seats.forEach(function (seat, i) {
+      var sel = $('ng-age-' + i);
+      if (sel) seat.age = sel.value === 'child' ? 'child' : undefined;
+    });
+    // A stale answer must not land on a newer question: the scenario picker
+    // can change the whole party while a request is in flight.
+    var token = ++S.castToken;
+    api('/api/tts/cast', { method: 'POST', body: { party: seats } })
+      .then(function (r) {
+        if (token !== S.castToken) return;
+        var got = (r && r.seats) || [];
+        seats.forEach(function (_, i) {
+          var box = $('ng-cast-' + i);
+          if (!box) return;
+          var seat = got[i];
+          box.textContent = (r && r.available && seat && seat.voice)
+            ? [seat.voice, seat.accent, seat.gender].filter(Boolean).join(' \u00b7 ')
+            : '';
+        });
+      })
+      .catch(function () {
+        if (token !== S.castToken) return;
+        // Narration is optional and this is a label on it. Say nothing rather
+        // than putting an error where a voice name goes.
+        seats.forEach(function (_, i) {
+          var box = $('ng-cast-' + i);
+          if (box) box.textContent = '';
+        });
+      });
   }
 
   // Write the panel's answers back into the party spec that is about to be

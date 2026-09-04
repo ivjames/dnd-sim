@@ -274,6 +274,7 @@ POST /api/games/<id>/pause | /resume | /stop                                   *
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202                                  **write token**
 GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
+POST /api/tts/cast       {party}       {"available":bool,"seats":[{"id","voice","language","accent","gender"}]} — who will read each seat, before the game exists; casts nothing, spends nothing
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 Routes marked **write token** require the `X-Dnd-Token` header to match
@@ -1427,3 +1428,53 @@ children, because there is nothing to ask.
    reports no age, exactly as it reports no gender, and inferring one from
    voice names across every OS and locale would be a guess dressed as data. A
    session on the fallback engine casts as it always did.
+
+---
+
+### 2026-09-04 — tts/ + web/ — the panel says who will read each seat
+
+The new-game panel gained a per-seat `adult`/`child` control (the age
+amendment above) and stopped there: one visible knob over an outcome — which
+of Polly's voices reads your cleric, and what it sounds like — that is
+otherwise decided silently by a hash. Gender is in the party spec and was
+never shown at all; accent is not in the spec, falls out of the roster, and a
+listener notices it in the first sentence.
+
+1. **`tts/voices.py: accent_for(language) -> str`**, with the `ACCENTS` table
+   behind it: a Polly `LanguageCode` in the words a listener would use —
+   `en-GB-WLS` is *Welsh* and is keyed on the full code, because
+   Welsh-accented English is not `en-GB`. An unlisted locale is returned **as
+   its code**, not guessed at: `voices()` reads the live roster, so a locale
+   Amazon adds tomorrow has to remain describable, and a guess from a table
+   written today would eventually be a confident lie about which voice a
+   listener is hearing. Pure, and every voice on `STANDARD_ENGLISH` is held to
+   having a name by `tests/tts/test_voices.py`.
+
+2. **`POST /api/tts/cast`** answers, for a proposed party, the voice each seat
+   is dealt, its accent and the gender Polly records for the recording. Body
+   `{"party":[{"id","gender","age"}…]}`; at most `MAX_CAST_SEATS` (16) seats;
+   a member with no `id` comes back with `"voice": null`, because `cast_for`
+   reads an empty key as the DM and the narrator's voice printed against a
+   player's name would be a confident wrong answer. A server with no Polly
+   answers `{"available": false, "seats": []}` — the same shape `/api/tts`
+   refuses in — since a cast nobody will hear is worse than no cast.
+
+   **Anonymous, and safe to be.** It renders nothing, spends nothing and
+   writes no cache entry; it is `cast_for` over a roster the service has
+   already listed. That is the opposite of the rule on `GET
+   /api/games/<id>/tts`, where traits are read from the game's own config and
+   never the request (narration amendment §5) — there the request could walk
+   the roster a *paid clip* at a time. Here there is no clip. What this must
+   never become is a way to *hear* an arbitrary voice.
+
+3. **One implementation of the casting, asked twice.** The panel does not
+   compute the cast; `web/static/app.js` asks this route and prints the
+   answer. A copy of the rules in JS would agree with `cast_for` exactly until
+   somebody edited one of them, and the failure mode is a panel that names a
+   voice the game does not use. `web/tests/test_tts_api.py` checks the preview
+   against the `X-Dnd-Voice` of the clip the paid endpoint then serves for the
+   same seat.
+
+Unchanged: the party spec (§1.3 and the age amendment), what the engine sees,
+and which traits the panel may edit — age remains the only one, for the reason
+stated there.

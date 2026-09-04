@@ -16,6 +16,7 @@ import subprocess
 import pytest
 
 from tts.voices import (
+    ACCENTS,
     CHILD_VOICE_IDS,
     MONSTER_VTL,
     STANDARD_ENGLISH,
@@ -27,6 +28,7 @@ from tts.voices import (
     is_child_voice,
     normalize_age,
     normalize_gender,
+    accent_for,
     ssml_for,
 )
 
@@ -266,3 +268,26 @@ def test_the_engine_travels_with_the_cast():
     # Same seat, same voice — only what can be said about it differs.
     assert on_neural.voice_id == monster.voice_id
     assert on_neural.cache_key() != monster.cache_key()
+
+
+def test_every_voice_on_the_roster_can_say_where_it_is_from():
+    """The panel prints this next to a character's name, so a roster voice
+    without an accent would print a language tag at a reader."""
+    for voice in STANDARD_ENGLISH:
+        accent = accent_for(voice.language)
+        assert accent, voice.id
+        assert accent != voice.language, f"{voice.id} has no accent name for {voice.language}"
+    # Welsh-accented English is not Welsh, and is keyed on the full code.
+    assert accent_for("en-GB-WLS") == "Welsh"
+    assert accent_for("en-GB") == "British"
+
+
+def test_an_accent_nobody_has_named_is_reported_rather_than_guessed():
+    """`voices()` reads the live roster, so a locale Amazon adds tomorrow has
+    to be describable — and a guess would eventually be a lie about which
+    voice a listener is hearing."""
+    assert accent_for("en-GB-SCT") == "en-GB-SCT"
+    assert accent_for("") == ""
+    assert accent_for(None) == ""
+    # Case is Polly's, not ours.
+    assert accent_for("EN-us") == ACCENTS["en-us"]

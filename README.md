@@ -274,6 +274,7 @@ POST /api/games/<id>/pause|resume|stop  → 202                                 
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)             ← token
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
+POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
@@ -449,6 +450,18 @@ with no children's voices at all — every language but US English — casts a
 stated child from the adult voices, a worse match rather than a silence. The
 **New game** panel has a row per seat for this, and choosing *adult* there
 writes nothing: an unstated age already casts as one.
+
+**And the panel says who that dealt you** — under each seat, the voice it will
+be read by, that voice's accent, and the gender Polly records for the
+recording: `Geraint · Welsh · male`. Age is the only trait editable there, so
+without this the panel showed the one knob and stayed silent about the outcome
+it turns, while gender — which the config *does* state — was never shown at
+all. The line comes from `POST /api/tts/cast`, which is `cast_for` over the
+roster the server has already listed: the same function, roster and hash that
+will read the game, so the panel cannot name a voice the game then does not
+use. It renders nothing and spends nothing, and a server without Polly answers
+that it has no cast — the browser's own voices will read the game, and they
+are not this roster.
 
 **The browser fallback ignores gender and age.** `SpeechSynthesisVoice` has no
 gender or age attribute in any browser, and inferring one from voice names
