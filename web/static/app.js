@@ -146,7 +146,17 @@
     var ok = canWrite();
     var unconfigured = S.writes === 'unconfigured';
     $('btn-new').hidden = !ok;
-    $('btn-unlock').hidden = ok || unconfigured;
+    // Reachable in both states, because it is the only way into the panel and
+    // the panel is the only way to Forget a token. Hiding it once unlocked
+    // would leave a shared browser holding the credential with no way out
+    // short of clearing site data. Hidden only where there is nothing to
+    // enter, which is a server with no token set.
+    var unlock = $('btn-unlock');
+    unlock.hidden = unconfigured;
+    unlock.textContent = ok ? 'Token' : 'Unlock';
+    unlock.title = ok
+      ? 'Forget the write token this browser is holding'
+      : 'Enter the write token to create games and talk to the table';
     $('write-controls').hidden = !ok;
     var locked = $('write-locked');
     if (ok) {
@@ -160,7 +170,6 @@
           'note needs the write token — press Unlock.';
       locked.hidden = false;
     }
-    if (ok) $('unlock').hidden = true;
   }
 
   function openUnlock() {

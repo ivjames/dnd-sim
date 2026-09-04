@@ -259,3 +259,107 @@ def test_the_page_sends_the_header_the_server_reads():
     assert re.search(r"var WRITE_HEADER = '%s';" % re.escape(WRITE_HEADER), js), (
         "app.js and web/auth.py disagree on the header name"
     )
+
+
+# -- the gate's own rendering, driven through node ----------------------------
+#
+# `renderWriteAccess()` decides what an anonymous visitor may see, and it is the
+# one piece of the gate that lives in JavaScript. `app.js` is an IIFE and cannot
+# be `require`d, so the function's real source is lifted out of the shipped file
+# and run against stub elements — the test exercises what deploys, not a
+# transcription of it.
+
+import json  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+APP_JS = os.path.join(ROOT, "web", "static", "app.js")
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+
+
+def function_source(name: str) -> str:
+    """The text of a top-level `function name() {...}` in app.js."""
+    with open(APP_JS, encoding="utf-8") as fh:
+        src = fh.read()
+    start = src.index("function %s(" % name)
+    depth, i = 0, src.index("{", start)
+    for i in range(i, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    raise AssertionError("unbalanced braces in %s" % name)
+
+
+ELEMENTS = ["btn-new", "btn-unlock", "write-controls", "write-locked", "unlock"]
+
+
+def render(writes: str, authed: bool) -> dict:
+    """Run the real renderWriteAccess() in this state; return the DOM it left."""
+    script = """
+    const IN = JSON.parse(process.argv[1]);
+    const els = {};
+    // `hidden: null` = untouched, so a test can tell "left alone" from "set".
+    for (const id of IN.elements) els[id] = { hidden: null, textContent: '', title: '' };
+    const $ = (id) => { if (!els[id]) throw new Error('no such element: ' + id); return els[id]; };
+    const S = { writes: IN.writes, authed: IN.authed };
+    const canWrite = () => S.authed;
+    %s
+    renderWriteAccess();
+    process.stdout.write(JSON.stringify(els));
+    """ % function_source("renderWriteAccess")
+    arg = json.dumps({"writes": writes, "authed": authed, "elements": ELEMENTS})
+    proc = subprocess.run(
+        ["node", "-e", script, arg], capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@needs_node
+def test_an_anonymous_visitor_sees_no_write_controls():
+    dom = render("token", False)
+    assert dom["btn-new"]["hidden"] is True
+    assert dom["write-controls"]["hidden"] is True
+    assert dom["btn-unlock"]["hidden"] is False       # the way in
+    assert dom["write-locked"]["hidden"] is False
+    assert "Unlock" in dom["write-locked"]["textContent"]
+
+
+@needs_node
+def test_forgetting_a_token_stays_reachable_once_unlocked():
+    """The panel holding Forget opens from this button and nothing else, so
+    hiding it when authenticated would leave a shared browser holding the
+    credential with no way out short of clearing site data."""
+    dom = render("token", True)
+    assert dom["btn-new"]["hidden"] is False
+    assert dom["write-controls"]["hidden"] is False
+    assert dom["btn-unlock"]["hidden"] is False
+    assert dom["btn-unlock"]["title"]
+    assert dom["write-locked"]["hidden"] is True
+
+
+@needs_node
+def test_the_panel_is_left_alone_by_the_render():
+    """`renderWriteAccess` runs on every auth answer and every refusal, so it
+    must not slam the modal shut on someone who opened it to press Forget.
+    `hidden` stays null here, meaning the function never assigned it —
+    `submitUnlock`, `forgetToken` and Cancel each close the panel themselves."""
+    for writes, authed in (("token", True), ("token", False), ("unconfigured", False)):
+        assert render(writes, authed)["unlock"]["hidden"] is None, (writes, authed)
+
+
+@needs_node
+def test_a_server_with_no_token_offers_nothing_to_unlock():
+    dom = render("unconfigured", False)
+    assert dom["btn-new"]["hidden"] is True
+    assert dom["btn-unlock"]["hidden"] is True        # there is nothing to enter
+    assert dom["write-controls"]["hidden"] is True
+    assert "no write token set" in dom["write-locked"]["textContent"]

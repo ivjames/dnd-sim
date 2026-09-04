@@ -1241,10 +1241,16 @@ reads the environment mid-request.
    `/api/auth` at start-up. The write controls — the New game button, the
    pause/resume/stop row and the DM-note form — are **not rendered** until the
    page holds a token the server accepts, so an anonymous visitor never sees a
-   control that can only 401; an Unlock panel takes the token and validates it
-   against `/api/auth` before storing it. `#ctl-note` stays outside the hidden
-   wrapper: load failures are reported there and every spectator needs to see
-   those. A 401 or 503 from any write re-renders the gate.
+   control that can only 401; a panel opened from the header takes the token
+   and validates it against `/api/auth` before storing it. That button stays
+   visible once unlocked (as "Token"), because the panel behind it is the only
+   way to reach Forget — hiding it would leave a shared browser holding the
+   credential with no way out short of clearing site data; it is hidden only
+   where the server has no token set. `renderWriteAccess()` never opens or
+   closes that panel, so an auth answer arriving while someone has it open does
+   not shut it. `#ctl-note` stays outside the hidden wrapper: load failures are
+   reported there and every spectator needs to see those. A 401 or 503 from any
+   write re-renders the gate.
 
 8. **Not built, deliberately.** No per-user identity, no revocation short of
    rotating the value and restarting, no rate limit. There is one writer here —

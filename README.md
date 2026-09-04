@@ -316,9 +316,13 @@ for good by the on-disk cache.
 
 In the browser: the New game button, the pause/resume/stop row and the DM-note
 form are not rendered until the page holds a token the server accepts — an
-anonymous visitor never sees a control that can only 401. **Unlock** takes the
-token, validates it against `/api/auth` before keeping it, and stores it in
-`localStorage` for that browser only; **Forget** clears it.
+anonymous visitor never sees a control that can only 401. The header button
+takes the token, validates it against `/api/auth` before keeping it, and stores
+it in `localStorage` for that browser only. It stays in the header once
+unlocked (labelled **Token** rather than **Unlock**), because the panel behind
+it is the only way to press **Forget**: on a shared browser that is the
+difference between signing out and clearing site data by hand. It is hidden
+only where the server has no token set, so there is nothing to enter.
 
 There is no per-writer identity and no revocation short of rotating the value
 in `.env` and restarting. With one writer, that is the whole story rather than
