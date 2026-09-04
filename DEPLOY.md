@@ -216,6 +216,43 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 `event:` lines should appear *as the game plays*, plus `: hb` heartbeats every
 15s. Everything arriving in one burst at the end means nginx is buffering.
 
+### That the monsters can speak
+
+`/api/tts` answering `available:true` says the table's engine has a roster; it
+does not say Polly will read a **monster** line. Those are the only seats that
+write `<amazon:effect vocal-tract-length>`, and the only ones routed to
+`DND_TTS_MONSTER_ENGINE` (standard) to do it, because that tag exists on no
+other engine. Polly errors on a tag its engine does not support rather than
+ignoring it, so a wrong monster document is a 502 per line — which the page
+answers by speaking that line in the spectator's own browser voice. The game
+sounds fine. Nothing on the page says otherwise.
+
+```bash
+cd /var/www/dndsim && (set -a; . ./.env; set +a; .venv/bin/python -m tools.polly_check)
+```
+
+**Source `.env` — the parentheses and the `set -a` are the point.** The keys and
+the `DND_TTS*` overrides live there and nowhere else in a shell's environment;
+`run.sh` sources them exactly this way before it execs python, and a hand-run
+`python -m` does not. Skip it and the check either reports exit 2 for missing
+credentials on a server whose narration is working, or quietly tests the default
+engines rather than the ones this deployment is configured for. The subshell is
+so `set -a` does not follow you into the rest of your session. Its first line of
+output names the engines and voice it is actually using — read it.
+
+Two clips against real Polly — one table line, one monster line — reporting the
+engine, voice, SSML, byte count and billed characters for each, and exiting
+non-zero if either fails. It uses a temporary cache directory and no game, so
+it neither fills `data/tts` nor charges a ledger; the two clips cost about
+$0.0005. `--dry-run` prints the documents without sending them, `--out DIR`
+keeps the mp3s to listen to.
+
+When a monster line does fail, `dndsim logs` is the only place it shows:
+
+```bash
+dndsim logs | grep 'tts failed'    # names the seat, the engine and the voice
+```
+
 ## Operations
 
 | Task | Command |
@@ -227,6 +264,7 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 | narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.narrator` in the ledger), each seat at its own engine's rate. A game's whole narration is ~$0.45 on the shipped neural/standard split, ~$0.12 with `DND_TTS_ENGINE=standard`; `DND_TTS=0` removes it entirely. |
 | clip cache | `du -sh data/tts` — safe to delete wholesale; the next listen re-synthesizes and re-pays. |
 | voices sound wrong | `curl -s localhost:8071/api/tts` says whether Polly answered and which engine; `available:false` means the page is using each spectator's own browser voices. |
+| monsters sound like everyone else | They are falling back to the browser's voices: `(set -a; . ./.env; set +a; .venv/bin/python -m tools.polly_check)` sends one real monster line and says why. `dndsim logs \| grep 'tts failed'` names the seat and engine of every refused line. |
 
 ## Overrides
 

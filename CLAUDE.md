@@ -130,7 +130,14 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   because `POST /api/games` is unauthenticated and the config's budget is
   whatever the caller asked for. `DND_TTS=0` turns it off; mock games never
   touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
-  its §6 records what Polly changed and what is still open.
+  its §6 records what Polly changed and what is still open. The monster seats
+  are the only ones that write `<amazon:effect vocal-tract-length>` and the
+  only ones routed to a second engine (standard) to do it, so a working table
+  proves nothing about them and a refused monster line is a 502 the page hides
+  by speaking that line itself: `tests/tts/test_polly_contract.py` holds every
+  document the app can emit against Amazon's published matrix, and
+  `python -m tools.polly_check` sends two real lines from the droplet, with
+  `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal

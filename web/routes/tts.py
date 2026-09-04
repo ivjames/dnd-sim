@@ -380,7 +380,18 @@ def speak(game_id: str):
             402,
         )
     except TTSError as exc:
-        current_app.logger.info("tts unavailable: %s", exc)
+        # Named down to the seat, the engine and the voice, because nothing a
+        # spectator can see distinguishes these. A 502 is one line spoken in
+        # the browser's own voice, and the page only gives up on server voices
+        # after three CONSECUTIVE failures — so a seat that fails every time
+        # while the rest of the table succeeds never trips that counter and
+        # never surfaces at all. The monster seats are exactly that shape: they
+        # render on their own engine with SSML no other seat writes. This log
+        # line is the only place the difference between "the monsters are all
+        # falling back" and "narration is fine" is visible, so it says which.
+        current_app.logger.warning(
+            "tts failed for %s on %s/%s: %s", key, cast.engine, cast.voice_id, exc
+        )
         return _err(str(exc), 502)
 
     return _audio(result.audio, result.cast.voice_id, etag)
