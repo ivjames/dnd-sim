@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>dnd-sim — audio picker</title>
+<style>
+/* Same candlelit palette as the spectator UI (web/static/style.css). */
+:root {
+  --bg:#14110e; --bg-panel:#1c1815; --bg-sunken:#100e0c;
+  --line:#332c25; --line-soft:#262019;
+  --ink:#e8dfd2; --ink-dim:#a2968a; --ink-faint:#6f665d;
+  --amber:#e2a33f; --amber-dim:#8a6524; --blood:#b4412f;
+  --green:#79a35c; --party:#6fa8c9;
+  --radius:8px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:14px; line-height:1.5; }
+body { display:flex; flex-direction:column;
+  background-image:radial-gradient(120% 80% at 50% -10%, #241d16 0%, var(--bg) 60%);
+  background-attachment:fixed; }
+h1,h2,h3 { margin:0; font-weight:600; }
+button { font:inherit; color:inherit; background:var(--bg-panel);
+  border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; }
+button:hover { border-color:var(--amber-dim); }
+button.primary { background:var(--amber-dim); border-color:var(--amber); color:#180f05; font-weight:600; }
+button:disabled { opacity:.45; cursor:default; }
+input,select,textarea { font:inherit; color:var(--ink); background:var(--bg-sunken);
+  border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+a { color:var(--party); }
+.mono { font-family:var(--mono); }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+header { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:10px 14px; border-bottom:1px solid var(--line);
+  background:rgba(20,17,14,.96); position:sticky; top:0; z-index:20; }
+header .brand { font-weight:700; letter-spacing:.02em; }
+header .brand .dot { color:var(--amber); }
+header .spacer { flex:1; }
+.meter { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-dim); }
+.meter .bar { width:120px; height:6px; background:var(--bg-sunken);
+  border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+.meter .bar i { display:block; height:100%; background:var(--amber); width:0%; }
+
+main { flex:1; display:grid; grid-template-columns:250px minmax(0,1fr) 300px;
+  gap:12px; padding:12px; align-items:start; min-height:0; }
+@media (max-width:1100px) { main { grid-template-columns:1fr; } }
+.panel { background:var(--bg-panel); border:1px solid var(--line);
+  border-radius:var(--radius); overflow:hidden; }
+.panel > h2 { padding:8px 12px; border-bottom:1px solid var(--line-soft);
+  font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--ink-dim); }
+.panel .body { padding:10px 12px; }
+.scroll { max-height:calc(100vh - 190px); overflow:auto; }
+
+/* cue list */
+.grouphead { padding:8px 12px 4px; font-size:11px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-faint); }
+.cue { display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:5px 12px; border:0; border-radius:0; background:none; }
+.cue:hover { background:var(--bg-sunken); border-color:transparent; }
+.cue.sel { background:#2a2119; box-shadow:inset 2px 0 0 var(--amber); }
+.cue .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cue .req { color:var(--amber-dim); font-size:11px; }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--line);
+  flex:0 0 auto; border:1px solid var(--line-soft); }
+.dot.done { background:var(--green); border-color:var(--green); }
+
+/* candidates */
+.cuehead { padding:10px 12px; border-bottom:1px solid var(--line-soft); }
+.cuehead .when { color:var(--ink-dim); font-size:13px; }
+.cuehead .facts { margin-top:6px; font-size:12px; color:var(--ink-faint); }
+.cand { display:flex; align-items:center; gap:10px; padding:7px 12px;
+  border-bottom:1px solid var(--line-soft); }
+.cand:hover { background:var(--bg-sunken); }
+.cand.cursor { background:#241d16; box-shadow:inset 2px 0 0 var(--ink-faint); }
+.cand.playing { box-shadow:inset 2px 0 0 var(--amber); }
+.cand.assigned { background:#1e2417; }
+.cand .play { width:30px; height:30px; padding:0; flex:0 0 auto; border-radius:50%; }
+.cand .meta { flex:1; min-width:0; }
+.cand .title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cand .sub { font-size:12px; color:var(--ink-faint);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tag { display:inline-block; padding:0 6px; border-radius:10px; font-size:11px;
+  border:1px solid var(--line); color:var(--ink-dim); margin-right:4px; }
+.tag.cc0 { border-color:#3d5a2b; color:#9dc57e; }
+.tag.by, .tag.by-sa { border-color:var(--amber-dim); color:var(--amber); }
+.tag.warn { border-color:var(--blood); color:#e08a78; }
+.empty { padding:16px 12px; color:var(--ink-faint); }
+
+/* assignment knobs */
+.knob { display:flex; align-items:center; gap:8px; margin:7px 0; font-size:13px; }
+.knob label { flex:0 0 92px; color:var(--ink-dim); }
+.knob input[type=range] { flex:1; accent-color:var(--amber); }
+.knob input[type=number] { width:76px; }
+.knob .val { width:52px; flex:0 0 auto; text-align:right; white-space:nowrap;
+  font-family:var(--mono); font-size:12px; color:var(--ink-dim); }
+.hint { font-size:12px; color:var(--ink-faint); }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.warnbox { margin:8px 12px; padding:8px 10px; border:1px solid var(--blood);
+  border-radius:6px; color:#e6b3a7; font-size:12px; }
+
+dialog { background:var(--bg-panel); color:var(--ink); border:1px solid var(--line);
+  border-radius:var(--radius); max-width:min(880px,92vw); width:100%; padding:0; }
+dialog::backdrop { background:rgba(0,0,0,.6); }
+dialog h2 { padding:10px 14px; border-bottom:1px solid var(--line-soft); font-size:14px; }
+dialog .body { padding:12px 14px; }
+dialog textarea { width:100%; height:44vh; font-family:var(--mono); font-size:12px; }
+kbd { font-family:var(--mono); font-size:11px; border:1px solid var(--line);
+  border-bottom-width:2px; border-radius:4px; padding:0 5px; background:var(--bg-sunken); }
+table.keys td { padding:3px 10px 3px 0; vertical-align:top; }
+footer { padding:6px 14px; border-top:1px solid var(--line); font-size:12px;
+  color:var(--ink-faint); display:flex; gap:14px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand"><span class="dot">&#9679;</span> audio picker</span>
+  <span id="src-note" class="hint"></span>
+  <span class="spacer"></span>
+  <div class="meter" title="Required cues assigned">
+    <span id="meter-text">0 / 0 required</span>
+    <span class="bar"><i id="meter-bar"></i></span>
+  </div>
+  <label class="meter" title="Preview volume">vol
+    <input id="master" type="range" min="0" max="1" step="0.01" value="0.8" style="width:90px">
+  </label>
+  <button id="btn-load">Load candidates…</button>
+  <button id="btn-import">Import config</button>
+  <button id="btn-help">?</button>
+  <button id="btn-copy" class="primary">Copy configuration</button>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Cues</h2>
+    <div class="body" style="padding:8px 12px">
+      <input id="cue-filter" type="search" placeholder="filter cues" style="width:100%">
+      <label class="hint" style="display:block;margin-top:6px">
+        <input type="checkbox" id="only-unassigned"> unassigned only</label>
+    </div>
+    <div id="cue-list" class="scroll"></div>
+  </section>
+
+  <section class="panel">
+    <div id="cue-head" class="cuehead"></div>
+    <div id="cand-list" class="scroll"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Assignment</h2>
+    <div id="assign" class="body"></div>
+  </section>
+</main>
+
+<footer>
+  <span><kbd>j</kbd>/<kbd>k</kbd> candidate</span>
+  <span><kbd>space</kbd> audition</span>
+  <span><kbd>enter</kbd> assign</span>
+  <span><kbd>x</kbd> clear</span>
+  <span><kbd>n</kbd>/<kbd>p</kbd> cue</span>
+  <span><kbd>?</kbd> help</span>
+  <span id="save-note"></span>
+</footer>
+
+<dialog id="dlg-config">
+  <h2>Configuration</h2>
+  <div class="body">
+    <p class="hint">Paste this back to Claude, or save it as <span class="mono">audio/config.json</span> and run
+      <span class="mono">python -m tools.audio fetch</span>.</p>
+    <textarea id="config-text" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="cfg-copy" class="primary">Copy to clipboard</button>
+      <button id="cfg-download">Download .json</button>
+      <button id="cfg-apply">Apply edits</button>
+      <button id="cfg-close">Close</button>
+      <span id="cfg-note" class="hint"></span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-help">
+  <h2>How this works</h2>
+  <div class="body">
+    <p>Every slot the game can play a sound into is on the left. Pick one, audition
+      candidates in the middle, assign the one that fits, tune it on the right.
+      When the required slots are green, hit <b>Copy configuration</b>.</p>
+    <p class="hint">Picks are kept in this browser's local storage, so a reload does not lose them.
+      Nothing is uploaded; the audio streams straight from the source.</p>
+    <table class="keys">
+      <tr><td><kbd>j</kbd> <kbd>k</kbd> / <kbd>↓</kbd> <kbd>↑</kbd></td><td>move through candidates</td></tr>
+      <tr><td><kbd>space</kbd></td><td>play / stop the one under the cursor</td></tr>
+      <tr><td><kbd>enter</kbd></td><td>assign it to the selected cue</td></tr>
+      <tr><td><kbd>x</kbd></td><td>clear this cue's assignment</td></tr>
+      <tr><td><kbd>n</kbd> <kbd>p</kbd></td><td>next / previous cue</td></tr>
+      <tr><td><kbd>u</kbd></td><td>next unassigned required cue</td></tr>
+      <tr><td><kbd>?</kbd></td><td>this</td></tr>
+    </table>
+    <div class="row" style="margin-top:10px"><button id="help-close">Close</button></div>
+  </div>
+</dialog>
+
+<input id="file-input" type="file" accept="application/json,.json" class="sr-only">
+
+<script>
+"use strict";
+
+// Injected by `python -m tools.audio picker`; null in the tracked template.
+const DATA = /*__CANDIDATES__*/null;
+const CUE_TABLE = /*__CUES__*/null;
+
+const STORE_KEY = "dnd-sim-audio-picks-v1";
+const PERMISSIVE = ["cc0", "pd", "by", "by-sa"];
+
+const state = {
+  cues: [],            // [{cue, candidates}]
+  byId: new Map(),
+  cueId: null,
+  cursor: 0,
+  assignments: {},     // cue id -> assignment
+  playing: null,       // candidate key
+  master: 0.8,
+  filter: "",
+  onlyUnassigned: false,
+};
+
+const audio = new Audio();
+audio.preload = "none";
+const $ = (id) => document.getElementById(id);
+
+/* ---------- storage ---------- */
+
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state.assignments));
+    $("save-note").textContent = "saved " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("save-note").textContent = "not saved (storage blocked)";
+  }
+}
+
+function restore() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) state.assignments = JSON.parse(raw) || {};
+  } catch (e) { /* opaque origin, private window — picks just will not persist */ }
+}
+
+/* ---------- data ---------- */
+
+function load(doc) {
+  const harvested = (doc && doc.cues) || {};
+  const table = CUE_TABLE || Object.values(harvested).map((e) => e.cue);
+  state.cues = table.map((cue) => ({
+    cue,
+    candidates: ((harvested[cue.id] || {}).candidates) || [],
+  }));
+  state.byId = new Map(state.cues.map((e) => [e.cue.id, e]));
+  const note = [];
+  if (doc && doc.generated) note.push("harvested " + doc.generated);
+  if (doc && doc.sources) note.push(doc.sources.join(" + "));
+  const missing = (doc && doc.skipped) || [];
+  if (missing.length) note.push(missing.length + " source(s) skipped");
+  $("src-note").textContent = note.join(" · ");
+  if (!state.cueId || !state.byId.has(state.cueId)) state.cueId = state.cues.length ? state.cues[0].cue.id : null;
+  render();
+}
+
+function entry() { return state.byId.get(state.cueId) || null; }
+function visibleCandidates() { const e = entry(); return e ? e.candidates : []; }
+
+/* ---------- rendering ---------- */
+
+function licTag(lic) {
+  const cls = PERMISSIVE.includes(lic) ? lic : "warn";
+  return `<span class="tag ${cls}">${lic || "unknown"}</span>`;
+}
+
+function fmtDur(s) {
+  if (!s && s !== 0) return "—";
+  if (s < 60) return s.toFixed(1) + "s";
+  return Math.floor(s / 60) + "m" + String(Math.round(s % 60)).padStart(2, "0");
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function renderCues() {
+  const list = $("cue-list");
+  const f = state.filter.toLowerCase();
+  let html = "";
+  let group = null;
+  for (const e of state.cues) {
+    const c = e.cue;
+    const assigned = !!state.assignments[c.id];
+    if (state.onlyUnassigned && assigned) continue;
+    if (f && !(c.id + " " + c.label + " " + c.when).toLowerCase().includes(f)) continue;
+    if (c.group !== group) { group = c.group; html += `<div class="grouphead">${esc(group)}</div>`; }
+    html += `<button class="cue ${c.id === state.cueId ? "sel" : ""}" data-cue="${esc(c.id)}">
+      <span class="dot ${assigned ? "done" : ""}"></span>
+      <span class="name">${esc(c.label)}</span>
+      ${c.required ? '<span class="req">req</span>' : ""}
+      <span class="hint">${e.candidates.length || ""}</span></button>`;
+  }
+  list.innerHTML = html || '<p class="empty">No cue matches that filter.</p>';
+  for (const b of list.querySelectorAll(".cue")) {
+    b.onclick = () => { state.cueId = b.dataset.cue; state.cursor = 0; render(); };
+  }
+}
+
+function renderHead() {
+  const e = entry();
+  if (!e) { $("cue-head").innerHTML = ""; return; }
+  const c = e.cue;
+  const match = c.match
+    ? `fires on <span class="mono">${esc(JSON.stringify(c.match))}</span>`
+    : "no automatic trigger — the DM or the scene decides";
+  $("cue-head").innerHTML = `
+    <h3>${esc(c.label)} <span class="hint mono">${esc(c.id)}</span></h3>
+    <div class="when">${esc(c.when)}</div>
+    <div class="facts">${match} · ${fmtDur(c.dur[0])}–${fmtDur(c.dur[1])} ·
+      ${c.loop ? "loops" : "one-shot"} · ${e.candidates.length} candidates</div>`;
+}
+
+function renderCandidates() {
+  const e = entry();
+  const list = $("cand-list");
+  if (!e) { list.innerHTML = ""; return; }
+  const assigned = state.assignments[e.cue.id];
+  if (!e.candidates.length) {
+    list.innerHTML = `<p class="empty">Nothing harvested for this cue.
+      Run <span class="mono">python -m tools.audio harvest --cues ${esc(e.cue.id)}</span>,
+      or add a URL by hand on the right.</p>`;
+    return;
+  }
+  let html = "";
+  e.candidates.forEach((c, i) => {
+    const isAssigned = assigned && assigned.key === c.key;
+    html += `<div class="cand ${i === state.cursor ? "cursor" : ""} ${state.playing === c.key ? "playing" : ""} ${isAssigned ? "assigned" : ""}" data-i="${i}">
+      <button class="play" data-play="${i}" aria-label="Audition">${state.playing === c.key ? "&#9632;" : "&#9654;"}</button>
+      <span class="meta">
+        <span class="title">${esc(c.title)}</span>
+        <span class="sub">${licTag(c.license)}${esc(c.author || "unknown")} ·
+          ${esc(c.source)} · ${fmtDur(c.duration)}${c.tags && c.tags.length ? " · " + esc(c.tags.slice(0, 4).join(", ")) : ""}</span>
+      </span>
+      ${c.page_url ? `<a href="${esc(c.page_url)}" target="_blank" rel="noopener" class="hint">page</a>` : ""}
+      <button data-assign="${i}">${isAssigned ? "assigned" : "assign"}</button>
+    </div>`;
+  });
+  list.innerHTML = html;
+  for (const el of list.querySelectorAll("[data-play]")) {
+    el.onclick = (ev) => { ev.stopPropagation(); toggle(e.candidates[+el.dataset.play]); };
+  }
+  for (const el of list.querySelectorAll("[data-assign]")) {
+    el.onclick = (ev) => { ev.stopPropagation(); assign(e.candidates[+el.dataset.assign]); };
+  }
+  for (const el of list.querySelectorAll(".cand")) {
+    el.onclick = () => { state.cursor = +el.dataset.i; render(); };
+  }
+  const cur = list.querySelector(".cand.cursor");
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+function knobRow(id, label, input, val) {
+  return `<div class="knob"><label for="${id}">${label}</label>${input}
+    <span class="val" id="${id}-val">${val}</span></div>`;
+}
+
+function renderAssignment() {
+  const e = entry();
+  const box = $("assign");
+  if (!e) { box.innerHTML = ""; return; }
+  const a = state.assignments[e.cue.id];
+  if (!a) {
+    box.innerHTML = `<p class="hint">Nothing assigned to <span class="mono">${esc(e.cue.id)}</span> yet.</p>`
+      + addByUrlForm();
+    wireAddByUrl();
+    return;
+  }
+  const warn = PERMISSIVE.includes(a.license) ? "" :
+    `<div class="warnbox">Licence <b>${esc(a.license)}</b> is outside the permissive set —
+      <span class="mono">fetch</span> will refuse it unless you pass <span class="mono">--allow</span>.</div>`;
+  box.innerHTML = `
+    <div><b>${esc(a.title)}</b></div>
+    <div class="hint">${esc(a.author || "unknown")} · ${esc(a.source)} · ${licTag(a.license)}
+      ${a.page_url ? `<a href="${esc(a.page_url)}" target="_blank" rel="noopener">page</a>` : ""}</div>
+    ${warn}
+    ${knobRow("k-gain", "gain dB", `<input id="k-gain" type="range" min="-36" max="6" step="0.5" value="${a.gain_db}">`, a.gain_db.toFixed(1))}
+    <div class="knob"><label for="k-loop">loop</label>
+      <input id="k-loop" type="checkbox" ${a.loop ? "checked" : ""}><span class="val"></span></div>
+    ${knobRow("k-in", "fade in ms", `<input id="k-in" type="number" min="0" step="50" value="${a.fade_in_ms}">`, "")}
+    ${knobRow("k-out", "fade out ms", `<input id="k-out" type="number" min="0" step="50" value="${a.fade_out_ms}">`, "")}
+    ${knobRow("k-start", "trim start s", `<input id="k-start" type="number" min="0" step="0.1" value="${a.trim_start_s}">`, "")}
+    ${knobRow("k-end", "trim end s", `<input id="k-end" type="number" min="0" step="0.1" value="${a.trim_end_s == null ? "" : a.trim_end_s}">`, "")}
+    <div class="row" style="margin-top:10px">
+      <button id="a-play">Audition with these</button>
+      <button id="a-clear">Clear</button>
+    </div>
+    <p class="hint" style="margin-top:10px">Gain is applied to the preview too, so what you
+      hear is what the config asks for.</p>
+    ${addByUrlForm()}`;
+
+  const bind = (id, key, cast) => {
+    const el = $(id);
+    if (!el) return;
+    el.oninput = () => {
+      const raw = el.type === "checkbox" ? el.checked : el.value;
+      a[key] = cast(raw);
+      const v = $(id + "-val");
+      if (v && key === "gain_db") v.textContent = Number(a[key]).toFixed(1);
+      if (state.playing) applyGain();
+      save();
+      renderMeter();
+    };
+  };
+  bind("k-gain", "gain_db", Number);
+  bind("k-loop", "loop", Boolean);
+  bind("k-in", "fade_in_ms", (v) => Number(v) || 0);
+  bind("k-out", "fade_out_ms", (v) => Number(v) || 0);
+  bind("k-start", "trim_start_s", (v) => Number(v) || 0);
+  bind("k-end", "trim_end_s", (v) => (v === "" ? null : Number(v)));
+  $("a-play").onclick = () => toggle(a);
+  $("a-clear").onclick = () => { delete state.assignments[e.cue.id]; save(); render(); };
+  wireAddByUrl();
+}
+
+function addByUrlForm() {
+  return `<details style="margin-top:14px"><summary class="hint">Add by URL</summary>
+    <p class="hint">For anything without a search API — OpenGameArt, Kenney, Pixabay,
+      Tabletop Audio, a file you made. Give a direct link to the audio, not to a page.</p>
+    <div class="knob"><label for="u-url">audio URL</label><input id="u-url" style="flex:1" type="url"></div>
+    <div class="knob"><label for="u-title">title</label><input id="u-title" style="flex:1"></div>
+    <div class="knob"><label for="u-author">author</label><input id="u-author" style="flex:1"></div>
+    <div class="knob"><label for="u-lic">licence</label>
+      <select id="u-lic" style="flex:1">
+        <option value="cc0">CC0 / public domain</option>
+        <option value="by">CC BY</option>
+        <option value="by-sa">CC BY-SA</option>
+        <option value="by-nc">CC BY-NC</option>
+        <option value="unknown">unknown</option>
+      </select></div>
+    <div class="knob"><label for="u-page">source page</label><input id="u-page" style="flex:1" type="url"></div>
+    <button id="u-add" style="margin-top:6px">Add to this cue</button></details>`;
+}
+
+function wireAddByUrl() {
+  const btn = $("u-add");
+  if (!btn) return;
+  btn.onclick = () => {
+    const url = $("u-url").value.trim();
+    if (!url) return;
+    const cand = {
+      key: "manual:" + url,
+      source: "manual",
+      source_id: url,
+      title: $("u-title").value.trim() || url.split("/").pop(),
+      author: $("u-author").value.trim(),
+      license: $("u-lic").value,
+      license_url: "",
+      page_url: $("u-page").value.trim(),
+      preview_url: url,
+      download_url: url,
+      duration: null,
+      tags: [],
+    };
+    const e = entry();
+    if (e) e.candidates.unshift(cand);
+    assign(cand);
+  };
+}
+
+function renderMeter() {
+  const req = state.cues.filter((e) => e.cue.required);
+  const done = req.filter((e) => state.assignments[e.cue.id]).length;
+  const all = Object.keys(state.assignments).length;
+  $("meter-text").textContent = `${done} / ${req.length} required · ${all} total`;
+  $("meter-bar").style.width = req.length ? (100 * done / req.length) + "%" : "0%";
+}
+
+function render() { renderCues(); renderHead(); renderCandidates(); renderAssignment(); renderMeter(); }
+
+/* ---------- audition ---------- */
+
+function gainToVolume(db) {
+  return Math.max(0, Math.min(1, state.master * Math.pow(10, (Number(db) || 0) / 20)));
+}
+
+function applyGain() {
+  const a = state.assignments[state.cueId];
+  const db = a && state.playing === a.key ? a.gain_db : 0;
+  audio.volume = gainToVolume(db);
+}
+
+function stop() { audio.pause(); state.playing = null; render(); }
+
+function toggle(c) {
+  if (!c) return;
+  if (state.playing === c.key) { stop(); return; }
+  audio.src = c.preview_url || c.download_url;
+  audio.loop = !!c.loop;
+  state.playing = c.key;
+  applyGain();
+  const start = Number(c.trim_start_s) || 0;
+  const seek = () => { if (start > 0) { try { audio.currentTime = start; } catch (e) {} } };
+  audio.addEventListener("loadedmetadata", seek, { once: true });
+  audio.play().catch((err) => {
+    state.playing = null;
+    render();
+    alert("Could not play this one:\n" + err.message + "\n\n" + (c.preview_url || ""));
+  });
+  render();
+}
+
+audio.addEventListener("ended", () => { state.playing = null; render(); });
+
+/* ---------- assigning ---------- */
+
+function assign(c) {
+  const e = entry();
+  if (!e || !c) return;
+  const cue = e.cue;
+  state.assignments[cue.id] = {
+    key: c.key,
+    source: c.source, source_id: c.source_id,
+    title: c.title, author: c.author,
+    license: c.license, license_url: c.license_url, page_url: c.page_url,
+    preview_url: c.preview_url, download_url: c.download_url || c.preview_url,
+    duration: c.duration,
+    gain_db: cue.gain_db, loop: cue.loop,
+    fade_in_ms: cue.group === "music" || cue.group === "ambience" ? 1500 : 0,
+    fade_out_ms: cue.group === "music" || cue.group === "ambience" ? 2000 : 0,
+    trim_start_s: 0, trim_end_s: null,
+  };
+  save();
+  render();
+}
+
+/* ---------- config in and out ---------- */
+
+function configDoc() {
+  const assignments = {};
+  for (const e of state.cues) {
+    const a = state.assignments[e.cue.id];
+    if (a) assignments[e.cue.id] = a;
+  }
+  return {
+    version: 1,
+    generated: new Date().toISOString(),
+    note: "python -m tools.audio fetch --config <this file>",
+    assignments,
+  };
+}
+
+function openConfig() {
+  const missing = state.cues.filter((e) => e.cue.required && !state.assignments[e.cue.id]);
+  $("config-text").value = JSON.stringify(configDoc(), null, 1);
+  $("cfg-note").textContent = missing.length
+    ? missing.length + " required cue(s) still unassigned"
+    : "";
+  $("dlg-config").showModal();
+}
+
+function applyConfigText() {
+  try {
+    const doc = JSON.parse($("config-text").value);
+    state.assignments = doc.assignments || {};
+    save();
+    render();
+    $("cfg-note").textContent = "applied " + Object.keys(state.assignments).length + " assignment(s)";
+  } catch (err) {
+    $("cfg-note").textContent = "not valid JSON: " + err.message;
+  }
+}
+
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/* ---------- wiring ---------- */
+
+$("btn-copy").onclick = openConfig;
+$("btn-import").onclick = () => { $("config-text").value = ""; $("cfg-note").textContent = "paste a config, then Apply edits"; $("dlg-config").showModal(); };
+$("btn-help").onclick = () => $("dlg-help").showModal();
+$("help-close").onclick = () => $("dlg-help").close();
+$("cfg-close").onclick = () => $("dlg-config").close();
+$("cfg-apply").onclick = applyConfigText;
+$("cfg-download").onclick = () => download("config.json", $("config-text").value);
+$("cfg-copy").onclick = async () => {
+  const text = $("config-text").value;
+  try {
+    await navigator.clipboard.writeText(text);
+    $("cfg-note").textContent = "copied";
+  } catch (err) {
+    const ta = $("config-text");
+    ta.select();
+    $("cfg-note").textContent = document.execCommand("copy") ? "copied" : "press ⌘/ctrl+C";
+  }
+};
+$("btn-load").onclick = () => $("file-input").click();
+$("file-input").onchange = (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { load(JSON.parse(reader.result)); }
+    catch (err) { alert("Not a candidates file: " + err.message); }
+  };
+  reader.readAsText(file);
+};
+$("cue-filter").oninput = (ev) => { state.filter = ev.target.value; renderCues(); };
+$("only-unassigned").onchange = (ev) => { state.onlyUnassigned = ev.target.checked; renderCues(); };
+$("master").oninput = (ev) => { state.master = Number(ev.target.value); applyGain(); };
+
+function moveCue(delta) {
+  const ids = state.cues.map((e) => e.cue.id);
+  const i = ids.indexOf(state.cueId);
+  state.cueId = ids[Math.max(0, Math.min(ids.length - 1, i + delta))];
+  state.cursor = 0;
+  render();
+}
+
+document.addEventListener("keydown", (ev) => {
+  const tag = (ev.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || ev.metaKey || ev.ctrlKey) return;
+  const cands = visibleCandidates();
+  const k = ev.key;
+  if (k === "j" || k === "ArrowDown") { state.cursor = Math.min(cands.length - 1, state.cursor + 1); render(); }
+  else if (k === "k" || k === "ArrowUp") { state.cursor = Math.max(0, state.cursor - 1); render(); }
+  else if (k === " ") { toggle(cands[state.cursor]); }
+  else if (k === "Enter") { assign(cands[state.cursor]); }
+  else if (k === "x") { delete state.assignments[state.cueId]; save(); render(); }
+  else if (k === "n" || k === "]") { moveCue(1); }
+  else if (k === "p" || k === "[") { moveCue(-1); }
+  else if (k === "u") {
+    const next = state.cues.find((e) => e.cue.required && !state.assignments[e.cue.id]);
+    if (next) { state.cueId = next.cue.id; state.cursor = 0; render(); }
+  } else if (k === "?") { $("dlg-help").showModal(); }
+  else return;
+  ev.preventDefault();
+});
+
+restore();
+load(DATA);
+if (!DATA) {
+  $("cand-list").innerHTML = `<p class="empty">No candidates baked into this page.
+    Run <span class="mono">python -m tools.audio harvest</span> and open the
+    <span class="mono">audio/picker.html</span> it writes, or use
+    <b>Load candidates…</b> to open a <span class="mono">candidates.json</span>.</p>`;
+}
+</script>
+</body>
+</html>

@@ -16,6 +16,14 @@ htmlcov/
 *.sqlite3-wal
 *.sqlite3-shm
 
+# audio sourcing tool. The picked audio, the manifest, the credits and the
+# config that produced them are tracked: they ship with the game, and a deploy
+# hard-resets the checkout, so anything untracked would not survive one. Only
+# the two build artefacts are ignored — `candidates.json` is a search dump and
+# `picker.html` is generated from it, both re-made by one `harvest`.
+/audio/candidates.json
+/audio/picker.html
+
 # logs / local
 *.log
 .env
