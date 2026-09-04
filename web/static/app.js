@@ -524,7 +524,9 @@
     ctx: null,             // { names, party }, rebuilt when the snapshot changes
     heldUtt: null,         // keeps the unlock utterance referenced until it ends
     holdTimer: null,
-    holding: false,
+    holding: false,        // the game has CONFIRMED a lease — what the badge may claim
+    holdWanted: false,     // what we have asked for — drives the hysteresis, not the badge
+    holdSentAt: 0,         // last renewal, so the heartbeat stays a heartbeat
     holdBroken: false      // this game will not take a hold (ended, or another process)
   };
 
@@ -854,24 +856,45 @@
       return;
     }
     var behind = voiceBacklog();
-    if (V.holding ? behind > HOLD_LOW : behind >= HOLD_HIGH) voiceHoldSend(HOLD_LEASE);
+    // Hysteresis keys off what we have ASKED for, not off what the game has
+    // confirmed: the badge may only claim a hold that exists, but the decision
+    // to keep holding cannot wait a round trip.
+    if (V.holdWanted ? behind > HOLD_LOW : behind >= HOLD_HIGH) voiceHoldSend(HOLD_LEASE);
     else voiceHoldRelease();
   }
   function voiceHoldRelease() {
-    if (!V.holding) return;
-    V.holding = false;
+    if (!V.holdWanted && !V.holding) return;
     voiceHoldSend(0);
   }
   function voiceHoldSend(seconds) {
     if (!S.gameId) return;
-    if (seconds > 0) V.holding = true;
+    var want = seconds > 0;
+    var now = Date.now();
+    // A renewal is a heartbeat, not a per-line event. voiceHoldEval runs on
+    // every finished line, so without this the page would POST a lease for
+    // each one instead of once a tick.
+    if (want && V.holdWanted && (now - V.holdSentAt) < HOLD_TICK) return;
+    V.holdWanted = want;
+    V.holdSentAt = now;
     var id = S.gameId;
     api('/api/games/' + encodeURIComponent(id) + '/hold',
         { method: 'POST', body: { seconds: seconds, client: CLIENT_ID } })
+      .then(function (r) {
+        if (id !== S.gameId) return;
+        // Only now may the badge say "holding": the game has taken the lease.
+        // Saying it on the strength of a request merely sent is the UI
+        // claiming a thing works before it knows that it does.
+        V.holding = want && !!(r && r.holding > 0);
+        voiceRenderControls();
+      })
       .catch(function () {
         // 404/409/501: this game cannot be held (ended, restarted, or served by
         // another process). Stop asking; the narrator just runs behind.
-        if (id === S.gameId) { V.holdBroken = true; V.holding = false; voiceRenderControls(); }
+        if (id !== S.gameId) return;
+        V.holdBroken = true;
+        V.holding = false;
+        V.holdWanted = false;
+        voiceRenderControls();
       });
   }
 
@@ -886,6 +909,8 @@
     V.resumeChunk = null;
     V.cursor = 0;
     V.holding = false;
+    V.holdWanted = false;
+    V.holdSentAt = 0;
     V.holdBroken = false;
     voiceCtxDirty();
     voiceRenderControls();
@@ -973,7 +998,37 @@
     $('voice-on').checked = V.settings.enabled;
     $('voice-rate').value = V.settings.rate;
     $('voice-mute-mech').checked = V.settings.muteMechanics;
-    $('voice-hold').checked = V.settings.hold;
+
+    // Every other control here takes a disabled state; this one did not, so it
+    // looked armed in every case where nothing is being held — voice off,
+    // playback paused or backgrounded, and a game that cannot be held at all.
+    // An option that always looks on cannot tell you whether it is doing
+    // anything, which is the only thing this option is for.
+    //
+    // Two different things, kept apart: whether the option can apply to this
+    // game AT ALL (no speech, an ended game, one another process is running)
+    // and whether it is doing anything RIGHT NOW (voice off, paused, tab in
+    // the background). The first disables it — there is no preference to hold
+    // about a thing that cannot happen. The second only dims it: the
+    // preference still means something the moment you press play, so it must
+    // stay changeable while it is idle.
+    var hold = $('voice-hold');
+    var applies = V.supported && !V.holdBroken && !!S.gameId && !TERMINAL[S.status];
+    var active = applies && V.settings.hold && voiceArmed();
+    hold.checked = V.settings.hold;
+    hold.disabled = !applies;
+    hold.parentNode.classList.toggle('disabled', !applies);
+    hold.parentNode.classList.toggle('idle', applies && !active);
+    hold.parentNode.title =
+      !V.supported ? 'This browser cannot speak, so there is nothing to keep step with.'
+      : V.holdBroken ? 'This game cannot be held — it has ended, or another process is running it.'
+      : !S.gameId || TERMINAL[S.status] ? 'This game has ended; nothing left to hold.'
+      : !V.settings.hold ? 'Off: the game runs at its own pace and the narrator may fall behind.'
+      : !V.settings.enabled ? 'Idle — turn voice on: with no narration there is nothing to hold the game for.'
+      : !V.playing ? 'Idle while playback is paused; the game runs on.'
+      : pageHidden() ? 'Idle while the tab is in the background; the game runs on.'
+      : V.holding ? 'Holding the game now: the narrator is behind and the game is waiting.'
+      : 'On: the game will wait when the narrator falls behind, so what you hear is what is happening.';
 
     var locked = V.settings.enabled && !V.unlocked;
     $('voice').classList.toggle('locked', locked);

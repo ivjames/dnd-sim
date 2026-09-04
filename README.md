@@ -259,10 +259,20 @@ a few lines behind, the page asks the game to wait.
 That ask is `POST /api/games/<id>/hold {"seconds": n, "client": id}` — a
 renewable *lease*, not a pause. It expires by itself, so a tab that is closed
 mid-hold costs the game a few seconds rather than freezing it for good; the
-page renews it every 4 s while it is behind and drops it the moment it catches
-up, when the tab goes to the background, or when the game ends. It deliberately
-leaves `status` alone: holding is the narration keeping step, the table's own
-pause is something else, and the two stay separately controllable.
+page renews it on a 4 s heartbeat while it is behind and drops it the moment it
+catches up, when playback is paused, when the tab goes to the background, or
+when the game ends. It deliberately leaves `status` alone: holding is the
+narration keeping step, the table's own pause is something else, and the two
+stay separately controllable.
+
+The checkbox is a *setting*, and the UI keeps that apart from whether anything
+is being held right now. It is disabled where the option cannot apply to this
+game at all (no speech synthesis, a game that has ended, one another process is
+running); it is merely dimmed, and still changeable, where it is on but idle —
+voice off, playback paused, the tab in the background — because the preference
+still means something the moment you press play. Its tooltip says which. The
+"N behind · holding" badge claims a hold only once the game has confirmed the
+lease, never on the strength of a request the page has merely sent.
 
 Leases are per spectator, and the game waits for the longest one outstanding.
 One shared deadline would make every spectator the last writer of everyone

@@ -290,6 +290,11 @@ body {
 }
 .vt-now .vt-tag { color: var(--ink-faint); text-transform: uppercase; letter-spacing: .07em; margin-right: 6px; }
 .vt-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+/* A setting that is not doing anything says so, rather than sitting there
+   ticked as though it were. `disabled` is "cannot apply to this game at all";
+   `idle` is "on, but nothing to do just now" — still changeable. Titles differ. */
+.chk.disabled { opacity: .45; cursor: default; }
+.chk.idle { opacity: .7; }
 .vt-settings select { width: auto; }
 .pill-behind {
   font: inherit; font-size: 11px; font-family: var(--mono);
