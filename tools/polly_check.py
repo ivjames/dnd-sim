@@ -404,18 +404,26 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
 
         print()
         print("the split")
-        monster_cast = svc.cast(MONSTER_KEY)
-        wants_vtl = monster_cast.engine == "standard" and monster_cast.vtl_pct != 0
-        monster_sent = monster_req.get("Text", "")
-        table_sent = table_req.get("Text", "")
-        rep.check(("vocal-tract-length" in monster_sent) == wants_vtl,
-                  "the monster line carried vocal-tract-length"
-                  if wants_vtl else
-                  "the monster line carried no vocal-tract-length (its engine has none)")
-        rep.check("vocal-tract-length" not in table_sent,
-                  "the table line carried no vocal-tract-length")
-        rep.check(bool(table) and bool(monster) and table != monster,
-                  "both lines came back, and as different audio")
+        if not table_req or not monster_req:
+            # One of them never reached Polly, and `speak` has already said
+            # which and why. Read from the requests rather than asking the
+            # service again: re-casting here would raise the very ValueError
+            # that was just reported, losing the summary and the exit code to
+            # a traceback.
+            rep.check(False, "both lines reached Polly",
+                      "one of them did not — see above")
+        else:
+            # A monster on standard always carries the effect: `MONSTER_VTL`
+            # holds no 0, precisely so that no monster ends up untreated.
+            wants_vtl = monster_req.get("Engine") == "standard"
+            rep.check(("vocal-tract-length" in monster_req.get("Text", "")) == wants_vtl,
+                      "the monster line carried vocal-tract-length"
+                      if wants_vtl else
+                      "the monster line carried no vocal-tract-length (its engine has none)")
+            rep.check("vocal-tract-length" not in table_req.get("Text", ""),
+                      "the table line carried no vocal-tract-length")
+            rep.check(bool(table) and bool(monster) and table != monster,
+                      "both lines came back, and as different audio")
 
         print()
         if rep.failures:

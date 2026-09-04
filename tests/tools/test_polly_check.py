@@ -236,3 +236,24 @@ def test_the_listing_is_read_once_and_filtered_by_language(capsys):
     assert "fr-FR has no fallback to check" in out
     assert "not served:" not in out
     assert code == 0, out
+
+
+def test_a_seat_with_no_voices_is_reported_not_raised(capsys):
+    """`speak()` reports an uncastable seat instead of raising — and nothing
+    after it may undo that by asking the service to cast the same key again.
+    A traceback here loses the summary and the exit code both."""
+    polly = FakePolly()
+    polly.describe_voices = lambda **_kw: {"Voices": [       # standard only
+        {"Id": v.id, "LanguageCode": v.language, "Gender": v.gender,
+         "SupportedEngines": ["standard"]} for v in STANDARD_ENGLISH
+    ]}
+    code, out = run(["--engine", "standard", "--monster-engine", "neural"], polly, capsys)
+
+    assert code == 1
+    assert "a neural voice to cast from" in out
+    assert "no voices to cast from" in out
+    # It got all the way to the end: the split section and the summary ran.
+    assert "the split" in out and "check(s) FAILED" in out
+    assert "Traceback" not in out
+    # The table line still went out; the monster never reached Polly.
+    assert [s["Engine"] for s in polly.sent] == ["standard"]
