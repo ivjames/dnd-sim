@@ -380,11 +380,14 @@ class MockLLMClient:
     def _payload(self, shape: str, prompt: str) -> str:
         if shape in ("player_action", "dm_monster_action"):
             aid, label = self._pick_action(prompt)
+            # The prompt pins "speech" to null once the actor has had its line
+            # this turn; a live model obeys that, so the mock does too.
+            speech = None if '"speech": null' in prompt else self._rng.choice(_SPEECH)
             return json.dumps(
                 {
                     "action": aid,
                     "params": self._params_for(label),
-                    "speech": self._rng.choice(_SPEECH),
+                    "speech": speech,
                     "reasoning": "best available option",
                 }
             )

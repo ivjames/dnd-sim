@@ -6,6 +6,7 @@ exercised without the engine package present.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import traceback
@@ -29,6 +30,10 @@ __all__ = ["Game", "default_engine"]
 
 SUMMARY_EVERY = 15  # events
 MAX_ACTIONS_PER_TURN = 8
+DIALOGUE_MEMORY = 8  # spoken lines kept for the repetition guard
+SELF_REPEAT = 0.5  # word overlap at which a speaker is repeating itself
+ECHO_REPEAT = 0.7  # ... at which one character is parroting another
+FUZZY_MIN_WORDS = 4  # below this, only identical content counts as a repeat
 MAX_TURNS_PER_COMBAT = 400
 DEFAULT_BEATS_PER_SCENE = 2
 RECENT_EVENTS = 12
@@ -99,6 +104,7 @@ class Game:
         self._resume.set()
         self._stop = threading.Event()
         self._notes: list[str] = []
+        self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
         self._thread: threading.Thread | None = None
         self.dm: DMAgent | None = None
         self.players: dict[str, PlayerAgent] = {}
@@ -222,6 +228,43 @@ class Game:
         if self.cfg.tempo_ms:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
+
+    def _say(self, actor_id: str, name: str, speech: str | None) -> bool:
+        """Emit one line of dialogue unless it repeats what was just said.
+
+        Characters left to themselves restate their last line every time they
+        are asked, so a line close enough to a recent one — the same speaker
+        rephrasing itself, or another character parroting it back — is dropped
+        rather than printed — unless it contradicts that line, which is a new
+        contribution however alike the wording. Returns whether it was emitted.
+
+        Overlap is only trusted on lines of `FUZZY_MIN_WORDS` content words or
+        more. Below that a single word is most of the line, so "heal me" and
+        "heal him" or "I go left" and "I go right" score as high as a genuine
+        repeat does; short lines are therefore suppressed only when their
+        content is identical, which is what a repeated bark actually is.
+        """
+        text = " ".join(str(speech or "").split())
+        if not text:
+            return False
+        words, negated = _line_key(text)
+        if not words:  # nothing to compare (punctuation, an emoji); let it through
+            self._emit_new("dialogue", text, actor=actor_id, data={"speaker": name})
+            return True
+        for prev_actor, prev_words, prev_negated in self._spoken:
+            if negated != prev_negated:
+                continue  # one of the two contradicts the other; not a repeat
+            if words == prev_words:
+                return False  # the same thing said again, at any length
+            if min(len(words), len(prev_words)) < FUZZY_MIN_WORDS:
+                continue  # too short to judge by overlap: see _say's docstring
+            limit = SELF_REPEAT if prev_actor == actor_id else ECHO_REPEAT
+            if _overlap(words, prev_words) >= limit:
+                return False
+        self._spoken.append((actor_id, words, negated))
+        del self._spoken[:-DIALOGUE_MEMORY]
+        self._emit_new("dialogue", text, actor=actor_id, data={"speaker": name})
+        return True
 
     def _emit_all(self, events: list) -> None:
         for ev in events or []:
@@ -455,6 +498,7 @@ class Game:
                 "system", "The party considers: " + "; ".join(options), data={"options": options}
             )
             votes: dict[int, int] = {}
+            said: list[str] = []
             for cid, agent in self.players.items():
                 if not self._conscious(cid):
                     continue
@@ -462,13 +506,13 @@ class Game:
                 self._check_budget()
                 pview = player_view(self.state, cid, self._recent(), self.summary)
                 try:
-                    reply = agent.choose_scene_action(pview, options)
+                    reply = agent.choose_scene_action(pview, options, said)
                 except AgentOutputError as exc:
                     self._emit_new("error", f"{agent.name} said nothing useful: {exc}", actor=cid)
                     continue
                 votes[reply["choice"]] = votes.get(reply["choice"], 0) + 1
-                if reply.get("speech"):
-                    self._emit_new("dialogue", f"{agent.name}: {reply['speech']}", actor=cid)
+                if self._say(cid, agent.name, reply.get("speech")):
+                    said.append(f"{agent.name}: {reply['speech']}")
             if not options:
                 return
             choice = max(votes.items(), key=lambda kv: (kv[1], -kv[0]))[0] if votes else 0
@@ -601,6 +645,7 @@ class Game:
         """Let one combatant act until it ends its turn. Returns its events."""
         eng = self.engine
         collected: list = []
+        spoke = False
         for _ in range(MAX_ACTIONS_PER_TURN):
             self._gate()
             self._check_budget()
@@ -614,11 +659,11 @@ class Game:
                 break
             if not templates:
                 break
-            action = self._choose(actor_id, actor, templates)
+            action = self._choose(actor_id, actor, templates, speak=not spoke)
             if action is None:
                 break
-            if getattr(action, "speech", None):
-                self._emit_new("dialogue", f"{actor.name}: {action.speech}", actor=actor_id)
+            if self._say(actor_id, actor.name, getattr(action, "speech", None)):
+                spoke = True
             try:
                 self.state, events = eng.apply(self.state, action)
             except Exception as exc:  # noqa: BLE001 - IllegalAction and friends
@@ -639,16 +684,18 @@ class Game:
                 break
         return collected
 
-    def _choose(self, actor_id: str, actor: Any, templates: list) -> Any:
+    def _choose(self, actor_id: str, actor: Any, templates: list, *, speak: bool = True) -> Any:
         """Ask the right agent; on agent failure fall back to end_turn."""
         try:
             if getattr(actor, "kind", "pc") == "pc" and actor_id in self.players:
                 agent = self.players[actor_id]
                 view = player_view(self.state, actor_id, self._recent(), self.summary)
-                return agent.choose_action(view, templates)
+                return agent.choose_action(view, templates, speak=speak)
             view = dm_view(self.state, self._recent(), self.summary)
             self.dm.pending_note = self._pop_notes()
-            return self.dm.monster_action(view, templates, actor_id, getattr(actor, "name", None))
+            return self.dm.monster_action(
+                view, templates, actor_id, getattr(actor, "name", None), speak=speak
+            )
         except AgentOutputError as exc:
             self._emit_new("error", f"{actor.name} hesitated ({exc}); ending turn.", actor=actor_id)
             return self._end_turn_action(actor_id, templates)
@@ -751,6 +798,67 @@ class Game:
                 "players": dict(self.seat_models),
             },
         }
+
+
+# Apostrophes are stripped before this is consulted, so the contracted forms
+# appear here as "dont", "cant" and so on. "cannot" is the one that has to be
+# spelled out separately: it is a single word, not a contraction.
+_NEGATIONS = frozenset(
+    {
+        "no", "not", "nor", "never", "none", "neither", "nothing", "nobody",
+        "nowhere", "cannot", "cant", "dont", "doesnt", "didnt", "wont",
+        "wouldnt", "shouldnt", "couldnt", "isnt", "arent", "wasnt", "werent",
+        "havent", "hasnt", "hadnt", "mustnt", "shant", "neednt", "aint",
+    }
+)
+
+
+# Function words: they carry the grammar rather than the point, and two lines
+# that differ only in these are the same line. Everything else is content —
+# pronouns and short nouns included, since "heal me" and "heal him" differ by
+# nothing else. Negations are never listed here.
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "so", "yet",
+        "of", "to", "in", "into", "on", "onto", "upon", "at", "by", "for",
+        "from", "with", "as",
+        "is", "are", "was", "were", "be", "been", "being", "am",
+        "do", "does", "did", "has", "have", "had",
+        "will", "shall", "would", "should", "can", "could", "may", "might",
+        "must",
+    }
+)
+
+
+def _line_key(text: str) -> tuple[frozenset, bool]:
+    """What a repetition is judged on: content words, and whether the line negates.
+
+    Function words are dropped, so "Sir Zombie, your desecration ends here" and
+    "Sir Zombie, your desecration ends NOW" still read as one line. Length is
+    deliberately not the test: "heal me" and "heal him", or "attack the goblin"
+    and "attack the orc", differ only in a word of two or three letters and are
+    different instructions. Negation is handled separately, by flag rather than
+    by word, because "open the door" and "do not open the door" overlap too far
+    to be told apart by words at all. Apostrophes go first, so "don't" reduces
+    to "dont" rather than to two fragments. If a line is nothing but function
+    words, fall back to all of them so it still compares equal to itself.
+
+    Words are Unicode: an ASCII-only pattern reduces every line of a Cyrillic
+    or CJK game to the empty set, which then compares equal to every other
+    such line. A line that yields no words at all (pure punctuation) is handled
+    by `_say`, which never suppresses one.
+    """
+    flat = text.lower().replace("'", "").replace("\u2019", "")
+    words = re.findall(r"\w+", flat, re.UNICODE)
+    negated = any(w in _NEGATIONS for w in words)
+    return frozenset([w for w in words if w not in _STOPWORDS] or words), negated
+
+
+def _overlap(a: frozenset, b: frozenset) -> float:
+    """Jaccard similarity of two word sets; 0.0 if either is empty."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
 
 
 def _construct(cls: Any, **kwargs: Any) -> Any:

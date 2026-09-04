@@ -12,9 +12,11 @@ from .common import (
     AgentOutputError,
     action_class,
     clamp_words,
+    event_text,
     extract_json,
     render,
     rules_digest,
+    speech_fields,
 )
 from .views import render_actions
 
@@ -28,7 +30,7 @@ MAX_TOKENS_OPTIONS = 200
 
 NARRATION_WORDS = 120
 SCENE_WORDS = 150
-SPEECH_WORDS = 40
+SPEECH_WORDS = 20
 
 _EVENT_KINDS_FOR_NARRATION = {
     "attack",
@@ -55,10 +57,10 @@ def _event_lines(events: list) -> str:
     lines = []
     for ev in events or []:
         kind = getattr(ev, "kind", "") or (ev.get("kind") if isinstance(ev, dict) else "")
-        text = getattr(ev, "text", "") or (ev.get("text") if isinstance(ev, dict) else "")
+        text = event_text(ev)
         if not text or kind not in _EVENT_KINDS_FOR_NARRATION:
             continue
-        lines.append(f"- {str(text).strip()}")
+        lines.append(f"- {text}")
     return "\n".join(lines[-20:]) or "- (nothing mechanical happened)"
 
 
@@ -167,7 +169,13 @@ class DMAgent:
     # -- monsters ----------------------------------------------------------
 
     def monster_action(
-        self, view: str, templates: list, monster_id: str, monster_name: str | None = None
+        self,
+        view: str,
+        templates: list,
+        monster_id: str,
+        monster_name: str | None = None,
+        *,
+        speak: bool = True,
     ) -> Any:
         if not templates:
             raise AgentOutputError("no legal actions offered")
@@ -179,6 +187,7 @@ class DMAgent:
             monster_id=monster_id,
             monster_name=name,
             actions=render_actions(templates),
+            **speech_fields(speak, SPEECH_WORDS),
         )
         error: str | None = None
         for attempt in range(2):
@@ -189,7 +198,7 @@ class DMAgent:
             )
             text = self._call(prompt, MAX_TOKENS_ACTION)
             try:
-                return self._parse_action(text, by_id, monster_id)
+                return self._parse_action(text, by_id, monster_id, speak=speak)
             except AgentOutputError as exc:
                 error = str(exc)
                 if attempt == 1:
@@ -198,7 +207,7 @@ class DMAgent:
                     ) from exc
         raise AgentOutputError("unreachable")  # pragma: no cover
 
-    def _parse_action(self, text: str, by_id: dict, actor: str) -> Any:
+    def _parse_action(self, text: str, by_id: dict, actor: str, *, speak: bool = True) -> Any:
         obj = extract_json(text)
         aid = obj.get("action") or obj.get("action_id") or obj.get("id")
         if not isinstance(aid, str):
@@ -223,7 +232,7 @@ class DMAgent:
             actor=actor,
             template_id=aid,
             params=params,
-            speech=clamp_words(obj.get("speech"), SPEECH_WORDS),
+            speech=clamp_words(obj.get("speech"), SPEECH_WORDS) if speak else None,
         )
 
     # -- non-combat --------------------------------------------------------
