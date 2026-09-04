@@ -147,13 +147,83 @@ def test_without_a_novelty_voice_a_monster_sounds_like_any_npc():
     assert fr == ["Amelie", "Amelie"]
 
 
-def test_a_monster_line_keeps_its_speaker_name():
-    """The novelty voice is a costume, not an attribution."""
-    said = run_js(
-        "const ev = {kind: 'dialogue', actor: 'goblin_1', text: 'You die now.',\n"
-        "            data: {speaker: 'Goblin 2'}};\n"
-        "return [S.phraseFor(ev, {}, {}),\n"
-        "        S.phraseFor({kind: 'dialogue', actor: 'pc_thorin', text: 'Not today.',\n"
-        "                     data: {speaker: 'Thorin'}}, {}, {pc_thorin: true})];"
+# One line each for the three kinds of speaker, as the page would replay them.
+PARTY_IDS = {"pc_thorin": True}
+SPEAKING = {"goblin_1": True}
+LINES = {
+    "pc": {"kind": "dialogue", "actor": "pc_thorin", "text": "Not today.",
+           "data": {"speaker": "Thorin"}},
+    "npc": {"kind": "dialogue", "actor": "npc_marta", "text": "Rooms are two silver.",
+            "data": {"speaker": "Elder Marta"}},
+    "monster": {"kind": "dialogue", "actor": "goblin_1", "text": "I'll gut you.",
+                "data": {"speaker": "Goblin Sneak"}},
+}
+
+
+def speech_of(ev: dict) -> list:
+    """Every clip the page would ask for, in order: [[voice key, words], ...]."""
+    return run_js(
+        "return S.segmentsFor(IN.ev, {}, IN.party, IN.monsters)\n"
+        "        .map(s => [s.key, s.text]);",
+        {"ev": ev, "party": PARTY_IDS, "monsters": SPEAKING},
     )
-    assert said == ["Goblin 2: You die now.", "Not today."]
+
+
+def test_a_speaker_name_is_never_inside_the_spoken_line():
+    """What the speaker's own voice says is only ever what they said.
+
+    The name used to be prepended to the phrase, so it was billed, distorted
+    with the monster's voice, and read as a label by the colon in the middle of
+    it. `phraseFor` is now the words alone for every speaker.
+    """
+    words = run_js(
+        "return ['pc', 'npc', 'monster'].map(k => S.phraseFor(IN.lines[k], {}, IN.party));",
+        {"lines": LINES, "party": PARTY_IDS},
+    )
+    assert words == ["Not today.", "Rooms are two silver.", "I'll gut you."]
+
+
+def test_the_narrator_names_the_speaker_and_a_pc_needs_no_naming():
+    """Two clips for a monster or an NPC, one for a PC.
+
+    A PC's own voice has always been their attribution. A monster's timbre and
+    the one shared NPC voice are not, so the narrator says who is speaking —
+    in the DM's voice, as its own clip, and never in the speaker's.
+    """
+    assert speech_of(LINES["monster"]) == [
+        ["dm", "Goblin Sneak."],
+        ["monster:goblin_1", "I'll gut you."],
+    ]
+    assert speech_of(LINES["npc"]) == [
+        ["dm", "Elder Marta."],
+        ["npc", "Rooms are two silver."],
+    ]
+    assert speech_of(LINES["pc"]) == [["pc_thorin", "Not today."]]
+
+    # Nothing else in the transcript is attributed: narration is one clip in
+    # the DM's voice, as it always was.
+    assert speech_of({"kind": "narration", "text": "The torch gutters."}) == [
+        ["dm", "The torch gutters."]
+    ]
+
+
+def test_a_replayed_line_that_carries_its_own_prefix_is_not_read_twice():
+    """History from before the speaker moved into `data` (CONTRACTS, 2026-09-04).
+
+    `splitSpeaker` takes the name off such a line, so the narrator announces it
+    exactly once and the monster says the rest — not "Goblin 2. Goblin 2: ...".
+    """
+    assert speech_of({"kind": "dialogue", "actor": "goblin_1",
+                      "text": "Goblin 2: You die now."}) == [
+        ["dm", "Goblin 2."],
+        ["monster:goblin_1", "You die now."],
+    ]
+
+
+def test_an_unnamed_or_silent_speaker_is_not_announced():
+    """No name to say, or nothing said: one clip, or none."""
+    assert speech_of({"kind": "dialogue", "actor": "goblin_1", "text": "Grah!"}) == [
+        ["monster:goblin_1", "Grah!"]
+    ]
+    assert speech_of({"kind": "dialogue", "actor": "goblin_1", "text": "   ",
+                      "data": {"speaker": "Goblin Sneak"}}) == []

@@ -58,6 +58,17 @@
     return m ? { who: m[1].trim(), said: m[2].trim() } : { who: null, said: String(text || '').trim() };
   }
 
+  // Who is speaking a `dialogue` event and what they say. The speaker rides in
+  // data; splitting the text is the fallback for events stored before it did
+  // (replayed history), and for those only. `names` fills in from the actor id
+  // where neither carries a name.
+  function dialogueLine(ev, names) {
+    var d = (ev && ev.data) || {};
+    var text = String((ev && ev.text) || '');
+    var sp = d.speaker ? { who: String(d.speaker), said: text.trim() } : splitSpeaker(text);
+    return { who: sp.who || nameFrom(names, ev && ev.actor), said: sp.said };
+  }
+
   // Party membership comes from the caller (`party`: {id: true} built from the
   // snapshot's combatants with side 'party', or the config's party ids). Ids
   // are arbitrary strings, so the 'pc_' prefix is only a fallback when no
@@ -80,17 +91,15 @@
       case 'narration':
         return text.trim() || null;
 
-      case 'dialogue': {
-        // The speaker rides in data; splitting the text is the fallback for
-        // events stored before it did (replayed history), and for those only.
-        var sp = d.speaker ? { who: String(d.speaker), said: text.trim() } : splitSpeaker(text);
-        if (!sp.said) return null;
-        var who = sp.who || nameFrom(names, ev.actor);
-        // PCs have their own voice; the voice is the attribution. Everyone
-        // else keeps the name: NPCs share one voice, and a speaking monster's
-        // novelty voice is a costume rather than a name anyone can place.
-        return isPC(ev.actor, party) || !who ? sp.said : who + ': ' + sp.said;
-      }
+      case 'dialogue':
+        // Only the words. The speaker's name is no longer glued to the front
+        // of them: it was inside the spoken text, so it was billed, and it was
+        // said in the speaker's own voice — a monster announcing itself
+        // through its own distortion, with a colon mid-sentence that Polly
+        // reads as a label rather than an attribution. The name is still
+        // announced where it is needed, as its own clip in the narrator's
+        // voice: see `attributionFor` for who gets one and why.
+        return dialogueLine(ev, names).said || null;
 
       case 'scene': {
         var sc = d.scene || {};
@@ -215,6 +224,40 @@
     if (!ev.actor || ev.actor === 'dm') return 'dm';
     if (isPC(ev.actor, party)) return ev.actor;
     return (monsters && monsters[ev.actor]) ? MONSTER_PREFIX + ev.actor : 'npc';
+  }
+
+  // The speaker's name, said aloud before their line, or null for "announce
+  // nobody". It is the narrator's job — `segmentsFor` gives it the `dm` voice
+  // and its own clip — so what a monster's own distorted voice says is only
+  // ever the words it speaks.
+  //
+  // Who gets announced is unchanged: a PC never does, because their voice is
+  // the attribution and always has been. Everyone else does, because a name
+  // heard once is what lets the voice afterwards be placed — an NPC shares the
+  // one `npc` voice with every other NPC, and a monster's timbre is a costume
+  // rather than a name.
+  function attributionFor(ev, names, party) {
+    if (!ev || ev.kind !== 'dialogue') return null;
+    var line = dialogueLine(ev, names);
+    if (!line.said || !line.who) return null;
+    if (isPC(ev.actor, party)) return null;
+    // Its own sentence, so the narrator lands on it rather than running into
+    // the line: a bare name is read as a fragment by both engines.
+    return /[.!?\u2026]$/.test(line.who) ? line.who : line.who + '.';
+  }
+
+  // The voiced parts of one event, in order: `[{key, text}]`, each part in one
+  // voice. Everything except an attributed line of dialogue is a single part,
+  // exactly as before. This is the whole of "what is spoken and by whom" — the
+  // page walks the list and asks for one clip per part.
+  function segmentsFor(ev, names, party, monsters) {
+    var phrase = phraseFor(ev, names, party);
+    if (!phrase) return [];
+    var out = [];
+    var who = attributionFor(ev, names, party);
+    if (who) out.push({ key: 'dm', text: who });
+    out.push({ key: voiceKeyFor(ev, party, monsters), text: phrase });
+    return out;
   }
 
   // Whether a stat block's `languages` string names something the creature can
@@ -390,6 +433,8 @@
   var api = {
     shouldSpeak: shouldSpeak,
     phraseFor: phraseFor,
+    attributionFor: attributionFor,
+    segmentsFor: segmentsFor,
     voiceKeyFor: voiceKeyFor,
     voiceProfileFor: voiceProfileFor,
     canSpeakLanguages: canSpeakLanguages,

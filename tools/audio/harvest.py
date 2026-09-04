@@ -29,11 +29,14 @@ __all__ = ["harvest", "select_cues", "write_candidates", "SOURCE_GROUPS", "MIN_I
 # Which source is worth asking for which kind of cue. Jamendo is full tracks,
 # so it never answers a two-second sting; the Archive's short-file metadata is
 # too unreliable to be worth the request. incompetech carries a Stings genre
-# alongside the beds, but it is a music catalogue and never a door creak.
+# alongside the beds, but it is a music catalogue and never a door creak — and
+# never an ambience either: a crypt wants the sound of a crypt, not a piece
+# *about* one, so asking a composer's catalogue for it returns the wrong kind
+# of thing however good the match looks.
 SOURCE_GROUPS = {
     "freesound": ("music", "ambience", "sting", "swell", "sfx"),
     "jamendo": ("music",),
-    "incompetech": ("music", "ambience", "sting", "swell"),
+    "incompetech": ("music", "sting", "swell"),
     "archive": ("music", "ambience"),
 }
 
@@ -79,7 +82,7 @@ def harvest(cues: list[C.Cue], sources: list[Source], *, per_query: int = 8,
                     sleep(gap - waited)
                 last[src.name] = time.monotonic()
                 try:
-                    hits = src.search(query, dur=cue.dur, limit=per_query)
+                    hits = src.search(query, dur=cue.dur, limit=per_query, group=cue.group)
                 except (httpx.HTTPError, RuntimeError, ValueError) as exc:
                     errors.append(f"{cue.id} / {src.name} / {query!r}: {exc}")
                     continue

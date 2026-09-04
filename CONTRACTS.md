@@ -1162,13 +1162,100 @@ three failures or a settled refusal, and both engines armed inside the same
 unlock gesture because the fallback has to work on iOS — is UI, not contract.
 It is described in the README.
 
+### 2026-09-04 — web/static — a spoken line may be more than one voice
+
+The speaker's name was prepended to the words of every non-PC `dialogue` event
+(`phraseFor`: `who + ': ' + said`), so a listener heard "Goblin Sneak: I'll gut
+you". The name was therefore *inside the spoken text*: billed as characters,
+rendered through the monster's own `vocal-tract-length` distortion, and
+punctuated with a colon in the middle of a sentence, which both engines read as
+a label rather than as an attribution. It is now announced by the narrator
+instead, as its own clip.
+
+1. **`phraseFor(ev, names, party)` returns the words alone for `dialogue`**, for
+   every speaker. `dialogueLine(ev, names)` is the extracted helper that finds
+   the speaker and the words — `data.speaker` first, `splitSpeaker(text)` as
+   the fallback for history stored before the speaker moved into `data` (the
+   2026-09-04 "one line per turn" amendment, §5).
+
+2. **`attributionFor(ev, names, party) -> string | null`** is new: the name to
+   say before the line, or `null` for "announce nobody". Who is announced is
+   unchanged from what got the prefix — never a PC, always anyone else with a
+   known name — and only the delivery is new. The name is returned as its own
+   sentence (a full stop appended unless it already ends in one) so the
+   narrator lands on it instead of running into the line.
+
+3. **`segmentsFor(ev, names, party, monsters) -> [{key, text}]`** is new and is
+   now the whole of "what is spoken and by whom": one part per voice, in order.
+   Every event except an attributed line of dialogue is a single part, exactly
+   as before; an attributed one is `[{key: 'dm', text: name}, {key: <speaker>,
+   text: words}]`. `phraseFor` and `voiceKeyFor` are unchanged as the pieces it
+   is built from, and both stay exported — `voiceKeyFor` is still the one
+   definition of who owns a line.
+
+   This supersedes the sentence in the 2026-09-04 Polly amendment (§2, "the
+   wording stays in the browser") that says a line has *a* voice key. It still
+   stays in the browser: the server is told a key and a string and does not
+   re-derive either, and no route, request or response shape changes. What
+   changes is that one event can be more than one request.
+
+4. **`web/static/app.js` casts per chunk, not per line.** `cur.chunks` is now
+   `[{key, text}]` rather than `[text]` and `cur.vkey` is gone; `chunkKey(cur)`
+   /`chunkText(cur)` are what the server path, the browser-fallback path and
+   the prefetch all read.
+
+   **One line, one engine, where the line is more than one voice.**
+   `voiceStartLine` asks for every remaining clip of such a line before any of
+   it plays, and hands the whole line to the browser's voices if any is
+   refused. `cur.local` cannot do this on its own: it is set by a failure that
+   has already happened, and the attribution is the half most likely to be a
+   free cache hit — the same name every time that character speaks. So the
+   name would play through Polly and the words behind it still be refused,
+   which is precisely what a game running out of budget mid-scene does. A
+   single-voice line is unchanged and still starts on its first chunk while
+   the rest fetch: that is what makes a long narration start promptly, and one
+   speaker crossing engines between chunks is a seam nobody can hear.
+
+**Why the recorded rationale was overridden.** The comment this replaces
+argued that a speaking monster's novelty voice was "a costume rather than a
+name anyone can place", so the name had to be spoken. That premise was written
+against the browser's `speechSynthesis`, where a monster is cast from whatever
+novelty voices the device happens to ship and two monsters routinely draw the
+same one. Since narration moved to Polly it is false often enough not to rely
+on: a monster is an ordinary voice with a `vocal-tract-length` timbre, and the
+distinctness is bought as separate voices. The half of the argument that still
+holds is about the *shared* voices — every NPC speaks in the one `npc` voice,
+and nothing tells two of them apart by ear — which is why the name is still
+said, rather than dropped as it is for a PC. It is now said by the voice whose
+job announcing things is.
+
+**Cost.** Billed characters are unchanged to within a character per attributed
+line (`": "` becomes `"."`). What changes is requests: one extra per attributed
+line of dialogue. Nearly all of them are free — the attribution text is
+identical every time that speaker talks and the cache key (engine, voice id,
+rendered SSML) contains no game id, so one synthesis per distinct name per
+voice covers every line that character will ever speak, in this game and in
+every later one. **The re-spend is real but narrow**: changing the wording
+changes the key, so every *attributed dialogue* clip already on disk is
+orphaned and each such line is paid for once more. Non-dialogue clips — which
+are the overwhelming majority of a game's characters — keep their keys and are
+not re-synthesized. Orphans are not deleted: `AudioCache.prune` is
+size-triggered LRU (every 50 writes, only above `max_bytes`), so they sit there
+until the ceiling is crossed and then go first, having stopped being read.
+
+The `&v=` fingerprint (`PollyTTS.config_id`) does not cover `speech.js` and
+does not need to here: the words are in the query string, so new wording is a
+new URL and neither the browser's year-long immutable copy nor the server's
+cache can answer it with a clip of the old wording.
+
 ### 2026-09-04 — web/ — a write token on the routes that mutate or spend
 
-Narration went live on Amazon Polly the same day (the amendment above), and two
-routes that had been theoretically open became a spend surface. `POST
-/api/games` took no credential and was unbounded in call count — and the caller
-supplies `budget_usd`, which is why the narration route clamps to `min(game
-budget, DND_TTS_MAX_USD)`; that ceiling is *per game*, so N games are N × $10.
+Narration went live on Amazon Polly the same day (the "narration moves to
+Amazon Polly" amendment), and two routes that had been theoretically open
+became a spend surface. `POST /api/games` took no credential and was unbounded
+in call count — and the caller supplies `budget_usd`, which is why the narration
+route clamps to `min(game budget, DND_TTS_MAX_USD)`; that ceiling is *per game*,
+so N games are N × $10.
 `POST /api/games/<id>/note` took 2,000 characters that `web/static/speech.js`
 always speaks, roughly 3¢ a call at neural rates, repeatable. TTS-COSTS.md §1,
 §4 and §6 each land on the same missing piece and §6 states it as unbuilt.

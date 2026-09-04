@@ -289,3 +289,60 @@ def test_incompetech_strips_the_stray_newlines_in_the_catalogue():
     assert cand.title == "Mesmerizing Galaxy"
     assert cand.download_url.endswith("Mesmerizing%20Galaxy.mp3")
     assert cand.page_url.endswith("isrc=USUAN1100009")
+
+
+def test_archive_asks_for_field_recordings_when_the_cue_wants_ambience():
+    """A crypt wants the sound of a crypt, not a composition about one."""
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if "advancedsearch" in request.url.path:
+            return httpx.Response(200, json=ARCHIVE_SEARCH)
+        return httpx.Response(200, json=ARCHIVE_META)
+
+    with client_for(handler) as c:
+        src = S.ArchiveSource(c)
+        src.search("crypt ambience", dur=(20, 900), limit=3, group="ambience")
+        src.search("battle music", dur=(45, 420), limit=3, group="music")
+
+    ambience, music = seen[0], [u for u in seen if "advancedsearch" in u][1]
+    assert "field+recording" in ambience or "field recording" in ambience
+    assert "aporee" in ambience
+    assert "aporee" not in music, "a music bed is a composition; do not narrow it to recordings"
+
+
+def test_group_is_optional_for_the_sources_that_have_one_kind_of_thing():
+    with client_for(lambda r: httpx.Response(200, json=FREESOUND_PAGE)) as c:
+        assert S.FreesoundSource(c, "K").search("x", dur=(0, 9), limit=1, group="ambience")
+    with incompetech_client() as c:
+        assert S.IncompetechSource(c).search("dark", dur=(0, 999), limit=1, group="music")
+
+
+def test_archive_drops_the_words_that_match_the_whole_corpus():
+    terms = S.ArchiveSource._terms("cave ambience water drips")
+    assert "ambience" not in terms
+    assert set(terms.split(" OR ")) == {"cave", "water", "drips"}
+    # something has to be searched for, even when every word is generic
+    assert S.ArchiveSource._terms("ambience loop") == "ambience loop"
+
+
+ARCHIVE_MANY_FORMATS = {"files": [
+    {"name": "rec.ogg", "format": "Ogg Vorbis", "length": "120", "size": "900000"},
+    {"name": "rec.mp3", "format": "VBR MP3", "length": "120", "size": "1900000"},
+    {"name": "rec_64.mp3", "format": "64Kbps MP3", "length": "120", "size": "900000"},
+]}
+
+
+def test_one_recording_in_three_encodings_is_one_candidate():
+    def handler(request):
+        if "advancedsearch" in request.url.path:
+            return httpx.Response(200, json=ARCHIVE_SEARCH)
+        return httpx.Response(200, json=ARCHIVE_MANY_FORMATS)
+
+    with client_for(handler) as c:
+        got = S.ArchiveSource(c).search("cave", dur=(20, 900), limit=9, group="ambience")
+
+    assert len(got) == 1, "the same field recording twice is a wasted audition"
+    assert got[0].preview_url.endswith("rec.mp3"), "and it should be the best encoding"
+    assert got[0].title == "Cave Ambience", "the item's title beats a filename"
