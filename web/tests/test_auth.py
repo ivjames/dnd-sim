@@ -363,3 +363,91 @@ def test_a_server_with_no_token_offers_nothing_to_unlock():
     assert dom["btn-unlock"]["hidden"] is True        # there is nothing to enter
     assert dom["write-controls"]["hidden"] is True
     assert "no write token set" in dom["write-locked"]["textContent"]
+
+
+def submit(*, token: str, authed: bool, typed: str, answer: dict | None,
+           fail: str = "") -> dict:
+    """Run the real submitUnlock() against a stubbed `/api/auth` answer."""
+    script = """
+    const IN = JSON.parse(process.argv[1]);
+    const els = {};
+    for (const id of ['ul-token', 'ul-error', 'ul-save', 'unlock'])
+      els[id] = { hidden: null, textContent: '', value: '', disabled: false };
+    els['ul-token'].value = IN.typed;
+    const $ = (id) => { if (!els[id]) throw new Error('no such element: ' + id); return els[id]; };
+    const S = { writes: 'token', token: IN.token, authed: IN.authed };
+    let stored = IN.token;
+    const tokenStore = (v) => { stored = v; };
+    let renders = 0;
+    const renderWriteAccess = () => { renders++; };
+    const api = () => IN.fail
+      ? Promise.reject(new Error(IN.fail))
+      : Promise.resolve(IN.answer);
+    %s
+    submitUnlock({ preventDefault() {} });
+    setTimeout(() => process.stdout.write(
+      JSON.stringify({ S, stored, els, renders })), 25);
+    """ % function_source("submitUnlock")
+    arg = json.dumps(
+        {"token": token, "authed": authed, "typed": typed, "answer": answer, "fail": fail}
+    )
+    proc = subprocess.run(
+        ["node", "-e", script, arg], capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+ACCEPTED = {"writes": "token", "header": "X-Dnd-Token", "authenticated": True}
+REJECTED = {"writes": "token", "header": "X-Dnd-Token", "authenticated": False}
+
+
+@needs_node
+def test_a_good_token_is_kept_and_the_panel_closes():
+    out = submit(token="", authed=False, typed="good", answer=ACCEPTED)
+    assert out["S"]["token"] == "good"
+    assert out["S"]["authed"] is True
+    assert out["stored"] == "good"
+    assert out["els"]["unlock"]["hidden"] is True
+
+
+@needs_node
+def test_a_rejected_token_is_not_kept():
+    out = submit(token="", authed=False, typed="wrong", answer=REJECTED)
+    assert out["S"]["token"] == ""
+    assert out["S"]["authed"] is False
+    assert out["stored"] == ""                      # never written
+    assert "not accepted" in out["els"]["ul-error"]["textContent"]
+    assert out["els"]["unlock"]["hidden"] is None    # the panel stays open
+
+
+@needs_node
+def test_a_mistyped_replacement_does_not_lock_out_a_working_token():
+    """The panel is reachable from the unlocked state, so typing a wrong token
+    while already unlocked is an ordinary slip. Restoring the string but not
+    the flag would take the write controls away from a browser still holding a
+    token the server accepts."""
+    out = submit(token="good", authed=True, typed="wrong", answer=REJECTED)
+    assert out["S"]["token"] == "good"
+    assert out["S"]["authed"] is True
+    assert out["stored"] == "good"
+    assert "not accepted" in out["els"]["ul-error"]["textContent"]
+
+
+@needs_node
+def test_a_failed_probe_leaves_the_previous_state_whole():
+    """A network error says nothing about either token."""
+    out = submit(token="good", authed=True, typed="maybe", answer=None, fail="offline")
+    assert out["S"]["token"] == "good"
+    assert out["S"]["authed"] is True
+    assert out["els"]["ul-error"]["textContent"] == "offline"
+    assert out["els"]["ul-save"]["disabled"] is False   # the button comes back
+
+
+@needs_node
+def test_an_empty_submission_does_not_touch_the_stored_token():
+    out = submit(token="good", authed=True, typed="   ", answer=REJECTED)
+    assert out["S"]["token"] == "good"
+    assert out["S"]["authed"] is True
+    assert out["renders"] == 0
+    assert "Forget" in out["els"]["ul-error"]["textContent"]

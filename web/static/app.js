@@ -187,7 +187,15 @@
       $('ul-error').hidden = false;
       return;
     }
+    // Both halves of the credential, because a rejected replacement has to put
+    // back the state it replaced and not merely the string. Typing a wrong
+    // token while already unlocked is a normal slip now that the panel is
+    // reachable from the unlocked state; restoring the token but not the flag
+    // would take the write controls away from a browser that is still holding
+    // a token the server accepts, and the only ways back would be resubmitting
+    // or reloading.
     var previous = S.token;
+    var wasAuthed = S.authed;
     S.token = value;
     var btn = $('ul-save');
     btn.disabled = true;
@@ -201,6 +209,10 @@
         $('unlock').hidden = true;
       } else {
         S.token = previous;
+        // As true as it was a moment ago. If the server has since rotated its
+        // token, the next write is a 401 and `noteWriteRefusal` re-renders the
+        // gate — which is the mechanism that exists for exactly that.
+        S.authed = wasAuthed;
         $('ul-error').textContent = S.writes === 'unconfigured'
           ? 'this server has no write token set'
           : 'that token was not accepted';
@@ -208,7 +220,10 @@
       }
       renderWriteAccess();
     }).catch(function (err) {
+      // The probe failing says nothing about either token, so the previous
+      // state stands whole and the gate is left as it was.
       S.token = previous;
+      S.authed = wasAuthed;
       $('ul-error').textContent = err.message;
       $('ul-error').hidden = false;
     }).then(function () { btn.disabled = false; });
