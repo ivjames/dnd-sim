@@ -626,8 +626,19 @@ body {
   display: flex; align-items: center;
   font-size: 12px; font-family: var(--mono); color: var(--ink-dim);
   overflow-wrap: anywhere;
+  /* Nothing in here is longer than a few words any more, and this is what
+     makes that a rule rather than a habit: whatever the panel says, it can
+     never grow this row into a column and stand the transport on its end. */
+  max-height: 6em; overflow: hidden;
 }
-.vt-now .vt-tag { color: var(--ink-faint); text-transform: uppercase; letter-spacing: .07em; margin-right: 6px; }
+/* `flex: 0 0 auto` and `nowrap` are load-bearing. As a shrinkable flex item
+   beside a long anonymous text item, this span was squeezed to one character
+   wide and "NARRATION" came out down the panel, a letter to a line. A label is
+   never the thing that gives way. */
+.vt-now .vt-tag {
+  flex: 0 0 auto; white-space: nowrap;
+  color: var(--ink-faint); text-transform: uppercase; letter-spacing: .07em; margin-right: 6px;
+}
 /* Which engine is reading: server-rendered voices, or this browser's own. */
 /* Ordered last so that turning it on wraps a line of its own rather than
    pushing the settings off the bar. */

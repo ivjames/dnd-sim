@@ -1812,7 +1812,12 @@
     if (!V.settings.enabled) return { tag: '', text: 'voice off' };
     if (!V.unlocked) return { tag: '', text: 'press play to start — browsers only allow speech from a tap' };
     if (V.current) {
-      return { tag: V.current.ev.kind.replace('_', ' '), text: 'read by ' + voiceReaderName(V.current.ev) };
+      // No tag on a narration: the panel is already titled NARRATION, and the
+      // word twice across two inches of the same bar is the thing this panel
+      // was just cured of.
+      var kind = V.current.ev.kind;
+      return { tag: kind === 'narration' ? '' : kind.replace('_', ' '),
+               text: 'read by ' + voiceReaderName(V.current.ev) };
     }
     if (!V.playing) {
       return (S.queue.length || V.cursor < S.events.length)

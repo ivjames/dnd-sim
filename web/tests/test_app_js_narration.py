@@ -140,6 +140,27 @@ def test_the_panel_does_not_reprint_the_line_it_is_reading():
     assert "V.current.phrase" not in js
 
 
+def test_the_kind_label_in_that_panel_cannot_be_squeezed_into_a_column():
+    """It was, on the deployed build, and it is a stylesheet fault not a text one.
+
+    `.vt-now` is a flex row; the tag is a span beside an anonymous text item.
+    With the line printed there the text took the row and the span — shrinkable
+    by default, `min-width: auto` — came out one character wide, so
+    "NARRATION" ran down the panel a letter to a line and stood the transport
+    on its end. Dropping the text fixes the symptom; these two declarations are
+    what stop anything else in that row ever doing it again.
+    """
+    with open(os.path.join(ROOT, "web", "static", "style.css"), "r", encoding="utf-8") as fh:
+        css = fh.read()
+    rule = re.search(r"\.vt-now \.vt-tag \{(.+?)\}", css, re.S)
+    assert rule, "style.css no longer styles the narration panel's tag"
+    assert "flex: 0 0 auto" in rule.group(1)
+    assert "white-space: nowrap" in rule.group(1)
+    # ... and the row itself cannot grow into a column, whatever it is given.
+    now = re.search(r"\.vt-now \{(.+?)\}", css, re.S)
+    assert now and "max-height" in now.group(1) and "overflow: hidden" in now.group(1)
+
+
 # -- the theme toggle --------------------------------------------------------
 
 def test_the_theme_cycle_does_not_ask_storage_what_it_is_showing():
