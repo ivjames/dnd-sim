@@ -313,8 +313,19 @@ body {
 /* ---------- initiative ----------
    One tight monospace line each, so a ten-combatant order is a glance and not
    a scroll. The cap is the quadrant's, not its own: past that the panel body
-   around it scrolls. */
-.initiative { list-style: none; margin: 0; padding: 0; }
+   around it scrolls. It columnates for the same reason the cards do — a name
+   and a two-digit score do not want 600px — and it fills each column before
+   starting the next, so the order still reads top to bottom. */
+.initiative {
+  list-style: none; margin: 0; padding: 0;
+  /* Width and a ceiling: three columns of a ten-line order is a glance, six
+     columns of two is a puzzle. */
+  columns: 240px 3; column-gap: 18px;
+}
+/* The row is capped as well as the column: a column wider than this leaves the
+   surplus as gutter rather than stretching a name and a two-digit score across
+   half a metre of panel. */
+.initiative li { break-inside: avoid; max-width: 340px; }
 .initiative li {
   display: flex; align-items: center; gap: 8px;
   padding: 1px 6px; border-radius: 4px;
@@ -331,9 +342,18 @@ body {
 
 /* ---------- party cards ----------
    Name and AC on one line, bar and hit points on the next; enemies get all of
-   it on a single line. Four party members and five bandits fit the rail
-   without pushing the map off the screen. */
-.party { display: flex; flex-direction: column; gap: 6px; }
+   it on a single line.
+
+   The list COLUMNATES rather than stretches. A card says its piece in about
+   260px, and a panel four times that wide was answering with one card per row
+   and three quarters of a line of empty gutter between the name and the hit
+   points. `auto-fill` spends the width on more cards per row instead: one
+   column in the map-width quadrant, two or three in the wide one, and the
+   whole party or every enemy on screen without a scroll. */
+.party {
+  display: grid; gap: 6px; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+}
 .card {
   border: 1px solid var(--line-soft); border-radius: 6px;
   padding: 5px 8px 6px; background: var(--bg-sunken);

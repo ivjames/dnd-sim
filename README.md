@@ -368,9 +368,11 @@ to lengthen those panels until the story started below the fold.
 
 The map's column is as wide as a quadrant is tall, so the map is drawn in a
 square and fills it rather than sitting as a letterboxed strip in a half-width
-panel; the other column takes the rest, which is more than half the board,
-because the party, the enemies and the initiative order are rows of text and
-would rather be wide. How tall a quadrant is, is arithmetic rather than taste:
+panel; the other column takes the rest. What the wide column does with it is
+COLUMNATE rather than stretch: a party or enemy card says its piece in about
+250px and an initiative row in rather less, so both lay out in as many columns
+as the panel has room for — one beside the map, three or six in the wide one —
+instead of one row per line with the surplus spent on gutter. How tall a quadrant is, is arithmetic rather than taste:
 the page owes about 500px to everything that is not the board — the top bar,
 the gaps, the row of narration and controls, and the transcript's own floor —
 and each of the two rows takes half of what is left, clamped so that a
