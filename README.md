@@ -373,9 +373,13 @@ rather than a game with no ceiling.
 A clip about to be synthesized **holds its own cost against the game** until it
 is charged or abandoned, so eight spectators asking for eight different lines
 at the same moment cannot each read the same below-budget total and each go to
-Polly. A clip that would take the game over is refused before the call, which
-is stricter than the model-call check (that one stops the game once it already
-has) — erring toward stopping is the house style. A clip **already paid for is
+Polly. Eight asking for the *same* line is the other half of that: they queue
+on one gate, one pays, and the rest are served free — being refused for a clip
+someone else is a moment from making free would be read by the page as a
+settled refusal and cost server voices for the whole game. A clip that would
+take the game over is refused before the call, which is stricter than the
+model-call check (that one stops the game once it already has) — erring toward
+stopping is the house style. A clip **already paid for is
 served whatever the budget says**: the budget governs spend, and re-reading a
 line is not spend, so a game that has run out of money stays listenable to the
 end of its transcript.
