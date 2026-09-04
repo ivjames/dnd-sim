@@ -129,6 +129,16 @@ else here wants it: without it, `fetch` says so and keeps the files exactly as
 downloaded. `fetch --no-normalize` opts out where you have it; `python -m
 tools.audio normalize` runs it over a directory fetched earlier.
 
+**Lengths are measured here, and sources lie about them.** incompetech's
+catalogue gives "Cowboy Sting" as 8 seconds and ships 54; "Deep Noise" as 2 and
+ships 149. The search window filters on the claimed length and the picker
+auditions seven seconds, so a 150-second track can be chosen as a sting and
+nothing notices until it plays over the table for two and a half minutes.
+Normalising is the first point where the real length is known, so each entry
+gains a measured `duration_s`, and one that does not fit its cue's window gets
+a `duration_warning` in the manifest and a `WRONG LENGTH` line on the console.
+Nothing is truncated — a pick is yours to change.
+
 Processing is destructive, and the manifest records it — each entry gains a
 `normalized` block naming the profile, so a second run is a no-op rather than a
 second generation of lossy encoding. Bump the version in a profile's `id` when

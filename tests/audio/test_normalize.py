@@ -161,7 +161,7 @@ def test_every_cue_group_has_a_profile():
 # --------------------------------------------------------------- the manifest
 
 def manifest_dir(tmp_path, **over):
-    (tmp_path / "assets" / "sfx").mkdir(parents=True)
+    (tmp_path / "assets" / "sfx").mkdir(parents=True, exist_ok=True)
     f = tmp_path / "assets" / "sfx" / "sfx_dice.mp3"
     f.write_bytes(b"ID3original")
     entry = {"file": "assets/sfx/sfx_dice.mp3", "group": "sfx", "bytes": f.stat().st_size,
@@ -275,3 +275,53 @@ def test_a_bed_really_lands_on_the_target_loudness(tmp_path):
     measured = float(N._measure_loudness(src, N.BED)["input_i"])
     assert -16.6 < measured < -15.4, f"landed at {measured} LUFS, wanted -16"
     assert src.stat().st_size < before / 2, "and the file should be smaller"
+
+
+# ------------------------------------------------- lengths sources lie about
+
+def test_a_one_shot_far_longer_than_its_slot_is_called_out():
+    """incompetech gave "Deep Noise" as 2 seconds and ships 149."""
+    said = N.duration_problem("sting_death_save_fail", 149.5)
+    assert "149.5s" in said and "0.4-8s" in said
+    assert "19x" in said, "say how far out it is, not just that it is out"
+
+
+def test_a_length_inside_the_window_says_nothing():
+    assert N.duration_problem("sting_crit", 5.3) == ""
+    assert N.duration_problem("music_combat", 327.0) == ""
+
+
+def test_a_file_shorter_than_its_cue_expects_is_also_called_out():
+    said = N.duration_problem("music_combat", 4.0)
+    assert "shorter" in said and "45s" in said
+
+
+def test_an_unknown_cue_has_no_opinion():
+    assert N.duration_problem("not_a_cue", 900.0) == ""
+
+
+def test_the_manifest_records_the_measured_length_and_the_warning(tmp_path):
+    out = manifest_dir(tmp_path, group="sting")
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_death_save_fail": {
+            "file": "assets/sfx/sfx_dice.mp3", "group": "sting", "credit": {},
+            "duration": 2,      # what the catalogue claimed
+        }}}))
+    said = []
+    N.normalize_manifest(out, run=FakeRun(duration=149.5), log=said.append)
+
+    entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_death_save_fail"]
+    assert entry["duration_s"] == 149.5
+    assert "149.5s" in entry["duration_warning"]
+    assert any("WRONG LENGTH" in s for s in said)
+
+
+def test_a_good_length_leaves_no_warning_behind(tmp_path):
+    out = manifest_dir(tmp_path, group="sting", duration_warning="stale, from a previous file")
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_crit": {"file": "assets/sfx/sfx_dice.mp3", "group": "sting", "credit": {},
+                       "duration_warning": "stale, from the file this replaced"}}}))
+    N.normalize_manifest(out, run=FakeRun(duration=5.3), log=lambda *_: None)
+    entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_crit"]
+    assert entry["duration_s"] == 5.3
+    assert "duration_warning" not in entry
