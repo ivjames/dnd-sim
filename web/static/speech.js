@@ -430,8 +430,27 @@
     return out;
   }
 
+  // How many of a queue of waiting events may go on screen in this beat: the
+  // run up to and including the next line that will be SPOKEN, or 0 when
+  // there is no such line in it yet.
+  //
+  // This is the shape of the reveal gate. A turn's mechanics are emitted
+  // before the paragraph that describes them — the orchestrator resolves the
+  // turn, then asks the DM for the prose — and with "mute mechanics" on they
+  // are never spoken at all, so an event put on screen when it arrived would
+  // move the pieces and drop the hit points before a word of it had been said.
+  // Revealing the whole run at the moment its spoken line begins is what keeps
+  // the board level with the voice; returning 0 is what makes the rest wait.
+  function revealRun(queue, settings) {
+    for (var i = 0; i < (queue || []).length; i++) {
+      if (shouldSpeak(queue[i], settings)) return i + 1;
+    }
+    return 0;
+  }
+
   var api = {
     shouldSpeak: shouldSpeak,
+    revealRun: revealRun,
     phraseFor: phraseFor,
     attributionFor: attributionFor,
     segmentsFor: segmentsFor,

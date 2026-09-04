@@ -179,9 +179,28 @@ def _round_of(snapshot: Any) -> int:
 
 @bp.get("/games/<game_id>")
 def get_game(game_id: str):
+    """The game: config, ledger, status and a snapshot of the board.
+
+    ``?at_seq=<n>`` asks for the board **as of** event ``n`` rather than as of
+    now. The spectator page reveals the transcript at the pace of the spoken
+    narration while the game runs ahead of it, so it asks for the board at the
+    last line it has put on screen; without that the map and the hit points
+    would be the one thing that ran ahead of the voice. Only ``snapshot.state``
+    and ``round`` come from the archive — status, ledger and cost stay live,
+    because money and whether the game is still running are not narrated —
+    and ``snapshot_seq`` says which seq the board actually is (``null`` when
+    the archive was not consulted or had nothing).
+    """
     entry, row = _game_or_404(game_id)
     if entry is None and row is None:
         return _err("no such game", 404)
+    at_seq_raw = request.args.get("at_seq")
+    at_seq: int | None = None
+    if at_seq_raw is not None:
+        try:
+            at_seq = int(at_seq_raw)
+        except (TypeError, ValueError):
+            return _err("at_seq must be an integer")
     if entry is not None:
         snapshot = entry.snapshot()
         status = entry.status()
@@ -198,6 +217,14 @@ def get_game(game_id: str):
         title = row["title"]
         created_at = row["created_at"]
         last_seq = -1
+    board_seq: int | None = None
+    if at_seq is not None and entry is not None:
+        board = entry.board_at(at_seq)
+        if board is not None:
+            snapshot = dict(snapshot or {})
+            snapshot["state"] = board["state"]
+            snapshot["round"] = board["round"]
+            board_seq = board["seq"]
     return jsonify(
         {
             "id": game_id,
@@ -207,11 +234,18 @@ def get_game(game_id: str):
             "config": to_jsonable(config),
             "snapshot": to_jsonable(snapshot),
             "ledger": to_jsonable(ledger or {}),
-            "round": _round_of(snapshot) or (entry.round if entry else 0),
+            # An archived board carries its own round, zero included: a game
+            # out of combat is round 0 and must not borrow the live one.
+            "round": (
+                snapshot.get("round", 0)
+                if board_seq is not None
+                else (_round_of(snapshot) or (entry.round if entry else 0))
+            ),
             "cost_usd": round(
                 float((entry.cost_usd if entry else row["cost_usd"]) or 0.0), 6
             ),
             "last_seq": last_seq,
+            "snapshot_seq": board_seq,
             "live": entry is not None,
         }
     )

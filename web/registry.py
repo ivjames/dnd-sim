@@ -7,6 +7,7 @@ still marked running/paused/created as ``stopped`` at start-up.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from typing import Any, Callable
@@ -15,6 +16,47 @@ from web.serialize import event_to_dict, to_jsonable
 
 TERMINAL_STATUSES = {"finished", "stopped", "error", "budget_exceeded"}
 SNAPSHOT_EVERY = 25
+
+#: Board snapshots kept per live game, so the spectator page can ask for the
+#: map and the hit points *as of* the line it has just put on screen rather
+#: than as of now. The page reveals the transcript at the pace of the spoken
+#: narration and the game runs ahead of it into a queue; without this the one
+#: thing that queue cannot delay is the board, which would go on showing where
+#: everyone ended up while the voice is still describing how they got there.
+#: A small combat's state serializes to ~25 KB, so this is a few MB per live
+#: game — a ceiling, not a target, and old entries are dropped.
+BOARD_HISTORY = 128
+
+#: State that churns on nearly every event without being anything the page
+#: draws. Excluded from the key that decides whether a board is worth keeping,
+#: so a paragraph or a die roll does not archive a board identical to the one
+#: before it. Anything drawn that is *not* excluded here is compared, so the
+#: only way this list can be wrong is by making the board a change late —
+#: never by letting it run ahead, which is the direction that matters.
+BOARD_NOISE = ("rng", "event_seq")
+COMBATANT_NOISE = ("turn", "flags")
+
+
+def _board_key(board: dict[str, Any]) -> str:
+    """What the page would draw from this board, as one comparable string.
+
+    Everything the spectator page reads off a state is in here; the dice
+    generator, the running event count and a combatant's per-turn bookkeeping
+    and flags are not, because they change on nearly every event and are drawn
+    nowhere. Two boards with the same key are the same picture.
+    """
+    state = board.get("state")
+    if not isinstance(state, dict):
+        return json.dumps([board.get("round"), state], sort_keys=True, default=str)
+    drawn = {k: v for k, v in state.items() if k not in BOARD_NOISE}
+    combatants = drawn.get("combatants")
+    if isinstance(combatants, dict):
+        drawn["combatants"] = {
+            cid: ({k: v for k, v in c.items() if k not in COMBATANT_NOISE}
+                  if isinstance(c, dict) else c)
+            for cid, c in combatants.items()
+        }
+    return json.dumps([board.get("round"), drawn], sort_keys=True, default=str)
 
 
 class GameEntry:
@@ -32,6 +74,8 @@ class GameEntry:
         self.round = 0
         self.cost_usd = 0.0
         self._events_since_snapshot = 0
+        self._boards: dict[int, dict[str, Any]] = {}   # seq -> board, oldest first
+        self._board_key_last = ""                     # ... and what the newest one draws as
         self._last_status = "created"
         self._lock = threading.Lock()
         # Every snapshot write goes through this. `persist_snapshot` reads the
@@ -64,12 +108,91 @@ class GameEntry:
             due = self._events_since_snapshot >= SNAPSHOT_EVERY
             if due:
                 self._events_since_snapshot = 0
+        self._record_board(d["seq"])
         try:
             self.db.add_event(self.id, d["seq"], d["kind"], d)
         except Exception:  # pragma: no cover - persistence must never kill the game
             pass
         if due:
             self.persist_snapshot()
+
+    def _record_board(self, seq: int) -> None:
+        """Keep the board as it stood when this event was published.
+
+        Called on the game thread, from ``on_event``, so what it reads is the
+        state that event was emitted against. Only the board is kept — never
+        the ledger, the status or the hold — because money, whether the game
+        is still running and whether it is being held are live facts about the
+        table rather than things anyone narrates.
+
+        Two filters, and both are about not archiving a board **ahead** of the
+        event it is filed under:
+
+        * ``Game.board_settled()``. An engine action resolves in full and
+          hands back a list of events, published one at a time, so between
+          them the state is already the state after the last of them. Filed
+          per event, the hit points would drop on the attack roll and the
+          narration would explain it afterwards. Skipping the unsettled ones
+          leaves the previous settled board answering for them, which is a
+          fraction of a second stale and never early. A game that does not
+          offer the method (a fake, another implementation) is taken at its
+          word that every event settles.
+        * The board is unchanged. A paragraph, a die roll or a cost line moves
+          nothing, so it keeps no board of its own and the one before it goes
+          on answering. This is what stops prose — most of a transcript — from
+          filling the archive.
+        """
+        game = self.game
+        if game is None:
+            return
+        settled = getattr(game, "board_settled", None)
+        if callable(settled):
+            try:
+                if not settled():
+                    return
+            except Exception:  # pragma: no cover - defensive
+                pass
+        try:
+            snap = game.snapshot() or {}
+            board = {
+                "state": to_jsonable(snap.get("state")),
+                "round": int(snap.get("round") or 0),
+            }
+            key = _board_key(board)
+        except Exception:  # pragma: no cover - a board must never kill the game
+            return
+        with self._lock:
+            if key == self._board_key_last:
+                return
+            self._board_key_last = key
+            self._boards[seq] = board
+            # Seqs are monotonic, so insertion order is seq order and the
+            # oldest is always the first key.
+            while len(self._boards) > BOARD_HISTORY:
+                del self._boards[next(iter(self._boards))]
+
+    def board_at(self, seq: int) -> dict[str, Any] | None:
+        """The board as of ``seq``: the newest one archived at or before it.
+
+        Asked for something older than anything kept — a listener minutes
+        behind the game — it answers with the oldest kept, which is the least
+        far ahead this can be; the reply carries the seq it actually is, so
+        the caller is never told a state is older than it is. ``None`` when
+        nothing has been archived at all.
+        """
+        with self._lock:
+            if not self._boards:
+                return None
+            best = None
+            for s in self._boards:
+                if s <= seq:
+                    best = s
+                else:
+                    break
+            if best is None:
+                best = next(iter(self._boards))
+            board = self._boards[best]
+            return {"seq": best, "state": board["state"], "round": board["round"]}
 
     def status(self) -> str:
         game = self.game

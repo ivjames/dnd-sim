@@ -20,9 +20,15 @@
   var S = {
     gameId: null,
     es: null,
-    lastSeq: -1,
+    lastSeq: -1,        // highest seq REVEALED — what the transcript has reached
+    gotSeq: -1,         // highest seq RECEIVED — where a reconnect resumes from
     seen: {},
-    events: [],         // every event in arrival order; the narrator's playhead indexes it
+    taken: {},          // seqs the page has taken in, revealed or still queued
+    events: [],         // every REVEALED event in arrival order; the playhead indexes it
+    queue: [],          // received, not yet revealed — see "the reveal gate"
+    revealing: false,   // re-entrancy guard: revealing an event pumps the narrator
+    jumping: false,     // ... and while jumping to live, revealing must not START one
+    endBanner: null,    // the stream has ended; the banner waits for the narrator
     game: null,         // last /api/games/<id> body (config, ledger, …)
     snapshot: null,
     status: 'idle',
@@ -35,6 +41,7 @@
     snapTimer: null,
     pollTimer: null,
     loadGen: 0,         // bumped per selectGame; a stale load must not finish
+    snapGen: 0,         // ... and per snapshot request; a stale board must not land
     castToken: 0,       // bumped per cast preview; a stale answer must not land
     presets: [],
     // Write access. Reading a game, listing games and the stream are anonymous
@@ -277,7 +284,10 @@
     clear(t);
     S.group = null; S.groupBody = null;
     S.seen = {}; S.lastSeq = -1;
+    S.taken = {}; S.gotSeq = -1;
     S.events = [];
+    S.queue = [];
+    S.endBanner = null;
   }
 
   function atBottom(node) {
@@ -330,7 +340,12 @@
 
     if (ev.kind === 'cost') {
       var d = ev.data || {};
-      if (d.total_usd !== undefined) setCost(num(d.total_usd), null);
+      // Never downward. A cost line is revealed at the narrator's pace like
+      // everything else, so by the time it lands the 5 s poll may already have
+      // shown a later total — and a meter that ran backwards would be saying
+      // the game had spent less than it has. Money is a live fact; this event
+      // only ever brings it forward between polls.
+      if (d.total_usd !== undefined) setCost(Math.max(num(d.total_usd), S.cost), null);
     }
     var node = null;   // the transcript node for this event (voice highlights it)
     if (ev.kind === 'turn_start') {
@@ -394,6 +409,121 @@
     return c ? c.name : null;
   }
 
+  // ---------- the reveal gate ----------
+  // Events arrive far faster than a voice reads them, so with the narrator
+  // running they land HERE first and reach the screen — transcript, map, hit
+  // points, whose turn it is — only as the narrator begins the line that
+  // describes them. Nothing is dropped, nothing is reordered, nothing is
+  // summarised: the queue is a delay and only a delay, and the game going on
+  // without us is what it is for.
+  //
+  // Why a run of events at a time rather than one as it is spoken: a turn's
+  // mechanics are emitted BEFORE the paragraph that describes them (the
+  // orchestrator resolves the turn, then asks the DM for the prose), and with
+  // "mute mechanics" on they are never spoken at all. Revealing each as it
+  // arrived would move the pieces and drop the hit points before a word of it
+  // had been said. So the queue is read up to and including the next line that
+  // WILL be spoken, and that whole run is revealed in one beat — the beat that
+  // line starts in.
+  //
+  // With voice off, before the first tap, or while a game's history is being
+  // replayed there is nothing to keep step with, and everything is revealed as
+  // it arrives, which is what this page did before the gate existed.
+  function revealGated() {
+    return V.supported && V.settings.enabled && V.unlocked && !V.loading;
+  }
+
+  // One event off the queue and onto the screen. `renderEvent` pumps the
+  // narrator on its way out, which is what starts the line this run was
+  // revealed for.
+  function revealOne() {
+    var ev = S.queue.shift();
+    if (ev) renderEvent(ev);
+  }
+
+  // Queued events with nothing spoken after them are held: the paragraph that
+  // describes them is the next thing the DM writes. They are let go only when
+  // that paragraph can never arrive — the game has ended and the narrator has
+  // read everything already revealed.
+  function revealFlushable() {
+    return TERMINAL[S.status] && !V.current && V.cursor >= S.events.length;
+  }
+
+  function revealPump() {
+    if (S.revealing) return;   // renderEvent → voiceOnEvent → voicePump → here
+    S.revealing = true;
+    try {
+      while (S.queue.length) {
+        if (!revealGated()) { revealOne(); continue; }
+        // The run up to and including the next line that will be spoken.
+        // Zero means the queue holds nothing anyone is going to read yet —
+        // mechanics waiting on the paragraph that describes them.
+        var run = Speech.revealRun(S.queue, V.settings);
+        if (!run) {
+          if (!revealFlushable()) break;
+          revealOne();
+          continue;
+        }
+        // Only when the narrator is free to begin that line in this beat: it
+        // is mid-line, it is paused or backgrounded, or it is still working
+        // through lines that were revealed before these.
+        if (V.current || !voiceArmed() || V.cursor < S.events.length) break;
+        for (var i = 0; i < run; i++) revealOne();
+        voicePump();
+        // Nothing to hear after all — `shouldSpeak` admits a kind, `phraseFor`
+        // decides there are no words for this one (a hit that its damage line
+        // will voice, a menu). Keep going rather than waiting for a line that
+        // will never be read.
+        if (V.current) break;
+      }
+      revealTail();
+      // The badge counts the queue, and a queue that is filling while the
+      // narrator is paused moves nothing else on the page — so this is the
+      // only thing left to say how far behind the transcript has fallen.
+      voiceRenderControls();
+    } finally {
+      S.revealing = false;
+    }
+  }
+
+  // The lot, now: the spectator asked to be at the live edge, or the gate has
+  // just come off under a full queue.
+  function revealAll() {
+    if (S.revealing) return;
+    S.revealing = true;
+    try {
+      while (S.queue.length) revealOne();
+      revealTail();
+    } finally {
+      S.revealing = false;
+    }
+  }
+
+  // "session finished" is the end of the story, so it waits for the story: the
+  // stream's `end` frame lands while the narrator may still have minutes of
+  // transcript to read.
+  function revealTail() {
+    if (!S.endBanner || S.queue.length) return;
+    if (revealGated() && (V.current || V.cursor < S.events.length)) return;
+    var text = S.endBanner;
+    S.endBanner = null;
+    appendNode(el('div', 'end-banner', text));
+  }
+
+  // Everything the stream and the history load hand this page comes through
+  // here. Deduplicated on arrival rather than on render, because a reconnect
+  // resumes from the last seq RECEIVED — which, with a queue, is ahead of the
+  // last one on screen.
+  function ingest(ev) {
+    if (!ev) return;
+    var seq = num(ev.seq, -1);
+    if (S.taken[seq]) return;
+    S.taken[seq] = 1;
+    if (seq > S.gotSeq) S.gotSeq = seq;
+    S.queue.push(ev);
+    revealPump();
+  }
+
   // ---------- snapshot rendering ----------
   function gameState() {
     var snap = S.snapshot || {};
@@ -415,7 +545,25 @@
 
   function refreshSnapshot() {
     if (!S.gameId) return Promise.resolve();
-    return api('/api/games/' + encodeURIComponent(S.gameId)).then(function (g) {
+    // The board is asked for AS OF the last line put on screen, never as of
+    // now. The queue above can delay a paragraph, but the map and the hit
+    // points come from the server's own state, which is wherever the game has
+    // got to — so without `at_seq` the one thing that would still run ahead of
+    // the voice is the picture of the fight. `snapshot_seq` in the reply says
+    // which seq answered; status, ledger and cost stay live either way.
+    var url = '/api/games/' + encodeURIComponent(S.gameId);
+    if (revealGated() && S.lastSeq >= 0) url += '?at_seq=' + S.lastSeq;
+    // Only the newest answer may land, the same rule `loadGen` enforces for a
+    // game load. Four callers ask for this — the 700 ms debounce, an encounter
+    // spawn, the 5 s poll, and every control — each pinning a different
+    // `at_seq`, and they overtake each other: an older answer landing last
+    // would walk the hit points, the positions and the initiative BACKWARDS on
+    // screen, and a pinned answer landing after voice was turned off would put
+    // the delayed board back over the live one.
+    var gen = ++S.snapGen;
+    var forGame = S.gameId;
+    return api(url).then(function (g) {
+      if (gen !== S.snapGen || forGame !== S.gameId) return;
       S.game = g;
       S.snapshot = g.snapshot || null;
       setGameStatus(g.status);
@@ -1074,12 +1222,6 @@
     }
   }
 
-  function voicePhrase(ev) {
-    if (!ev || !Speech.shouldSpeak(ev, V.settings)) return null;
-    var ctx = voiceCtx();
-    return Speech.phraseFor(ev, ctx.names, ctx.party) || null;
-  }
-
   // What the event is read as: `[{key, text}]`, utterance-sized and each piece
   // carrying the voice that says it. Most events are one voice throughout; a
   // line of dialogue that names its speaker is two, the narrator saying who
@@ -1103,9 +1245,17 @@
   // handful of lines that turn out to have nothing to say do not change any
   // decision made from the count.
   function voiceBacklog() {
-    var n = 0;
-    for (var i = V.cursor; i < S.events.length && n < BACKLOG_SCAN; i++) {
+    var n = 0, i;
+    for (i = V.cursor; i < S.events.length && n < BACKLOG_SCAN; i++) {
       if (Speech.shouldSpeak(S.events[i], V.settings)) n++;
+    }
+    // Behind the revealed transcript sits the queue, which is the rest of what
+    // is waiting to be read. It has to count here or it would never be counted
+    // at all: the hold is what stops that queue growing, and a hold driven by
+    // the visible part alone would let the game run as far ahead as it liked
+    // as long as the screen stayed tidy.
+    for (i = 0; i < S.queue.length && n < BACKLOG_SCAN; i++) {
+      if (Speech.shouldSpeak(S.queue[i], V.settings)) n++;
     }
     return n;
   }
@@ -1117,6 +1267,7 @@
     if (!V.unlocked) voiceUnlock();   // must happen inside the click that got us here
     V.playing = true;
     voicePump();
+    revealPump();     // the gate is closed while paused; this is what opens it
     voiceHoldStart();
     voiceRenderControls();
   }
@@ -1153,7 +1304,7 @@
 
   // iOS drops a speak() issued synchronously after cancel(), so every transport
   // move that cancels pumps the next line a beat later.
-  function voiceRepump() { setTimeout(voicePump, 80); }
+  function voiceRepump() { setTimeout(function () { voicePump(); revealPump(); }, 80); }
 
   function voiceSkip() {
     if (!voiceUsable()) return;
@@ -1179,9 +1330,20 @@
 
   function voiceJumpLive() {
     if (!voiceUsable()) return;
-    voiceStopCurrent(false);
-    V.resumeChunk = null;
-    V.cursor = S.events.length;
+    // `revealAll` renders, and rendering pumps the narrator — which, with the
+    // playhead still back where it was, would start reading the very backlog
+    // this button exists to skip, and then run the cursor off the end of the
+    // transcript when that line finished. So the pump is held off until the
+    // playhead has been moved to the edge the reveal creates.
+    S.jumping = true;
+    try {
+      voiceStopCurrent(false);
+      V.resumeChunk = null;
+      revealAll();    // the queue is the rest of "live": being at the live edge means seeing it
+      V.cursor = S.events.length;
+    } finally {
+      S.jumping = false;
+    }
     voiceSavePos();
     voiceResyncRead();
     voiceHoldRelease();
@@ -1222,7 +1384,7 @@
 
   // ---- the reader ----
   function voicePump() {
-    if (V.current || !voiceArmed()) { voiceRenderControls(); return; }
+    if (V.current || !voiceArmed() || S.jumping) { voiceRenderControls(); return; }
     while (V.cursor < S.events.length) {
       var ev = S.events[V.cursor];
       var chunks = voiceChunks(ev);
@@ -1251,15 +1413,6 @@
   // partway through: the narrator names the monster, the monster answers.
   function chunkText(cur) { return cur.chunks[cur.idx].text; }
   function chunkKey(cur) { return cur.chunks[cur.idx].key; }
-
-  // The whole line as the panel reports it, chunks rejoined — the narrator's
-  // naming of the speaker included, because that is part of what is being
-  // heard. Read back off the chunks rather than kept beside them: a copy of
-  // the line held on `cur` is a copy that can go stale or go missing, which is
-  // how this line came to be written.
-  function lineText(cur) {
-    return cur.chunks.map(function (c) { return c.text; }).join(' ');
-  }
 
   // How many voices are left in this line from the playhead on. Two means an
   // attributed line: the narrator naming the speaker, then the speaker.
@@ -1454,6 +1607,7 @@
     V.resumeChunk = null;
     voiceSavePos();
     voicePump();
+    revealPump();     // ... and with the narrator free, the next beat may land
     voiceHoldEval();
   }
 
@@ -1598,6 +1752,7 @@
     voiceResyncRead();
     voiceRenderControls();
     voicePump();
+    revealPump();        // from here on, live events wait for the narrator
   }
 
   function voiceOnEvent() {
@@ -1613,6 +1768,9 @@
     // longer anything to hold.
     V.holdBroken = true;
     voiceHoldStop();
+    // A queue whose closing paragraph never came can be let go now — nothing
+    // further is coming to describe it.
+    revealPump();
     voiceRenderControls();
   }
 
@@ -1658,22 +1816,48 @@
     V.settings.enabled = false;
     voiceSaveSettings();
     voicePausePlayback();
+    // Nothing left to keep step with, so nothing left to hold back: whatever
+    // was waiting on a line that will now never be read goes up at once.
+    revealAll();
+    refreshSnapshot();   // ... and the board catches up with it
   }
 
   // ---- controls ----
+  // Deliberately not the words. The transcript now reveals a line as the
+  // narrator begins it and marks it `speaking`, so printing the text here as
+  // well would be the same sentence twice on one screen — and for the line the
+  // playhead is parked on it was worse than redundant: it printed a line that
+  // had not been read yet, which is the one thing this panel must not do.
+  // What is left is what the transcript cannot say: that something is being
+  // read, what kind of line it is, and in whose voice.
   function voiceNowText() {
     if (!V.settings.enabled) return { tag: '', text: 'voice off' };
     if (!V.unlocked) return { tag: '', text: 'press play to start — browsers only allow speech from a tap' };
     if (V.current) {
-      return { tag: V.current.ev.kind.replace('_', ' '), text: lineText(V.current) };
+      // No tag on a narration: the panel is already titled NARRATION, and the
+      // word twice across two inches of the same bar is the thing this panel
+      // was just cured of.
+      var kind = V.current.ev.kind;
+      return { tag: kind === 'narration' ? '' : kind.replace('_', ' '),
+               text: 'read by ' + voiceReaderName(V.current.ev) };
     }
     if (!V.playing) {
-      var next = S.events[V.cursor];
-      if (next) return { tag: 'paused at', text: voicePhrase(next) || ('#' + next.seq) };
-      return { tag: '', text: 'paused — nothing to read yet' };
+      return (S.queue.length || V.cursor < S.events.length)
+        ? { tag: 'paused', text: 'the transcript is waiting here too' }
+        : { tag: '', text: 'paused — nothing to read yet' };
     }
     if (pageHidden()) return { tag: '', text: 'held while the tab is in the background' };
     return { tag: '', text: 'caught up — waiting for the table' };
+  }
+
+  // Whose voice is on. A line of dialogue is its speaker's; everything else is
+  // the DM, which is what the narrator is.
+  function voiceReaderName(ev) {
+    if (ev && ev.kind === 'dialogue') {
+      var who = (ev.data && ev.data.speaker) || nameOf(ev.actor) || ev.actor;
+      if (who) return String(who);
+    }
+    return 'the DM';
   }
 
   function voiceRenderControls() {
@@ -1871,7 +2055,11 @@
 
   function connect(gameId) {
     closeStream();
-    var url = '/api/games/' + encodeURIComponent(gameId) + '/stream?after=' + S.lastSeq;
+    // From the last seq RECEIVED, not the last revealed: the queue is already
+    // holding events this page has, and replaying them would be work for
+    // nothing (`ingest` drops them) — or, on a page that had not seen them, a
+    // second copy.
+    var url = '/api/games/' + encodeURIComponent(gameId) + '/stream?after=' + S.gotSeq;
     var es = new EventSource(url);
     S.es = es;
     setConn('connecting…', 'conn-warn');
@@ -1891,9 +2079,12 @@
       try { d = JSON.parse(e.data); } catch (err) { /* ignore */ }
       setGameStatus(d.status);
       closeStream();
-      voiceOnGameEnd();
       setConn('ended (' + S.status + ')', 'conn-off');
-      appendNode(el('div', 'end-banner', 'session ' + S.status));
+      // Queued behind the narrator like everything else: the game ending is
+      // news the listener has not reached yet.
+      S.endBanner = 'session ' + S.status;
+      voiceOnGameEnd();
+      revealPump();
       refreshSnapshot();
     });
   }
@@ -1901,7 +2092,7 @@
   function onMessage(e) {
     var ev;
     try { ev = JSON.parse(e.data); } catch (err) { return; }
-    renderEvent(ev);
+    ingest(ev);
   }
 
   // ---------- controls ----------
@@ -1963,6 +2154,7 @@
     // transcript already cleared it files seq 0, which would make the new game
     // replay from its first line — and would leave the old game held.
     voiceReset();
+    S.snapGen++;        // an answer for the outgoing game must not land on this one
     S.gameId = id;
     S.activeId = null;
     S.status = 'idle';   // clears the terminal latch: a different game may be live
@@ -1982,7 +2174,10 @@
     api('/api/games/' + encodeURIComponent(id) + '/events?after=-1')
       .then(function (events) {
         if (!current()) return null;
-        (events || []).forEach(renderEvent);
+        // Straight onto the screen: `V.loading` holds the gate open, because
+        // history is not something the narrator is about to read out — the
+        // playhead is placed into it afterwards, by voiceStartAt.
+        (events || []).forEach(ingest);
         return refreshSnapshot();
       })
       .then(function () { if (current()) voiceStartAt(); })
@@ -2003,7 +2198,12 @@
   function startPolling() {
     if (S.pollTimer) clearInterval(S.pollTimer);
     S.pollTimer = setInterval(function () {
-      if (S.gameId && !TERMINAL[S.status]) refreshSnapshot();
+      if (!S.gameId) return;
+      // Also the queue's slow hand: every other caller of revealPump is an
+      // event or a transport move, and a game that has just gone terminal is
+      // neither — this is what lets its last unnarrated lines go.
+      revealPump();
+      if (!TERMINAL[S.status]) refreshSnapshot();
     }, 5000);
   }
 
@@ -2401,7 +2601,7 @@
         voiceStopCurrent(false);
         voiceHoldRelease();
       } else {
-        voiceRepump();      // pick the same line back up
+        voiceRepump();      // pick the same line back up, and let the queue move
         voiceHoldEval();
       }
       voiceRenderControls();
