@@ -118,6 +118,20 @@ configuration bounds narration spend, so `budget_usd` has to — and today the
 ledger cannot see character-priced cost at all. **Wire narration into the
 budget before turning it on, not after.**
 
+Necessary, but not sufficient: `budget_usd` is itself caller-supplied.
+`create_game()` takes it from the request body and coerces it
+(`web/routes/api.py:74-75`), `GameConfig` only re-floats it
+(`orchestrator/config.py:36`), and there is no maximum anywhere in the web
+layer. On an unauthenticated route that means a stranger picks the ceiling.
+
+That is already true of model spend and is not TTS's doing — the Anthropic key
+is exposed to it today. But it is the reason the budget alone will not hold a
+second vendor: the cap has to be **server-owned**, a per-game or per-account
+maximum applied regardless of what the config asks for. Which is the third
+thing pointing at the same missing piece, after the `/api/tts` proxy and the
+note endpoint. Spectator authentication and a server-side spend cap are not
+adjacent to this change; they are the change.
+
 ## 2. Rates
 
 Verified against each vendor's own pricing page on 2026-09-04. Pay-as-you-go
@@ -266,3 +280,9 @@ Assuming the goal is "better voices than the OS ships", not "voice agents":
 
 Whichever, the browser path stays: it is free, it works offline, and it is the
 fallback when a key is missing or the budget is spent.
+
+And none of it ships safely before the deployment grows a spend perimeter: a
+server-owned budget cap that the submitted config cannot raise, plus
+authentication on the routes that create games and inject notes. Three separate
+findings in this document land there. Paid narration is the change that makes
+the existing gap expensive rather than merely open.
