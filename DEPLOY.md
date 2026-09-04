@@ -47,10 +47,12 @@ known names, one per LLM platform the app can seat at the table:
 | `AWS_ACCESS_KEY_ID` | Amazon Polly, which reads the game aloud — with `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` |
 | `AWS_SECRET_ACCESS_KEY` | the other half of the pair |
 | `AWS_REGION` | e.g. `us-east-1`; not a secret, but adopted with the pair because boto3 needs all three in the same file |
-| `DND_WRITE_TOKEN` | **not a platform key.** The shared secret that creating a game, sending a DM note and pause/resume/stop require (`X-Dnd-Token`). Unset → those routes answer 503 and nobody can start a game; reading, the SSE stream and any running game are unaffected. Any long random string: `openssl rand -hex 32` |
 
 (`CARTESIA_API_KEY`, also in the store, is a text-to-speech key this app does
-not use — narration is Polly — and is deliberately not a known key.) Any subset is fine. A seat configured for a platform whose key is missing
+not use — narration is Polly — and is deliberately not a known key.
+`DND_WRITE_TOKEN` does not belong in the store either: it is this app's own
+secret rather than one of the box's shared vendor keys, so `dndsim token`
+generates it straight into `.env` — see **The write token** below.) Any subset is fine. A seat configured for a platform whose key is missing
 fails at game creation with a message naming the variable — that is the app's
 behaviour, not the CLI's — and the other seats are unaffected. To adopt a key
 for a platform not in this list, set `DNDSIM_KEYS` (space-separated names) when
@@ -67,7 +69,8 @@ Then:
 ```bash
 git clone https://github.com/ivjames/dnd-sim /var/www/dndsim \
   && ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim \
-  && dndsim deploy
+  && dndsim deploy \
+  && dndsim token
 ```
 
 That is the whole thing. The only once-per-droplet item it does not do is the
@@ -167,7 +170,7 @@ override the process environment pm2 provides.
 | `AWS_ACCESS_KEY_ID` | Amazon Polly narration — optional; adopted the same way |
 | `AWS_SECRET_ACCESS_KEY` | ditto |
 | `AWS_REGION` | Polly region, e.g. `us-east-1`; adopted the same way. boto3 will not build a client without one |
-| `DND_WRITE_TOKEN` | the shared secret the write routes require (`X-Dnd-Token` header): `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. Unset → each answers 503 with `{"code": "writes_unconfigured"}`, and reading a game, listing games, the SSE stream, `/api/tts` and the narration hold stay anonymous. Adopted from `/etc/environment` by `dndsim deploy` and unset for pm2's launch like every other key |
+| `DND_WRITE_TOKEN` | the shared secret the write routes require (`X-Dnd-Token` header): `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. Unset → each answers 503 with `{"code": "writes_unconfigured"}`, and reading a game, listing games, the SSE stream, `/api/tts` and the narration hold stay anonymous. Set it with **`dndsim token`**, which writes it straight into `.env`; it is not kept in `/etc/environment`, being this app's own secret rather than one of the box's shared vendor keys. Unset for pm2's launch like every other key |
 | `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
 | `DND_TTS_ENGINE` | `neural` — Polly engine for the table ($16/1M). `standard`, `long-form` and `generative` also work; each is sent only the SSML it accepts |
 | `DND_TTS_MONSTER_ENGINE` | `standard` — engine for speaking monsters ($4/1M), separate because `vocal-tract-length` is standard-only and it is what makes an ogre sound bigger than a goblin. Set equal to `DND_TTS_ENGINE` for one engine throughout |
@@ -195,6 +198,48 @@ To rotate a key: change it in `/etc/environment`, delete that key's line from
 start). `dndsim keys` shows, names only, which known keys `.env` and
 `/etc/environment` each hold, and exits 1 if `ANTHROPIC_API_KEY` is not in
 `.env`.
+
+## The write token
+
+Creating a game, sending the table a DM note and pause/resume/stop require the
+`X-Dnd-Token` header to match `DND_WRITE_TOKEN` (`web/auth.py`). Reading a game,
+listing games, the SSE stream, `/api/tts`, the paid narration endpoint and the
+narration hold stay anonymous — the public spectator UI is the product.
+
+One command sets it and then uses it:
+
+```bash
+dndsim token          # generate → .env (mode 600) → pm2 restart so the app
+                      # re-reads it → ask the running app whether it accepts it
+                      # → print it, to paste into the page
+dndsim token --show   # print the current one; changes nothing, restarts nothing
+dndsim token --stdin  # use your own instead of a generated one, read from
+                      # stdin — not an argument, because /proc/<pid>/cmdline is
+                      # world-readable and the rest of this CLI avoids that
+```
+
+Rotating is the same command again: it replaces the line in `.env` rather than
+appending a second one, so old secrets do not accumulate in the file. Every
+browser then needs the new token pasted in again, which is what revocation
+looks like here — there is no per-writer identity to revoke instead.
+
+**It is not kept in `/etc/environment`.** That file exists so `dndsim deploy`
+can adopt the box's *shared vendor* keys into `.env`; this secret is this app's
+own, generated on the box, and a second copy would be one more place to leak it
+from and one more to forget on a rotation. It stays on `KNOWN_KEYS` in
+`bin/dndsim` only so pm2's launch unsets it and `keys`/`status` report it by
+name.
+
+Unset, it fails closed: the write routes answer `503 {"code":
+"writes_unconfigured"}` and everything else — the page, every read, the stream,
+a game already running — is unaffected. So a deploy that forgets it does not
+take the site down; it just means nobody can start a game until `dndsim token`
+has been run.
+
+In the browser: the New game button, the pause/resume/stop row and the DM-note
+form are not rendered until the page holds a token the server accepts. The
+header button takes it (and, once unlocked, is how you Forget it again); it is
+kept in that browser's `localStorage` only.
 
 ## Confirm what is live
 

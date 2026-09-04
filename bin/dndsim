@@ -118,11 +118,18 @@ Usage:
   dndsim keys                    read-only: per-key present/absent in .env and in
                                  the key store (names only, never values); exit 1
                                  if ANTHROPIC_API_KEY is missing from .env
+  dndsim token [--show|--stdin]  set the write token and use it: generate one,
+                                 write it to .env, restart so the app reads it,
+                                 check it against the running app, and print it
+                                 to paste into the page. --show prints the
+                                 current one and changes nothing; --stdin reads
+                                 your own from stdin instead of generating
 
 First time on the droplet (as root), the whole bring-up is:
   git clone https://github.com/ivjames/dnd-sim /var/www/dndsim
   ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim
   dndsim deploy
+  dndsim token
 
 The one hand step is having the platform keys in /etc/environment beforehand.
 Known keys (any subset is fine; ANTHROPIC_API_KEY is the one the default DM
@@ -135,12 +142,14 @@ needs, and a seat whose platform has no key fails at game creation naming it):
   AWS_ACCESS_KEY_ID  AWS_SECRET_ACCESS_KEY  AWS_REGION  — Amazon Polly, which
   reads the game aloud. Without them the spectator's browser speaks it instead,
   which costs nothing and sounds like it.
-  DND_WRITE_TOKEN  — not a vendor key: the shared secret that creating a game,
-  sending a DM note and pause/resume/stop require (X-Dnd-Token header). Without
-  it those routes answer 503 and reading, the SSE stream and any running game
-  are unaffected, so a deploy that forgets it does not take the site down —
-  but nobody can start a game until it is set. Pick any long random string:
-  openssl rand -hex 32
+  DND_WRITE_TOKEN  — not a vendor key and NOT one to put in /etc/environment.
+  It is this app's own secret, so `dndsim token` generates it straight into
+  .env; a copy in the key store would be one more place to leak it from and one
+  more to forget on a rotation. It is on the known list only so pm2's launch
+  unsets it and `keys`/`status` report it. Without it, creating a game, sending
+  a DM note and pause/resume/stop answer 503 while reading, the SSE stream and
+  any running game are unaffected — so a deploy that forgets it does not take
+  the site down, but nobody can start a game until: dndsim token
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
      DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment),
@@ -194,6 +203,28 @@ env_file_append() {  # $1=file $2=KEY $3=value — appends KEY=value; single-quo
 
 env_file_seed() {  # $1=file $2=KEY $3=default — write only if absent/empty
   if ! env_file_has "$1" "$2"; then env_file_append "$1" "$2" "$3"; log "$1: seeded $2=$3"; fi
+}
+
+env_file_set() {  # $1=file $2=KEY $3=value — replace every existing line for KEY, then append
+  # `env_file_append` alone would stack a second line per run. `env_file_get`
+  # takes the last one, so it would still read correctly, but a file that grows
+  # a line every rotation is a file whose old secrets are all still in it.
+  local file="$1" key="$2" val="$3" tmp line
+  if [ -e "$file" ]; then
+    tmp="$(mktemp "${file}.XXXXXX")"
+    chmod 600 "$tmp"
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "${line#"${line%%[![:space:]]*}"}" in
+        "$key="*|"export $key="*) continue;;
+      esac
+      printf '%s\n' "$line"
+    done < "$file" > "$tmp"
+    mv "$tmp" "$file"
+  else
+    : > "$file"
+  fi
+  chmod 600 "$file"
+  env_file_append "$file" "$key" "$val"
 }
 
 # Alias sources: a key the store may hold under a different name. Adoption
@@ -613,6 +644,92 @@ cmd_keys() {
   return 1
 }
 
+WRITE_TOKEN_KEY="DND_WRITE_TOKEN"
+
+cmd_token() {
+  # Set the write token and then use it: write .env, restart so the app reads
+  # it, and prove the round trip against the running server.
+  #
+  # This key is not adopted from /etc/environment the way a vendor key is, and
+  # does not need to be there. Adoption exists because the platform keys are
+  # the box's, shared between sites and pre-placed; this one is this app's
+  # alone, generated here, and a copy in a second file would be one more place
+  # to leak it from and one more to forget on a rotation. `.env` is the file
+  # `run.sh` sources, so `.env` is where it lives.
+  need_root
+  local mode="set" token=""
+  case "${1:-}" in
+    --show)  mode="show";;
+    --stdin) mode="stdin";;
+    "")      ;;
+    *) die "usage: dndsim token [--show|--stdin]";;
+  esac
+
+  if [ "$mode" = "show" ]; then
+    token="$(env_file_get "$ENV_FILE" "$WRITE_TOKEN_KEY")"
+    [ -n "$token" ] || die "no $WRITE_TOKEN_KEY in $ENV_FILE — run: dndsim token"
+    printf '%s\n' "$token"
+    return 0
+  fi
+
+  ensure_env
+  if [ "$mode" = "stdin" ]; then
+    # Read rather than take an argument: an argument is in this process's argv,
+    # and /proc/<pid>/cmdline is world-readable.
+    IFS= read -r token || true
+    token="${token//[[:space:]]/}"
+    [ -n "$token" ] || die "nothing on stdin"
+    [ "${#token}" -ge 16 ] || die "too short to be a shared secret (want 16+ characters)"
+  elif command -v openssl >/dev/null 2>&1; then
+    token="$(openssl rand -hex 32)"
+  else
+    token="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  fi
+  [ -n "$token" ] || die "could not generate a token"
+
+  env_file_set "$ENV_FILE" "$WRITE_TOKEN_KEY" "$token"
+  log "$ENV_FILE: set $WRITE_TOKEN_KEY"
+
+  # run.sh sources .env at start, so nothing sees a new token until a restart.
+  case "$(pm2_state)" in
+    "not registered"*)
+      warn "$APP is not registered with pm2 — the token takes effect on the next: dndsim deploy";;
+    *)
+      log "pm2 restart $APP"
+      cd "$ROOT"
+      pm2_clean restart "$ECOSYSTEM" --only "$APP"
+      sleep 2;;
+  esac
+
+  token_check "$token"
+  printf '\n'
+  printf 'write token: %s\n' "$token"
+  printf 'Paste it into the page (the Unlock button, top right) once per browser.\n'
+  printf 'Reading a game, the transcript and the stream stay anonymous.\n'
+}
+
+token_check() {  # $1=token — ask the running app whether it accepts it
+  local code
+  # The header goes in via a config file on stdin, not -H: an argument would put
+  # the secret in argv, which is the one thing the rest of this script avoids.
+  code="$(printf 'header = "X-Dnd-Token: %s"\n' "$1" \
+    | curl -s -o /dev/null -w '%{http_code}' --max-time 10 -K - \
+      "http://127.0.0.1:$PORT/api/auth" || true)"
+  if [ "$code" != "200" ]; then
+    warn "GET /api/auth on 127.0.0.1:$PORT -> HTTP ${code:-unreachable}; is the app running? (dndsim status)"
+    return 0
+  fi
+  local body
+  body="$(printf 'header = "X-Dnd-Token: %s"\n' "$1" \
+    | curl -s --max-time 10 -K - "http://127.0.0.1:$PORT/api/auth" || true)"
+  case "$body" in
+    *'"authenticated":true'*) log "the running app accepts it (GET /api/auth -> authenticated)";;
+    *'"writes":"unconfigured"'*)
+      warn "the running app still reports writes unconfigured — it has not re-read $ENV_FILE. Try: dndsim restart";;
+    *) warn "the running app did not accept it: $body";;
+  esac
+}
+
 # Sourced for tests: functions are defined, stop before dispatching.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
@@ -623,6 +740,7 @@ case "${1:-}" in
   logs)    shift; cmd_logs "$@";;
   status)  shift; cmd_status "$@";;
   keys)    shift; cmd_keys "$@";;
+  token)   shift; cmd_token "$@";;
   -h|--help|help|"") usage;;
   *) die "unknown command: $1 (see --help)";;
 esac
