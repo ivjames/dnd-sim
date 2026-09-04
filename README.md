@@ -165,7 +165,7 @@ world stay the engine's and the DM's.
 | `DND_TTS_CACHE_MB` | `512` | Cache ceiling; least-recently-played clips go first. |
 | `DND_TTS_MAX_CHARS` | `400` | Longest line the endpoint will synthesize. |
 | `DND_TTS_MAX_USD` | `10.00` | Server-owned ceiling on a game's spend before narration stops, whatever `budget_usd` says. It caps one game; `DND_WRITE_TOKEN` caps how many can be started. |
-| `DND_WRITE_TOKEN` | unset | The shared secret the write routes require in an `X-Dnd-Token` header: `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. **Unset → those routes answer 503**; reading a game, listing games, the SSE stream, `/api/tts` and the narration hold are anonymous either way. Any long random string (`openssl rand -hex 32`). |
+| `DND_WRITE_TOKEN` | unset | The shared secret the write routes require in an `X-Dnd-Token` header: `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. **Unset → those routes answer 503**; reading a game, listing games, the SSE stream, `/api/tts` and the narration hold are anonymous either way. On the droplet, `dndsim token` generates one into `.env` and restarts; locally, any long random string. |
 
 Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
 may name a model on any platform above — the platform is chosen from the
@@ -305,6 +305,21 @@ per-game cap below bounds one game and nothing bounds how many are started.
   is in nginx's access log, in `Referer` and in the browser's history.
 - `GET /api/auth` reports whether this server takes a token and whether the
   caller's is accepted. It never echoes the token.
+
+On the droplet, one command sets it and then uses it:
+
+```bash
+dndsim token          # generate → .env → restart → check against the running
+                      # app → print it to paste into the page
+dndsim token --show   # print the current one, change nothing
+dndsim token --stdin  # use your own, read from stdin (not an argument: argv is
+                      # world-readable through /proc)
+```
+
+It writes `.env` and nothing else. Unlike a platform key it is not kept in
+`/etc/environment`: that file exists so `dndsim deploy` can adopt the box's
+shared vendor keys, and this secret is this app's own — a second copy would be
+one more place to leak it from and one more to forget on a rotation.
 
 Three POSTs deliberately take no token. `POST /api/games/<id>/hold` is the
 narration lease — every anonymous listener renews one every few seconds, it

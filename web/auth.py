@@ -25,9 +25,9 @@ Two rules with a reason worth stating:
 - **The token is read from the header alone**, never a query string. A query
   string is in nginx's access log, in `Referer` on any outbound link, and in
   the browser's history; the header is in none of them.
-- **An unset token refuses writes (503) rather than opening them.** `dndsim
-  deploy` adopts keys from `/etc/environment` and never overwrites `.env`, so
-  the first deploy carrying this code reaches a droplet where the token is not
+- **An unset token refuses writes (503) rather than opening them.** The token
+  is generated onto the box by `dndsim token`, so a deploy alone never produces
+  one and the first deploy carrying this code reaches a droplet where it is not
   set yet. Failing open there would ship a no-op — the exact hole this closes,
   still open, and now believed closed. Failing closed costs one edit to `.env`
   before the next game can be created, and nothing else: the app starts, the
@@ -45,8 +45,10 @@ from typing import Any, Callable
 from flask import current_app, jsonify, request
 
 #: Where the secret comes from. On lab980 it lives in `/var/www/dndsim/.env`,
-#: which `run.sh` sources; `bin/dndsim` adopts it from `/etc/environment` and
-#: unsets it for pm2's launch, like every other key.
+#: which `run.sh` sources, and `dndsim token` is what puts it there. Unlike a
+#: vendor key it is not kept in `/etc/environment`: adoption exists for the
+#: box's shared platform keys, and this one is this app's own. It is on
+#: `KNOWN_KEYS` in `bin/dndsim` so pm2's launch unsets it, as for every key.
 ENV_VAR = "DND_WRITE_TOKEN"
 
 #: The request header carrying it.

@@ -1307,10 +1307,10 @@ reads the environment mid-request.
    an anonymous caller gets a 401 rather than a 400 that would tell it what a
    valid request looks like.
 
-5. **An unset token fails closed.** `dndsim deploy` adopts keys from
-   `/etc/environment` alone and never overwrites `.env` (the droplet's keys were
-   hand-placed there), so the first deploy carrying this code lands on a server
-   where the token is not set. Failing open there would ship a no-op — the hole
+5. **An unset token fails closed.** The token is not a vendor key adopted from
+   the box's store; `dndsim token` generates it into `.env` (see DEPLOY.md),
+   so a deploy alone never produces one and the first deploy carrying this code
+   lands on a server where the token is not set. Failing open there would ship a no-op — the hole
    still open and now believed closed. Failing closed costs one edit to
    `/var/www/dndsim/.env` and a restart, and nothing else: the app starts, the
    page loads, every read and the stream work, and a game already running keeps

@@ -103,6 +103,9 @@ dndsim status      # HEAD, pm2, .env + per-key presence, upstream family, vhost 
                    # block, local + public /api/health, cert days
 dndsim keys        # per-key present/absent in .env and /etc/environment (names only);
                    # exit 1 if ANTHROPIC_API_KEY is missing from .env
+dndsim token       # set the write token and use it: generate → .env → restart →
+                   # verify against the running app → print. --show reads it back,
+                   # --stdin takes your own. This key never goes in /etc/environment.
 dndsim logs        # tail this app's pm2 logs
 ```
 
@@ -146,10 +149,15 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   paid narration endpoint and the narration hold — because the public
   spectator UI is the product. **Unset, the token fails closed**: writes answer
   503 and everything else works, so a deploy that forgets it does not take the
-  site down but nobody can start a game until it is in
-  `/var/www/dndsim/.env`. The page keeps it in `localStorage` and hides the New
-  game button, the pause/resume/stop row and the note form until the server
-  accepts it.
+  site down but nobody can start a game until it is set. **`dndsim token`** is
+  how it is set — generate into `.env`, restart, check it against the running
+  app, print it to paste into the page — and rotation is the same command
+  again. Unlike a vendor key it is deliberately **not** in `/etc/environment`:
+  adoption exists for the box's shared platform keys, and a second copy of this
+  one would be a place to leak it from and to forget on a rotation. It is on
+  `KNOWN_KEYS` only so pm2's launch unsets it and `keys`/`status` report it.
+  The page keeps it in `localStorage` and hides the New game button, the
+  pause/resume/stop row and the note form until the server accepts it.
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal
