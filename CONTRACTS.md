@@ -264,17 +264,21 @@ Routes:
 GET  /                                  spectator UI (single static page: web/static/index.html + app.js + style.css)
 GET  /api/health                        {"ok":true,"mock":bool,"games_running":n}
 GET  /api/presets                       list of example configs (name, description, config)
-POST /api/games          {config}       → {"id", "status"}   (creates + starts)
+GET  /api/auth                          {"writes": "token"|"unconfigured", "header", "authenticated"} — may this caller write?
+POST /api/games          {config}       → {"id", "status"}   (creates + starts)   **write token**
 GET  /api/games                         [{id, status, created_at, title, round, cost_usd}]
 GET  /api/games/<id>                    snapshot + config + ledger
 GET  /api/games/<id>/events?after=seq   history (from SQLite)
 GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>`; on connect replays history after ?after=, then live; heartbeat comment every 15s; on finish sends `event: end`
-POST /api/games/<id>/pause | /resume | /stop
+POST /api/games/<id>/pause | /resume | /stop                                   **write token**
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
-POST /api/games/<id>/note   {"text"}    → 202
+POST /api/games/<id>/note   {"text"}    → 202                                  **write token**
 GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
+Routes marked **write token** require the `X-Dnd-Token` header to match
+`DND_WRITE_TOKEN`; every other route is anonymous. See the 2026-09-04 `web/`
+amendment "a write token on the routes that mutate or spend".
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
 
 UI (vanilla JS, no build step; dark "candlelit table" theme is fine but keep it readable): transcript column (narration/dialogue prominent, mechanical events as compact monospace lines, collapsible), initiative/turn tracker, party cards (HP bars, conditions, slots), a simple grid canvas showing positions, a cost/token meter, controls (pause/resume/stop, DM-note textbox), a "new game" panel with preset picker + seed + setting/tone text + budget. Theme can be refined later; correctness first.
@@ -1047,7 +1051,7 @@ with the browser's voices kept as a real fallback rather than deleted.
    is unbounded, and `POST /api/games/<id>/note` still feeds 2,000
    unauthenticated characters into a `dm_note` that `speech.js` always speaks.
    Spectator authentication is the missing piece and this amendment does not
-   add it.
+   add it. (Added the same day — see the write-token amendment below.)
 
    **A budget that cannot be compared is not a budget.** `float()` accepts
    `"NaN"`, and NaN compares False against everything — so a NaN `budget_usd`
@@ -1243,3 +1247,102 @@ The `&v=` fingerprint (`PollyTTS.config_id`) does not cover `speech.js` and
 does not need to here: the words are in the query string, so new wording is a
 new URL and neither the browser's year-long immutable copy nor the server's
 cache can answer it with a clip of the old wording.
+
+### 2026-09-04 — web/ — a write token on the routes that mutate or spend
+
+Narration went live on Amazon Polly the same day (the "narration moves to
+Amazon Polly" amendment), and two routes that had been theoretically open
+became a spend surface. `POST /api/games` took no credential and was unbounded
+in call count — and the caller supplies `budget_usd`, which is why the narration
+route clamps to `min(game budget, DND_TTS_MAX_USD)`; that ceiling is *per game*,
+so N games are N × $10.
+`POST /api/games/<id>/note` took 2,000 characters that `web/static/speech.js`
+always speaks, roughly 3¢ a call at neural rates, repeatable. TTS-COSTS.md §1,
+§4 and §6 each land on the same missing piece and §6 states it as unbuilt.
+
+**New env var `DND_WRITE_TOKEN` and new request header `X-Dnd-Token`.**
+`web/auth.py` is the whole mechanism: `configured_token()`, `authenticated()`,
+`write_refusal()` and the `@require_write` decorator, compared with
+`hmac.compare_digest`. `create_app` snapshots the variable into
+`app.config["DND_WRITE_TOKEN"]` (injectable, like `DND_TTS`), so a route never
+reads the environment mid-request.
+
+1. **Which routes.** Exactly those that mutate a game or spend on it:
+   `POST /api/games`, `/pause`, `/resume`, `/stop`, `/note`. §5's table marks
+   them.
+
+2. **Which routes deliberately do not**, and why each would be a regression:
+
+   - **Every read**, including `GET /api/games/<id>/stream`. The spectator UI
+     is public at <https://dndsim.lab980.com> and reading a game anonymously is
+     the product. Authenticating the stream would not protect anything — it
+     spends nothing — and would end the site.
+   - **`POST /api/games/<id>/hold`.** It is the narration keeping-step lease
+     from the amendment above: every anonymous listener renews one every few
+     seconds, it spends nothing, it leaves `status` alone, it expires by itself
+     (≤ `MAX_HOLD_SECONDS`) and the table is bounded at `MAX_HOLD_CLIENTS`. The
+     worst an anonymous caller can do with it is slow a game down, which is
+     what having the page open does anyway. Gating it would take server
+     narration away from exactly the audience this site is for.
+   - **`GET /api/games/<id>/tts`.** It does spend, which is why it is the
+     interesting one. But an anonymous spectator cannot hear the game without
+     it, and what it spends is already bounded on the axis that matters: per
+     line by `DND_TTS_MAX_CHARS`, per game by `min(budget_usd,
+     DND_TTS_MAX_USD)`, and once for good by the on-disk cache — a clip is
+     paid for once and replayed free, forever, by every spectator. The
+     unbounded axis was never this route; it was *how many games a stranger may
+     create*, and that is what the token closes. Charging a stranger's replay
+     to a game that is already capped is the design working.
+
+3. **`GET /api/auth`** (new, anonymous, a read): `{"writes":
+   "token"|"unconfigured", "header": "X-Dnd-Token", "authenticated": bool}`. It
+   reports only what a write attempt would report a moment later, so it is no
+   more of an oracle than `POST /api/games` already was — and without it the
+   page's only way to learn whether it may create a game is to create one. It
+   never echoes the token.
+
+4. **Refusals.** `401` with `{"error", "code": "unauthorized"}` when the header
+   is missing or wrong; `503` with `{"error", "code": "writes_unconfigured"}`
+   when the server has no token set. The gate runs before body validation, so
+   an anonymous caller gets a 401 rather than a 400 that would tell it what a
+   valid request looks like.
+
+5. **An unset token fails closed.** `dndsim deploy` adopts keys from
+   `/etc/environment` alone and never overwrites `.env` (the droplet's keys were
+   hand-placed there), so the first deploy carrying this code lands on a server
+   where the token is not set. Failing open there would ship a no-op — the hole
+   still open and now believed closed. Failing closed costs one edit to
+   `/var/www/dndsim/.env` and a restart, and nothing else: the app starts, the
+   page loads, every read and the stream work, and a game already running keeps
+   running and stays audible. That is the "degrade safely" a missing key owes,
+   and it is not the same as staying open. A whitespace-only value reads as
+   unset, so a blank line in `.env` cannot be matched by an empty header.
+
+6. **The token is read from the header alone**, never a query string: a query
+   string is in nginx's access log, in `Referer` on any outbound link, and in
+   the browser's history.
+
+7. **UI (not contract, recorded because it decides whether a browser holds a
+   credential at all).** The spectator page keeps the token in `localStorage`
+   under `dndsim.token` and sends it on every request; `checkAuth()` asks
+   `/api/auth` at start-up. The write controls — the New game button, the
+   pause/resume/stop row and the DM-note form — are **not rendered** until the
+   page holds a token the server accepts, so an anonymous visitor never sees a
+   control that can only 401; a panel opened from the header takes the token
+   and validates it against `/api/auth` before storing it. That button stays
+   visible once unlocked (as "Token"), because the panel behind it is the only
+   way to reach Forget — hiding it would leave a shared browser holding the
+   credential with no way out short of clearing site data; it is hidden only
+   where the server has no token set. `renderWriteAccess()` never opens or
+   closes that panel, so an auth answer arriving while someone has it open does
+   not shut it. `#ctl-note` stays outside the hidden wrapper: load failures are
+   reported there and every spectator needs to see those. A 401 or 503 from any
+   write re-renders the gate.
+
+8. **Not built, deliberately.** No per-user identity, no revocation short of
+   rotating the value and restarting, no rate limit. There is one writer here —
+   the operator — so identity would be a table with one row in it; and a rate
+   limit protects a *leaked* token, which is a different threat from the open
+   door this closes. Both remain open, and neither is a prerequisite for
+   the other.
+

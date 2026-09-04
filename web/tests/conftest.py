@@ -22,6 +22,22 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from web.app import create_app  # noqa: E402
+from web.auth import ENV_VAR as WRITE_TOKEN_ENV, HEADER as WRITE_HEADER  # noqa: E402
+
+#: The write token the fixtures configure. Every fixture client presents it, so
+#: existing tests exercise the routes rather than the gate; a test that wants an
+#: anonymous caller builds a plain `app.test_client()` (see test_auth.py).
+WRITE_TOKEN = "test-write-token"
+#: The WSGI environ key for `WRITE_HEADER`, which is how a test client carries
+#: a header on every request it makes.
+WRITE_ENVIRON_KEY = "HTTP_" + WRITE_HEADER.upper().replace("-", "_")
+
+
+def write_client(app):
+    """A test client that presents the write token on every request."""
+    client = app.test_client()
+    client.environ_base[WRITE_ENVIRON_KEY] = WRITE_TOKEN
+    return client
 
 
 @dataclass
@@ -314,7 +330,11 @@ def app(db_file):
     # Server voices off unless a test asks for them: `create_app` would
     # otherwise build a real Polly service from whatever AWS variables happen
     # to be in the environment running the suite.
-    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": None})
+    app = create_app(
+        game_factory=fake_factory,
+        db_path=db_file,
+        config={"DND_TTS": None, WRITE_TOKEN_ENV: WRITE_TOKEN},
+    )
     app.config["TESTING"] = True
     yield app
     app.config["DND_REGISTRY"].shutdown()
@@ -322,7 +342,11 @@ def app(db_file):
 
 @pytest.fixture()
 def tts_app(db_file, tts):
-    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": tts})
+    app = create_app(
+        game_factory=fake_factory,
+        db_path=db_file,
+        config={"DND_TTS": tts, WRITE_TOKEN_ENV: WRITE_TOKEN},
+    )
     app.config["TESTING"] = True
     yield app
     app.config["DND_REGISTRY"].shutdown()
@@ -330,12 +354,12 @@ def tts_app(db_file, tts):
 
 @pytest.fixture()
 def tts_client(tts_app):
-    return tts_app.test_client()
+    return write_client(tts_app)
 
 
 @pytest.fixture()
 def client(app):
-    return app.test_client()
+    return write_client(app)
 
 
 @pytest.fixture()

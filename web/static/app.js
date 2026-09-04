@@ -35,8 +35,19 @@
     snapTimer: null,
     pollTimer: null,
     loadGen: 0,         // bumped per selectGame; a stale load must not finish
-    presets: []
+    presets: [],
+    // Write access. Reading a game, listing games and the stream are anonymous
+    // and stay that way; creating a game, talking to the table and pause/
+    // resume/stop carry a shared secret (web/auth.py). `writes` is what the
+    // server says it takes, `token` is what this browser holds, `authed` is
+    // whether the two agree.
+    writes: 'unknown',  // 'unknown' | 'token' | 'unconfigured'
+    token: '',
+    authed: false
   };
+
+  var WRITE_HEADER = 'X-Dnd-Token';
+  var TOKEN_STORE = 'dndsim.token';
 
   // ---------- tiny helpers ----------
   function $(id) { return document.getElementById(id); }
@@ -65,6 +76,9 @@
   function api(path, opts) {
     opts = opts || {};
     var init = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
+    // Sent on every request rather than only on writes: the reads ignore it,
+    // and /api/auth needs it to answer whether this browser can write at all.
+    if (S.token) init.headers[WRITE_HEADER] = S.token;
     if (opts.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.body);
@@ -73,10 +87,155 @@
       return r.text().then(function (t) {
         var data = null;
         try { data = t ? JSON.parse(t) : null; } catch (e) { data = { error: t }; }
-        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        if (!r.ok) {
+          // A write refused for a credential reason is the one failure that
+          // changes what this page may show: re-render the gate rather than
+          // leaving buttons up that will only fail again.
+          noteWriteRefusal(r.status, data);
+          throw new Error((data && data.error) || ('HTTP ' + r.status));
+        }
         return data;
       });
     });
+  }
+
+  // ---------- write access ----------
+  function tokenLoad() {
+    try { return localStorage.getItem(TOKEN_STORE) || ''; } catch (e) { return ''; }
+  }
+  function tokenStore(value) {
+    try {
+      if (value) localStorage.setItem(TOKEN_STORE, value);
+      else localStorage.removeItem(TOKEN_STORE);
+    } catch (e) { /* private mode: the token lives for this page load only */ }
+  }
+
+  function canWrite() { return S.authed; }
+
+  function noteWriteRefusal(status, data) {
+    var code = data && data.code;
+    if (status === 401 || code === 'unauthorized') {
+      S.writes = 'token';
+      S.authed = false;
+      renderWriteAccess();
+    } else if (status === 503 && code === 'writes_unconfigured') {
+      S.writes = 'unconfigured';
+      S.authed = false;
+      renderWriteAccess();
+    }
+  }
+
+  // What the server takes, and whether this browser has it. A read, and the
+  // only way to know before trying a write — which for "create a game" would
+  // mean starting one to find out.
+  function checkAuth() {
+    return api('/api/auth').then(function (a) {
+      S.writes = (a && a.writes) || 'unknown';
+      S.authed = !!(a && a.authenticated);
+      renderWriteAccess();
+      return a;
+    }).catch(function () {
+      // The probe itself failing says nothing about the token; leave the last
+      // answer standing and let a real write report its own refusal.
+      renderWriteAccess();
+      return null;
+    });
+  }
+
+  function renderWriteAccess() {
+    var ok = canWrite();
+    var unconfigured = S.writes === 'unconfigured';
+    $('btn-new').hidden = !ok;
+    // Reachable in both states, because it is the only way into the panel and
+    // the panel is the only way to Forget a token. Hiding it once unlocked
+    // would leave a shared browser holding the credential with no way out
+    // short of clearing site data. Hidden only where there is nothing to
+    // enter, which is a server with no token set.
+    var unlock = $('btn-unlock');
+    unlock.hidden = unconfigured;
+    unlock.textContent = ok ? 'Token' : 'Unlock';
+    unlock.title = ok
+      ? 'Forget the write token this browser is holding'
+      : 'Enter the write token to create games and talk to the table';
+    $('write-controls').hidden = !ok;
+    var locked = $('write-locked');
+    if (ok) {
+      locked.hidden = true;
+      locked.textContent = '';
+    } else {
+      locked.textContent = unconfigured
+        ? 'This server has no write token set, so no one can start a game, ' +
+          'pause one or send a note from here. Watching is unaffected.'
+        : 'Watching needs nothing. Starting a game, pausing one or sending a ' +
+          'note needs the write token — press Unlock.';
+      locked.hidden = false;
+    }
+  }
+
+  function openUnlock() {
+    $('ul-error').hidden = true;
+    $('ul-token').value = S.token || '';
+    $('unlock').hidden = false;
+    $('ul-token').focus();
+  }
+
+  function submitUnlock(e) {
+    e.preventDefault();
+    var value = $('ul-token').value.trim();
+    if (!value) {
+      $('ul-error').textContent = 'enter the token, or press Forget to clear it';
+      $('ul-error').hidden = false;
+      return;
+    }
+    // Both halves of the credential, because a rejected replacement has to put
+    // back the state it replaced and not merely the string. Typing a wrong
+    // token while already unlocked is a normal slip now that the panel is
+    // reachable from the unlocked state; restoring the token but not the flag
+    // would take the write controls away from a browser that is still holding
+    // a token the server accepts, and the only ways back would be resubmitting
+    // or reloading.
+    var previous = S.token;
+    var wasAuthed = S.authed;
+    S.token = value;
+    var btn = $('ul-save');
+    btn.disabled = true;
+    // Checked against the server before it is kept, so a mistyped token is a
+    // message here rather than a 401 on the next thing you try to do.
+    api('/api/auth').then(function (a) {
+      S.writes = (a && a.writes) || 'unknown';
+      S.authed = !!(a && a.authenticated);
+      if (S.authed) {
+        tokenStore(value);
+        $('unlock').hidden = true;
+      } else {
+        S.token = previous;
+        // As true as it was a moment ago. If the server has since rotated its
+        // token, the next write is a 401 and `noteWriteRefusal` re-renders the
+        // gate — which is the mechanism that exists for exactly that.
+        S.authed = wasAuthed;
+        $('ul-error').textContent = S.writes === 'unconfigured'
+          ? 'this server has no write token set'
+          : 'that token was not accepted';
+        $('ul-error').hidden = false;
+      }
+      renderWriteAccess();
+    }).catch(function (err) {
+      // The probe failing says nothing about either token, so the previous
+      // state stands whole and the gate is left as it was.
+      S.token = previous;
+      S.authed = wasAuthed;
+      $('ul-error').textContent = err.message;
+      $('ul-error').hidden = false;
+    }).then(function () { btn.disabled = false; });
+  }
+
+  function forgetToken() {
+    S.token = '';
+    S.authed = false;
+    tokenStore('');
+    $('ul-token').value = '';
+    $('unlock').hidden = true;
+    renderWriteAccess();
   }
 
   // ---------- transcript ----------
@@ -1699,6 +1858,7 @@
 
   // ---------- new game ----------
   function openNewGame() {
+    if (!canWrite()) { openUnlock(); return; }
     $('ng-error').hidden = true;
     $('newgame').hidden = false;
     if (S.presets.length) return;
@@ -1762,7 +1922,15 @@
 
   // ---------- wiring ----------
   function init() {
+    S.token = tokenLoad();
+    // With a token in hand the probe is about to answer; rendering the locked
+    // state first would flash "Unlock" at a browser that is already unlocked.
+    if (!S.token) renderWriteAccess();
     $('btn-new').addEventListener('click', openNewGame);
+    $('btn-unlock').addEventListener('click', openUnlock);
+    $('unlock-form').addEventListener('submit', submitUnlock);
+    $('ul-cancel').addEventListener('click', function () { $('unlock').hidden = true; });
+    $('ul-forget').addEventListener('click', forgetToken);
     $('ng-cancel').addEventListener('click', function () { $('newgame').hidden = true; });
     $('newgame-form').addEventListener('submit', submitNewGame);
     $('ng-preset').addEventListener('change', function () { applyPreset(num(this.value, 0)); });
@@ -1813,8 +1981,15 @@
       }
     }).catch(function () { /* ignore */ });
 
-    loadGames().then(function (id) {
-      if (id) selectGame(id); else openNewGame();
+    // The auth probe and the game list are independent; the only ordering that
+    // matters is that the "no games yet" fallback must not open a panel that
+    // would only 401.
+    checkAuth().then(function () {
+      return loadGames();
+    }).then(function (id) {
+      if (id) selectGame(id);
+      else if (canWrite()) openNewGame();
+      else ctlNote('No games yet.');
     }).catch(function (e) { console.warn(e); });
   }
 

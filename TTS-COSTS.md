@@ -368,17 +368,32 @@ the cost model, exactly as argued. The phrasing stayed in JavaScript: the page
 sends the phrase and the voice key it already computed, which is §4's first
 option — the cheaper one, whose price was the auth question.
 
-**The perimeter is one quarter built.** §1 and §4 land three times on the same
-missing piece, and implementing narration did not finish it:
+**The perimeter.** §1 and §4 land three times on the same missing piece.
+Implementing narration built the narrow half of it; the write token, added the
+same day, built the rest.
 
 - `DND_TTS_MAX_USD` (default $10.00) is a **server-owned per-game ceiling** the
   submitted `budget_usd` cannot raise, which is the narrow half of §1's ask.
   Narration stops at the lower of the two. A non-finite `budget_usd` is also
   refused at game creation now — `float("NaN")` passed coercion and then
   compared False against every check in the app, `Game._check_budget` included.
-- **Spectator authentication does not exist**, so nothing bounds how many games
-  a stranger may create, and `POST /api/games/<id>/note` still takes 2,000
-  unauthenticated characters that `speech.js` speaks as story.
+- **`DND_WRITE_TOKEN` closes the other half.** `POST /api/games` and `POST
+  /api/games/<id>/note` — the two routes this document keeps naming — now
+  require an `X-Dnd-Token` header, as do `/pause`, `/resume` and `/stop`. A
+  per-game cap could never bound *how many* games a stranger creates, and that
+  was the unbounded axis: N games at N × $10. §4 concluded that its first
+  option, phrasing-in-the-browser, "is only cheaper if spectator authentication
+  already exists, and it does not" — it does now, and the phrasing stayed in
+  the browser.
+- **What deliberately stayed open**, because the site is a public spectator UI:
+  every read, the SSE stream, `GET /api/games/<id>/tts` itself, and the
+  narration hold. The paid endpoint is the interesting one, and the argument is
+  §4's own: caching is the cost model, so a clip is paid for once and replayed
+  free by every spectator forever, and per line and per game it is capped. An
+  anonymous listener cannot hear the game without it.
+- **Still not built:** revocation short of rotating the token and restarting,
+  per-writer identity, and a rate limit. The last of those protects a *leaked*
+  token, which is a different threat from the open door.
 
 ### The engine, settled
 

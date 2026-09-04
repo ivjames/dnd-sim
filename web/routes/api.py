@@ -8,6 +8,12 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
+from web.auth import (
+    HEADER as WRITE_HEADER,
+    authenticated,
+    require_write,
+    writes_configured,
+)
 from web.presets import load_presets, title_from_config
 from web.registry import GameEntry
 from web.serialize import to_jsonable
@@ -58,7 +64,30 @@ def presets():
     return jsonify(load_presets())
 
 
+@bp.get("/auth")
+def auth():
+    """Can the caller write, and does this server take a credential at all?
+
+    A read, and anonymous like the other reads: it reports only what a write
+    attempt would report a moment later, so it is no more of an oracle than
+    `POST /api/games` already is — and it lets the page decide whether to show
+    controls that would only 401, instead of finding out by creating a game.
+
+    `writes` is `"token"` when a secret is configured and `"unconfigured"` when
+    none is, which is the difference between "you need the token" and "nobody
+    can write here yet".
+    """
+    return jsonify(
+        {
+            "writes": "token" if writes_configured() else "unconfigured",
+            "header": WRITE_HEADER,
+            "authenticated": authenticated(),
+        }
+    )
+
+
 @bp.post("/games")
+@require_write
 def create_game():
     body = request.get_json(silent=True) or {}
     config = body.get("config", body)
@@ -220,16 +249,19 @@ def _control(game_id: str, method: str, *args: Any):
 
 
 @bp.post("/games/<game_id>/pause")
+@require_write
 def pause(game_id: str):
     return _control(game_id, "pause")
 
 
 @bp.post("/games/<game_id>/resume")
+@require_write
 def resume(game_id: str):
     return _control(game_id, "resume")
 
 
 @bp.post("/games/<game_id>/stop")
+@require_write
 def stop(game_id: str):
     return _control(game_id, "stop")
 
@@ -243,6 +275,13 @@ def hold(game_id: str):
     the table's own pause/resume stays meaningful. Called every few seconds
     while a spectator's spoken narration is behind, so unlike the other controls
     it does not write a snapshot.
+
+    It is also the one POST that takes no write token. Every anonymous listener
+    renews a lease every few seconds and narration is unusable without it; it
+    spends nothing, changes no status, expires on its own (≤30 s) and is
+    bounded at 64 clients, so the worst an anonymous caller can do with it is
+    slow a game down — which is what a spectator with the page open does
+    anyway.
     """
     entry, row = _game_or_404(game_id)
     if entry is None:
@@ -266,6 +305,7 @@ def hold(game_id: str):
 
 
 @bp.post("/games/<game_id>/note")
+@require_write
 def note(game_id: str):
     body = request.get_json(silent=True) or {}
     text = (body.get("text") or "").strip()

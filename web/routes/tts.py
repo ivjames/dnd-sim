@@ -75,12 +75,14 @@ def _gender_for(entry: Any, row: Any, key: str) -> str:
 #: A ceiling this server owns, which the submitted config cannot raise.
 #:
 #: TTS-COSTS.md §1 makes the point that `budget_usd` arrives in the request body
-#: on a route that takes no credential, so left alone "a stranger picks the
-#: ceiling" — and narration is the change that makes that expensive rather than
-#: merely open. Narration therefore stops at the LOWER of the game's own budget
-#: and this. It bounds one game, which is what a per-game cap can do; it does
-#: not bound how many games a stranger may create. That needs spectator
-#: authentication, which this endpoint cannot invent for itself.
+#: from the caller, so left alone "a stranger picks the ceiling" — and narration
+#: is the change that makes that expensive rather than merely open. Narration
+#: therefore stops at the LOWER of the game's own budget and this. It bounds one
+#: game, which is what a per-game cap can do; it does not bound how many games
+#: are created, and `web/auth.py` is what does that now — `POST /api/games`
+#: takes a write token. This endpoint stays anonymous on purpose: an anonymous
+#: spectator cannot hear the game without it, and what it can spend is bounded
+#: per line, per game, and once for good by the on-disk cache.
 DEFAULT_MAX_USD = 10.00
 
 
