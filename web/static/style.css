@@ -590,6 +590,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.party-ages { display: grid; gap: 6px; }
+.party-age { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
+.party-age span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-age select { margin: 0; }
 
 /* ---------- responsive ----------
    Down to a tablet the deck stays above the transcript, which is the point of

@@ -36,6 +36,7 @@ import pytest
 from tts.cache import AudioCache
 from tts.client import DEFAULT_ENGINE, DEFAULT_MONSTER_ENGINE, PollyTTS, TTSError
 from tts.voices import (
+    CHILD_VOICE_IDS,
     ENGINE_SSML,
     MONSTER_VTL,
     STANDARD_ENGLISH,
@@ -118,6 +119,16 @@ DOCUMENTED_STANDARD_ENGLISH = {
     ("Joey", "en-US", "Male"),
     ("Kevin", "en-US", "Male"),
 }
+
+#: The voices the list annotates as children's: "Ivy … Female (child)",
+#: "Justin … Male (child)", "Kevin … Male (child)" — all en-US, and the only
+#: three so marked in any language
+#: (https://docs.aws.amazon.com/polly/latest/dg/available-voices.html, read
+#: 2026-09-04). `DescribeVoices` has no age field, so `CHILD_VOICE_IDS` is
+#: transcribed from this page and nothing at runtime can catch it being wrong:
+#: a missing id is an adventurer read by a nine-year-old, and an id that is not
+#: really a child's is a child cast as an adult.
+DOCUMENTED_CHILD_VOICES = {"Ivy", "Justin", "Kevin"}
 
 #: The English rows of voicelist.html in full: voice id → the engines that page
 #: says serve it. Used to give the strict fake below the same
@@ -238,6 +249,19 @@ def test_the_built_in_roster_is_the_standard_engines_english_voices():
         assert "standard" in DOCUMENTED_ENGINES_BY_VOICE[v.id]
 
 
+def test_the_childrens_voices_are_the_documented_ones():
+    assert {i.lower() for i in DOCUMENTED_CHILD_VOICES} == set(CHILD_VOICE_IDS)
+    # Each is a voice the page actually lists, spelled the way it lists it.
+    assert DOCUMENTED_CHILD_VOICES <= set(DOCUMENTED_ENGINES_BY_VOICE)
+    # Two of the three serve the standard engine, so a table cast from the
+    # fallback roster meets them; Justin is neural-only, so the default engine
+    # meets all three. Either way the pool has children's voices in it, which
+    # is why the casting has to know.
+    assert {v for v in DOCUMENTED_CHILD_VOICES
+            if "standard" in DOCUMENTED_ENGINES_BY_VOICE[v]} == {"Ivy", "Kevin"}
+    assert DOCUMENTED_ENGINES_BY_VOICE["Justin"] == {"neural"}
+
+
 # -- the documents ------------------------------------------------------------
 
 def test_the_exact_monster_document_on_each_engine():
@@ -321,8 +345,9 @@ def test_every_seat_a_game_can_deal_is_documented_ssml(engine):
     for pool in (STANDARD_ENGLISH, small, STANDARD_ENGLISH[:1]):
         for key in keys:
             for gender in ("", "female", "male"):
-                cast = cast_for(key, pool, "Brian", gender, engine)
-                assert_documented(ssml_for("Grog & <the> \"boss\" said 'no'.", cast), engine)
+                for age in ("", "child", "adult", 9, 40):
+                    cast = cast_for(key, pool, "Brian", gender, engine, age)
+                    assert_documented(ssml_for("Grog & <the> \"boss\" said 'no'.", cast), engine)
 
 
 def test_a_line_with_xml_in_it_still_parses():

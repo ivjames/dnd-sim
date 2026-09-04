@@ -724,7 +724,10 @@
   // game is impossible; the game going faster than the narrator is handled by
   // holding it — see voiceHoldEval.
   var Speech = window.DndSpeech || null;
-  var VOICE_RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
+  // Rescaled 2026-09-04: what used to be `fast` (1.2) is the comfortable
+  // middle for listening to a whole game, so it is `normal` now and the
+  // other two keep their old ratios to it (x0.85 and x1.2).
+  var VOICE_RATES = { slow: 1.0, normal: 1.2, fast: 1.45 };
   // 25 ms of nothing, played inside the tap that turns voice on. An <audio>
   // element that has played once may be played again from script, which is the
   // only way server clips ever sound on iOS.
@@ -1943,6 +1946,71 @@
     });
   }
 
+  // Which values of a party spec's `age` mean a child. A mirror of
+  // `normalize_age` in tts/voices.py, and only for showing the select the
+  // right way round: the server re-reads whatever is submitted and is the one
+  // that decides what a given answer means.
+  var CHILD_AGES = { child: 1, kid: 1, boy: 1, girl: 1 };
+  var CHILD_MAX_AGE = 12;
+  // The same numeric grammar `_NUMERIC_AGE` pins in tts/voices.py, and here
+  // for the same reason: `Number()` and Python's `float()` disagree in both
+  // directions ("0xA" is 10 to one and an error to the other, "1_0" the other
+  // way round), and a select showing one thing while the server casts another
+  // would restate a character's age the moment this panel was submitted.
+  var NUMERIC_AGE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/;
+
+  function isChildAge(said) {
+    if (said === null || said === undefined || typeof said === 'boolean') return false;
+    if (typeof said === 'number') return isFinite(said) && said > 0 && said <= CHILD_MAX_AGE;
+    var s = String(said).trim().toLowerCase();
+    if (!s) return false;
+    if (CHILD_AGES[s]) return true;
+    if (!NUMERIC_AGE.test(s)) return false;
+    var n = Number(s);
+    return isFinite(n) && n > 0 && n <= CHILD_MAX_AGE;
+  }
+
+  // One row per seat: the character's name, and whether its voice is an
+  // adult's or a child's. Polly's roster has children's voices in it, and the
+  // server deals one only to a seat whose party spec asks for it — this is
+  // where a scenario is asked. Age is the only voice trait editable here: it
+  // is the one a config is routinely silent about and a listener notices
+  // immediately, where choosing a character's gender for them is writing a
+  // fact into someone else's character sheet (README, Spoken narration).
+  function renderPartyAges(party) {
+    var host = $('ng-party');
+    if (!host) return;
+    clear(host);
+    (party || []).forEach(function (member, i) {
+      if (!member || typeof member !== 'object') return;
+      var row = el('div', 'party-age');
+      row.appendChild(el('span', null, member.name || member.id || 'Seat ' + (i + 1)));
+      var sel = el('select');
+      sel.id = 'ng-age-' + i;
+      ['adult', 'child'].forEach(function (age) {
+        var o = el('option', null, age);
+        o.value = age;
+        sel.appendChild(o);
+      });
+      sel.value = isChildAge(member.age) ? 'child' : 'adult';
+      row.appendChild(sel);
+      host.appendChild(row);
+    });
+  }
+
+  // Write the panel's answers back into the party spec that is about to be
+  // submitted. "adult" DELETES the key rather than stating it: an unstated age
+  // already casts as an adult, and a config should not claim a fact about a
+  // character that nobody chose to state.
+  function applyPartyAges(party) {
+    (party || []).forEach(function (member, i) {
+      var sel = $('ng-age-' + i);
+      if (!sel || !member || typeof member !== 'object') return;
+      if (sel.value === 'child') member.age = 'child';
+      else delete member.age;
+    });
+  }
+
   function applyPreset(i) {
     var p = S.presets[i];
     if (!p) return;
@@ -1955,6 +2023,7 @@
     $('ng-temp').value = cfg.player_temperature !== undefined ? cfg.player_temperature : 1;
     $('ng-setting').value = cfg.setting || '';
     $('ng-tone').value = cfg.tone || 'classic heroic';
+    renderPartyAges(cfg.party);
   }
 
   function submitNewGame(e) {
@@ -1969,6 +2038,7 @@
     cfg.player_temperature = Math.min(1, Math.max(0, num($('ng-temp').value, 1)));
     cfg.setting = $('ng-setting').value;
     cfg.tone = $('ng-tone').value;
+    applyPartyAges(cfg.party);
 
     var btn = $('ng-start');
     btn.disabled = true;

@@ -203,9 +203,11 @@ vars). A party member may carry its own `"model"`, which overrides
 }
 ```
 
-`"gender"` is optional and decides which Polly voices that character can be
-cast from (see [Spoken narration](#spoken-narration)). It is not a rules field:
-the engine, the DM and the players never see it.
+`"gender"` and `"age"` are optional and decide which Polly voices that
+character can be cast from (see [Spoken narration](#spoken-narration)) —
+`"age"` takes `child`, `adult` or a number of years, and only an age that reads
+as a child changes anything. Neither is a rules field: the engine, the DM and
+the players never see either of them.
 
 Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
 other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,
@@ -426,10 +428,32 @@ writing a fact into someone else's character. Where a language ships
 voices of only one gender (Korean and Swedish each ship one), a stated gender
 that cannot be answered gets a voice anyway: a worse match, not a silence.
 
-**The browser fallback ignores gender.** `SpeechSynthesisVoice` has no gender
-attribute in any browser, and inferring one from voice names across every OS
-and locale would be a guess dressed as data. A session on the fallback engine
-casts as it always did.
+**A character is cast as an adult unless it says otherwise.** Polly's roster
+has children's voices in it — `Ivy`, `Justin` and `Kevin`, the only three its
+voice list annotates as children — and they used to sit in the pool every seat
+was dealt from, which is how a cleric called Father Bexley Crane came to be
+read out by a nine-year-old. So a party member may state an `"age"`: the words
+`child` / `kid` / `boy` / `girl`, or `adult` / `elder` / `elderly` / `old`, or
+a number of years (12 and under is a child). Only a character who asks for a
+child's voice can be dealt one; everyone with no age stated, and the DM, the
+NPCs and the monsters, are dealt from the adult voices.
+
+`elder` is read and recorded, and casts as an adult: Polly has no elderly voice
+to cast it as. A number is written plainly — an optional sign, digits, at most
+one point, an optional exponent — because the panel and the server have to
+agree about which strings are numbers at all, and `Number()` and Python's
+`float()` do not (`0xA` is ten to one of them, `1_0` to the other). Anything
+else, and any number that cannot be an age (`0`, `-3`, `"old enough"`), is
+read as nothing said rather than rounded into one of the two, and a language
+with no children's voices at all — every language but US English — casts a
+stated child from the adult voices, a worse match rather than a silence. The
+**New game** panel has a row per seat for this, and choosing *adult* there
+writes nothing: an unstated age already casts as one.
+
+**The browser fallback ignores gender and age.** `SpeechSynthesisVoice` has no
+gender or age attribute in any browser, and inferring one from voice names
+across every OS and locale would be a guess dressed as data. A session on the
+fallback engine casts as it always did.
 
 ### Two engines, one narrator
 

@@ -257,14 +257,16 @@ class PollyTTS:
             return ()
         return tuple(out)
 
-    def cast(self, key: str, gender: str = "") -> Cast:
+    def cast(self, key: str, gender: str = "", age="") -> Cast:
         """The seat `key` sits in, on the engine that will speak it.
 
-        `gender` is the character's, where the game states one — it narrows the
-        pool, it does not pick the voice.
+        `gender` and `age` are the character's, where the game states them —
+        they narrow the pool, they do not pick the voice. An unstated age is an
+        adult, so Polly's children's voices are dealt only where a character
+        asks for one.
         """
         engine = self.engine_for(key)
-        return cast_for(key, self.voices(engine), self.dm_voice, gender, engine)
+        return cast_for(key, self.voices(engine), self.dm_voice, gender, engine, age)
 
     # -- synthesis -----------------------------------------------------------
 
@@ -290,11 +292,12 @@ class PollyTTS:
     def ssml(self, text: str, cast: Cast) -> str:
         return ssml_for(text, cast)      # the engine rides on the cast
 
-    def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]:
+    def cache_key_for(self, key: str, text: str, gender: str = "",
+                      age="") -> tuple[Cast, str]:
         # Keyed on the document that will actually be sent, not on the cast it
         # came from: an engine that drops pitch makes two casts that differ
         # only in pitch the same audio, and they should be the same file.
-        cast = self.cast(key, gender)
+        cast = self.cast(key, gender, age)
         return cast, cache_key(cast.engine, cast.voice_id, self.ssml(text, cast))
 
     def _check(self, text: str) -> str:
@@ -334,23 +337,23 @@ class PollyTTS:
                 else:
                     self._inflight[ckey] = (gate_now, waiting - 1)
 
-    def render(self, key: str, text: str, gender: str = "") -> TTSResult:
+    def render(self, key: str, text: str, gender: str = "", age="") -> TTSResult:
         """Synthesize unconditionally, and cache it.
 
         No gate and no cache read: the caller holds `exclusive` and has already
         looked. Raises `TTSError` if it cannot be had.
         """
         text = self._check(text)
-        cast, ckey = self.cache_key_for(key, text, gender)
+        cast, ckey = self.cache_key_for(key, text, gender, age)
         audio = self._synthesize_now(text, cast)
         self.cache.put(ckey, audio)
         chars = billable_chars(text)
         return TTSResult(audio, cast, chars, self.price_of(chars, cast.engine), False, ckey)
 
-    def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult:
+    def synthesize(self, key: str, text: str, gender: str = "", age="") -> TTSResult:
         """Audio for one line in one seat, from the cache or from Polly."""
         text = self._check(text)
-        cast, ckey = self.cache_key_for(key, text, gender)
+        cast, ckey = self.cache_key_for(key, text, gender, age)
         hit = self.cache.get(ckey)
         if hit is not None:
             return TTSResult(hit, cast, 0, 0.0, True, ckey)
@@ -360,7 +363,7 @@ class PollyTTS:
             hit = self.cache.get(ckey)
             if hit is not None:
                 return TTSResult(hit, cast, 0, 0.0, True, ckey)
-            return self.render(key, text, gender)
+            return self.render(key, text, gender, age)
 
     def _synthesize_now(self, text: str, cast: Cast) -> bytes:
         client = self.client()
