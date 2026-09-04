@@ -65,14 +65,6 @@ many creatures are still alive, so a per-round figure silently bakes in party
 size and attrition; the seven configs vary 5.9–7.3 turns per round while
 agreeing on characters per turn to within ±8%.
 
-Turns are the better unit — turns per round depend on how many creatures are
-alive, so a per-round figure quietly bakes in this party's size and this
-fight's attrition. Per turn it is **~420 characters** with everything spoken
-(425 for goblin_ambush, 415 for crypt), plus ~1,000 a game for scene-setting
-and the epilogue. That reproduces both measured games to within 2%, and it is
-the number to plan with. Per round, at the 6.5–7.3 turns these two averaged,
-it works out at ~2,900.
-
 The cap is `max_rounds_per_combat`, and it is enforced **per combat**
 (`orchestrator/game.py:661`), not per game. crypt's observed 7 rounds are
 already 4 + 3 across two fights.
@@ -238,13 +230,9 @@ Two consequences:
   and prices tokens; a character-priced, non-LLM cost needs a second entry
   point and a `narrator` role. That is a `CONTRACTS.md` amendment, not a
   quiet change.
-- The example budgets absorb it unevenly. `crypt.json` budgets $1.50 against
-  $0.86 of model spend, so Aura-1 at full narration ($0.35) still lands inside
-  it at $1.21 — but ElevenLabs v3 ($2.31) would take it to $3.18 and halt the
-  game. `goblin_ambush.json` is a separate problem TTS did not cause: it
-  budgets $1.00 against $1.47 of model spend, and run at its own budget it
-  stops at `budget_exceeded` 408 events into 610. Narration would only make an
-  existing shortfall louder.
+- `goblin_ambush.json` needs its budget raised before narration is switched on
+  at all — $1.52 of model spend against $1.75 leaves $0.23, and the cheapest
+  narration wants $0.54. That is a config change, not a design one.
 
 ## 4. The two design facts
 
@@ -343,9 +331,11 @@ Assuming the goal is "better voices than the OS ships", not "voice agents":
   $10 free allowance. Its published limits (15 concurrent streams, 100 RPM)
   are ample for one narrator per spectator but are worth knowing.
 - **Polly Standard** ($4) is a quarter of the price of anything else here and
-  the only engine that still supports `<prosody pitch>`, so it could reproduce
-  today's browser behaviour exactly. It is also the pre-neural engine, and this
-  is a narration product. Mentioned for completeness, not recommended.
+  the only engine that still supports `<prosody pitch>`, so it alone could
+  reproduce the pitch/rate *modulation* — not the casting or the voices, since
+  the novelty-voice monsters have no vendor equivalent either way. It is also
+  the pre-neural engine, and this is a narration product. Mentioned for
+  completeness, not recommended.
 - **Cartesia** is 2–3× Deepgram's rate on a plan-with-credits model rather than
   pure PAYG, and its free tier does not cover one game. Against that,
   `CARTESIA_API_KEY` is already on the droplet (see `CLAUDE.md`), so it is the
