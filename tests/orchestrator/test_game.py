@@ -201,6 +201,34 @@ def test_say_keeps_a_line_that_changes_the_target(cfg, first, second):
         assert game._say(speaker, "Crick", second), f"{second!r} suppressed by {first!r}"
 
 
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("\u041e\u0442\u0441\u0442\u0443\u043f\u0430\u0435\u043c!", "\u0412\u043f\u0435\u0440\u0451\u0434!"),   # Cyrillic: "fall back" / "forward"
+        ("\u64a4\u9000\uff01", "\u524d\u3078\uff01"),                       # Japanese, and a full-width bang
+        ("\u00c9coutez\u00a0: le sceau est bris\u00e9.", "Ouvrez la porte."),  # accents and a nbsp
+    ],
+)
+def test_say_judges_lines_that_are_not_ascii(cfg, first, second):
+    """An ASCII-only tokenizer empties every line and silences the whole game."""
+    game, _ = make_game(cfg)
+    game._emit_new = lambda *a, **k: None
+    assert game._say("pc_1", "Ysolde", first)
+    assert game._say("pc_2", "Crick", second), f"{second!r} suppressed by {first!r}"
+    # ... and the guard still works in that script: a real repeat is still dropped
+    assert not game._say("pc_2", "Crick", first)
+
+
+def test_say_never_suppresses_a_line_it_cannot_read(cfg):
+    """No words to compare is no evidence of repetition."""
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append(text)
+    assert game._say("pc_1", "Ysolde", "\u2026!")
+    assert game._say("pc_2", "Crick", "?!")
+    assert len(said) == 2
+
+
 def test_say_drops_an_identical_bark_from_another_monster(cfg):
     game, _ = make_game(cfg)
     game._emit_new = lambda *a, **k: None

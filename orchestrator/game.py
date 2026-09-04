@@ -248,6 +248,9 @@ class Game:
         if not text:
             return False
         words, negated = _line_key(text)
+        if not words:  # nothing to compare (punctuation, an emoji); let it through
+            self._emit_new("dialogue", text, actor=actor_id, data={"speaker": name})
+            return True
         for prev_actor, prev_words, prev_negated in self._spoken:
             if negated != prev_negated:
                 continue  # one of the two contradicts the other; not a repeat
@@ -839,9 +842,14 @@ def _line_key(text: str) -> tuple[frozenset, bool]:
     to be told apart by words at all. Apostrophes go first, so "don't" reduces
     to "dont" rather than to two fragments. If a line is nothing but function
     words, fall back to all of them so it still compares equal to itself.
+
+    Words are Unicode: an ASCII-only pattern reduces every line of a Cyrillic
+    or CJK game to the empty set, which then compares equal to every other
+    such line. A line that yields no words at all (pure punctuation) is handled
+    by `_say`, which never suppresses one.
     """
     flat = text.lower().replace("'", "").replace("\u2019", "")
-    words = [w for w in re.split(r"[^0-9a-z]+", flat) if w]
+    words = re.findall(r"\w+", flat, re.UNICODE)
     negated = any(w in _NEGATIONS for w in words)
     return frozenset([w for w in words if w not in _STOPWORDS] or words), negated
 
