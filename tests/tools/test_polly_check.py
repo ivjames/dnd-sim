@@ -199,6 +199,32 @@ def test_the_dry_run_sends_nothing_and_needs_no_credentials(capsys):
     assert code == 0 and "vocal-tract-length" in out
 
 
+def test_the_dry_run_fallback_cast_is_the_one_the_service_would_make(capsys):
+    """A dry run is a configuration audit, so the configuration it most has to
+    be able to show is a broken one.
+
+    `--no-monster-fx --monster-engine neural` is an untreated monster on an
+    engine that has no `vocal-tract-length`: a plain voice reading a monster's
+    lines. With no roster to cast from, the fallback used `cast_for`'s default
+    rather than the service's setting and reported it as treated — hiding the
+    one thing this run was asked to look at.
+    """
+    code, out = run(["--dry-run", "--no-monster-fx", "--monster-engine", "neural"],
+                    None, capsys)
+    assert code == 0
+    assert "built-in roster" in out                 # the fallback really was taken
+    ssml = [line for line in out.splitlines() if line.strip().startswith("ssml")]
+    assert ssml and all("vocal-tract-length" not in line for line in ssml)
+    assert "treated" not in out                     # the service treats nothing
+    # And the header says the arrangement is broken rather than naming a tag
+    # this engine will never write.
+    assert "UNTREATED: this engine has no vocal-tract-length" in out
+
+    # The treated arrangement through the same fallback still says so.
+    code, out = run(["--dry-run"], None, capsys)
+    assert code == 0 and "built-in roster" in out and "-> pcm at" in out
+
+
 def test_no_credentials_is_exit_2_not_a_pass(capsys):
     """"Could not check" and "checked, all good" must not look the same to a
     script, or to a person reading the tail of the output."""

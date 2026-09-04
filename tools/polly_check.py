@@ -75,7 +75,7 @@ from tts.client import (
     TTSError,
     env_flag,
 )
-from tts.voices import STANDARD_ENGLISH, billable_chars
+from tts.voices import ENGINE_SSML, STANDARD_ENGLISH, billable_chars
 
 #: The two lines. Short on purpose — this is a check, not a demo — and
 #: different from each other so a mixed-up cache entry could not hide.
@@ -200,6 +200,25 @@ def build(args: argparse.Namespace, cache_dir: str, client: Any) -> PollyTTS:
         language=args.lang or os.environ.get("DND_TTS_LANG") or DEFAULT_LANGUAGE,
         dm_voice=args.dm_voice or os.environ.get("DND_TTS_DM_VOICE") or DEFAULT_DM_VOICE,
     )
+
+
+def _how_monsters_are_made(svc: PollyTTS) -> str:
+    """The header's one-phrase summary of the monster arrangement.
+
+    Asked of `ENGINE_SSML` rather than assumed, because the answer for the
+    untreated arrangement depends on the engine: `<amazon:effect
+    vocal-tract-length>` exists only where the matrix says it does, and an
+    untreated monster anywhere else is a plain voice reading a monster's lines.
+    That configuration is reachable (`DND_TTS_MONSTER_FX=0` beside a
+    `DND_TTS_MONSTER_ENGINE` that is not `standard`) and is exactly what this
+    tool is for, so the header says so rather than naming a tag that will not
+    be written.
+    """
+    if svc.monster_fx:
+        return "+ post-processing"
+    if "vtl" in ENGINE_SSML.get(svc.monster_engine, frozenset()):
+        return "(vocal-tract-length)"
+    return "(UNTREATED: this engine has no vocal-tract-length)"
 
 
 def _the_other_way(svc: PollyTTS, client: Any, cache_dir: str) -> PollyTTS:
@@ -337,7 +356,14 @@ def cast_or_builtin(svc: PollyTTS, key: str):
         return svc.cast(key), True
     except ValueError:
         engine = svc.engine_for(key)
-        return cast_for(key, STANDARD_ENGLISH, svc.dm_voice, "", engine), False
+        # `monster_fx` from the SERVICE, not from `cast_for`'s default. A dry
+        # run is a configuration audit, and the one configuration it most has
+        # to be able to show is a broken one: `--no-monster-fx
+        # --monster-engine neural` is an untreated monster on an engine with no
+        # `vocal-tract-length`, i.e. a plain voice reading a monster's lines.
+        # Defaulting here reported it as treated and hid exactly that.
+        return cast_for(key, STANDARD_ENGLISH, svc.dm_voice, "", engine,
+                        monster_fx=svc.monster_fx), False
 
 
 def speak(svc: PollyTTS, rec: Recorder, key: str, text: str, rep: Report,
@@ -471,7 +497,7 @@ def main(argv: list[str] | None = None, client: Any = None) -> int:
         probe = build(args, cache_dir, client)
         print(f"region {probe.region or '(from the environment)'} · "
               f"table {probe.engine} · monsters {probe.monster_engine} "
-              f"{'+ post-processing' if probe.monster_fx else '(vocal-tract-length)'} · "
+              f"{_how_monsters_are_made(probe)} · "
               f"language {probe.language} · DM voice {probe.dm_voice}")
 
         # `--dry-run` before the credential check on purpose: printing the
