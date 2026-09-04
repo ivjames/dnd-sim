@@ -18,6 +18,7 @@ __all__ = [
     "hp_band",
     "party_summary",
     "pronouns_for",
+    "pronouns_of_sheet",
     "PRONOUNS",
     "DEFAULT_PRONOUNS",
 ]
@@ -73,7 +74,17 @@ def pronouns_for(c: Any) -> str:
     that built it stated one. Nothing is inferred from a name, a class or a
     stat block.
     """
-    sheet = getattr(c, "sheet", None)
+    return pronouns_of_sheet(getattr(c, "sheet", None))
+
+
+def pronouns_of_sheet(sheet: Any) -> str:
+    """`pronouns_for` for a bare sheet, for a caller that has no combatant.
+
+    The player's own cached system block is built from its `CharacterSheet`
+    alone, and it has to answer this the same way the COMBATANTS column will —
+    a prompt that introduces a character as they/them and then lists her as
+    she/her has told the model two things in one breath.
+    """
     said = str(getattr(sheet, "pronouns", "") or "").strip()
     if said:
         return said

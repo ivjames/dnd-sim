@@ -374,14 +374,25 @@ def cast_preview():
     voice; it never renders one.
     """
     svc = _service()
-    if svc is None or not svc.available():
+    # `available()` is only "the credentials resolve". A roster can still be
+    # empty — a failed `DescribeVoices`, an IAM policy without it, a language
+    # Amazon serves no voices for — and `cast_for` raises on an empty pool,
+    # which on an anonymous route is a 500 for the ordinary deployed shape.
+    # `capability()` makes the same check for the same reason.
+    if svc is None or not svc.available() or not all(
+        svc.voices(engine) for engine in dict.fromkeys((svc.engine, svc.monster_engine))
+    ):
         # The same shape as `/api/tts` refusing, so a page that has already
         # decided to use its own voices does not need a second vocabulary for
         # the reason. A cast nobody will hear is worse than no cast.
         return jsonify({"available": False, "seats": []})
 
-    body = request.get_json(silent=True) or {}
-    party = body.get("party")
+    # `get_json` returns whatever JSON was sent, which is not necessarily an
+    # object: a bare list, string or number would reach `.get` and 500. This
+    # route is anonymous, so that is a stranger turning a typo into a stack
+    # trace in the log.
+    body = request.get_json(silent=True)
+    party = body.get("party") if isinstance(body, dict) else None
     if not isinstance(party, list):
         return _err("party must be a list")
     if len(party) > MAX_CAST_SEATS:
@@ -392,7 +403,15 @@ def cast_preview():
     seats = []
     for member in party:
         member = member if isinstance(member, dict) else {}
-        key = str(member.get("id") or "")[:MAX_KEY]
+        ident = str(member.get("id") or "")
+        key = ident[:MAX_KEY]
+        # `speak` hashes the truncated key but finds the member by the id as
+        # written (`_member_for`), so an id longer than MAX_KEY is cast there
+        # with no traits at all. Preview what will happen, not what should:
+        # naming a voice the game then does not use is the one thing this
+        # route must never do.
+        if len(ident) > MAX_KEY:
+            member = {}
         if not key:
             # A seat with no id has no seat: `cast_for` reads an empty key as
             # the DM, and showing the narrator's voice against a player's name

@@ -114,9 +114,15 @@ CONTRACT: List[Tuple[str, List[str], float]] = [
     ("--hp-hurt", ["--bg-raise"], 4.5),
     ("--hp-bad", ["--bg-raise"], 4.5),
     # The map's terrain is a graphical object that carries meaning, so it is
-    # held to 1.4.11 against the ground it is painted on.
-    ("--wall", ["--bg-sunken"], 3.0),
-    ("--difficult", ["--bg-sunken"], 3.0),
+    # held to 1.4.11 against the ground it is painted on — and against the
+    # panel, because the legend prints the same two swatches there and the
+    # legend is how you learn what the board is showing.
+    ("--wall", ["--bg-sunken", "--bg-panel"], 3.0),
+    ("--difficult", ["--bg-sunken", "--bg-panel"], 3.0),
+    # Bars: the fill against its own track, which is the pair a reader
+    # actually sees rather than the fill against the page behind it.
+    ("--accent-fill", ["--bg-sunken"], 3.0),
+    ("--danger-fill", ["--bg-sunken"], 3.0),
 ]
 
 # Text printed on a filled block, where the fill is the background.
@@ -152,8 +158,13 @@ def test_every_var_reference_in_the_stylesheet_is_defined():
 
 
 def test_the_map_reads_tokens_the_stylesheet_actually_declares():
-    """`drawGrid` paints from the theme rather than from hard-coded colours, so
-    a renamed token would leave the map painting its fallbacks on both themes."""
+    """Every token `drawGrid` asks the theme for is one the theme declares.
+
+    This catches a rename, which is the failure that leaves the map painting
+    its hard-coded fallbacks on both themes while everything around it moves.
+    It does not, and cannot from here, prove the map has no literals left in
+    it — that is what a screenshot in each theme is for.
+    """
     dark, _, _ = themes()
     read_by_js = set(re.findall(r"tok\('(--[a-z-]+)'", read(APP_JS)))
     assert read_by_js, "the canvas no longer reads the theme"

@@ -380,13 +380,23 @@ is pale wood, and both were solved rather than eyeballed: **every** run of text
 clears WCAG AAA (7:1) against the worst of the eight surfaces it can land on,
 with the tiers spaced by ratio so the hierarchy is carried by measured steps
 rather than by letting the quietest one sag — story text at 12:1, the secondary
-tier at 9.5:1, names and status colours at 8:1, the metadata (initiative
-scores, the AC/class line, sequence numbers) at 7:1. Borders, focus rings and
-the HP and budget bars clear 4.5:1, half again what 1.4.11 asks of a non-text
-carrier of meaning; the map's walls and difficult ground clear 3:1 against the
-board. The battle map paints from the same custom properties as everything
-else, so it changes with the theme instead of staying dark on a light page, and
-`web/tests/test_theme_tokens.py` checks the whole table as arithmetic.
+tier at 9.5:1, the metadata (initiative scores, the AC/class line, sequence
+numbers) at 7:1. A name or a status colour clears 8:1 on the surfaces it is
+printed on — panels, the card wells, the active row, the line being read — and
+7:1 everywhere else.
+
+The carriers of meaning that are not text clear more than the 3:1 1.4.11 asks:
+control borders and focus rings 4.5:1, the HP and budget bars against their own
+tracks 3:1, the map's walls and difficult ground 3:1 against both the board and
+the legend that names them. The soft rules between panels and cards are not in
+that set — they separate, they do not signify, and they sit at 1.3-2.2:1 on
+purpose.
+
+The battle map paints from the same custom properties as everything else, so it
+changes with the theme instead of staying dark on a light page.
+`web/tests/test_theme_tokens.py` holds every floor named above as arithmetic
+over the token pairs that actually occur — which is what makes them claims
+rather than intentions.
 
 ## Spoken narration
 

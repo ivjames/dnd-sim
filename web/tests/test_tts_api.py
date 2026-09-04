@@ -15,7 +15,7 @@ import pytest
 
 from llm.cost import Ledger
 from tts.voices import STANDARD_ENGLISH, accent_for, cast_for, is_child_voice
-from web.routes.tts import MAX_CAST_SEATS
+from web.routes.tts import MAX_CAST_SEATS, MAX_KEY
 from web.tests.test_api import create
 
 
@@ -843,6 +843,46 @@ def test_the_panel_is_told_who_will_read_each_seat(tts_client):
         assert seat["accent"] and not seat["accent"].startswith("en-")
 
 
+def test_the_preview_narrows_on_the_key_the_panel_actually_sends(tts_client, sample_config):
+    """The panel sends `pronouns` and never `gender` (`applyPartySeats`), and
+    the pool is narrowed from whichever of the two the config states
+    (`_pool_gender_of`). A preview that read `gender` alone would look right in
+    a test that sends `gender` and cast every real request from the whole
+    roster — so this sends what the panel sends, and checks it against the clip
+    the paid endpoint then serves."""
+    men = {v.id for v in STANDARD_ENGLISH if v.gender == "Male"}
+    women = {v.id for v in STANDARD_ENGLISH if v.gender == "Female"}
+
+    seats = cast_preview(tts_client, [
+        {"id": "pc_1", "pronouns": "she/her"},
+        {"id": "pc_1", "pronouns": "he/him"},
+        {"id": "pc_1", "pronouns": "they/them"},
+    ])["seats"]
+    assert seats[0]["voice"] in women and seats[1]["voice"] in men
+    # they/them narrows nothing, so it is dealt from the whole roster — and
+    # that is a different answer from either of the two above.
+    assert seats[2]["voice"] != seats[0]["voice"] or seats[2]["voice"] != seats[1]["voice"]
+
+    # And the game agrees, for a party stating pronouns exactly as the panel
+    # writes them.
+    party = [{"id": "pc_1", "name": "Rooke", "klass": "Fighter", "level": 3,
+              "pronouns": "she/her"}]
+    previewed = cast_preview(tts_client, party)["seats"][0]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+    rv = tts_client.get(speak_url(game, key="pc_1"))
+    assert rv.headers["X-Dnd-Voice"] == previewed["voice"] and previewed["voice"] in women
+
+
+def test_stated_pronouns_beat_a_legacy_gender_in_the_preview_too(tts_client):
+    """`_pool_gender_of`: a config that was updated to state `pronouns` beside
+    an older `gender` must not keep the narrowing that update removed."""
+    seat = cast_preview(tts_client, [
+        {"id": "pc_1", "pronouns": "they/them", "gender": "female"},
+    ])["seats"][0]
+    whole_pool = cast_preview(tts_client, [{"id": "pc_1"}])["seats"][0]
+    assert seat["voice"] == whole_pool["voice"]
+
+
 def test_the_preview_is_the_casting_the_game_will_actually_use(tts_client, sample_config):
     """Not a second implementation that agrees until someone edits one of them.
 
@@ -886,6 +926,32 @@ def test_the_preview_spends_nothing_and_renders_nothing(tts_client, tts):
     assert not tts.clips
 
 
+def test_a_roster_that_could_not_be_listed_previews_nothing(tts_client, tts):
+    """`available()` only says the credentials resolve. A failed
+    `DescribeVoices`, or a language Amazon serves no voices for, leaves a
+    working client with an empty pool — and `cast_for` raises on one, which on
+    an anonymous route is a 500 for an ordinary deployed shape."""
+    tts.voices = lambda engine="": ()
+    rv = tts_client.post("/api/tts/cast", json={"party": [{"id": "pc_1"}]})
+    assert rv.status_code == 200
+    assert rv.get_json() == {"available": False, "seats": []}
+
+
+def test_an_id_too_long_to_be_a_key_previews_what_the_game_will_do(tts_client, sample_config):
+    """`speak` hashes the truncated key but finds the member by the id as
+    written, so a seat whose id runs past MAX_KEY is cast there with no traits.
+    Previewing the traits anyway would name a voice the game does not use —
+    the one thing this route must not do."""
+    long_id = "pc_" + "a" * (MAX_KEY + 10)
+    party = [{"id": long_id, "name": "Rooke", "klass": "Fighter", "level": 3,
+              "pronouns": "she/her"}]
+    previewed = cast_preview(tts_client, party)["seats"][0]
+    game = create(tts_client, dict(sample_config, party=party))["id"]
+    rv = tts_client.get(speak_url(game, key=long_id))
+    assert rv.status_code == 200
+    assert rv.headers["X-Dnd-Voice"] == previewed["voice"]
+
+
 def test_a_server_with_no_polly_previews_nothing(client):
     """A cast nobody will hear is worse than no cast: the browser's own voices
     will read the game, and they are not this roster."""
@@ -895,6 +961,13 @@ def test_a_server_with_no_polly_previews_nothing(client):
 
 def test_the_preview_refuses_a_body_it_cannot_read(tts_client):
     assert tts_client.post("/api/tts/cast", json={"party": "everyone"}).status_code == 400
+    # Not every JSON body is an object. This route is anonymous, so a bare
+    # list or string must be a refusal rather than a stack trace in the log.
+    for body in ([{"id": "pc_1"}], "everyone", 7, None):
+        rv = tts_client.post("/api/tts/cast", json=body)
+        assert rv.status_code == 400, body
+    assert tts_client.post("/api/tts/cast", data=b"not json",
+                           content_type="application/json").status_code == 400
     too_many = [{"id": "pc_%d" % i} for i in range(MAX_CAST_SEATS + 1)]
     assert tts_client.post("/api/tts/cast", json={"party": too_many}).status_code == 400
     # A member that is not an object is a seat with no id, not a 500.

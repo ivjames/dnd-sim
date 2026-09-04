@@ -125,10 +125,12 @@ def test_dm_view_shows_exact_numbers_and_positions():
     assert "(9,3)" in view
 
 
-def test_a_stated_pronoun_beats_the_gender_that_casts_the_voice():
-    """The two are not the same question. A spec has one field for who someone
-    is only because nobody had added the other one; a character may be
-    they/them and still be read aloud in a woman's voice."""
+def test_every_way_a_seat_can_answer_reaches_the_view():
+    """The four cases a party spec can present, resolved through `pronouns_for`
+    and into the fixture the view tests below run on. Which of `pronouns` and
+    `gender` wins when a spec states both is not this — that is
+    `test_narration_attribution.py::test_stated_pronouns_beat_a_legacy_gender_here_too`,
+    and no seat here states both."""
     state = make_state()
     assert pronouns_for(state.combatants["pc_1"]) == "he/him"      # implied by gender
     assert pronouns_for(state.combatants["pc_2"]) == "they/them"   # stated outright

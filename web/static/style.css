@@ -62,7 +62,7 @@
   --scrim:      rgba(12, 8, 5, .84);
   --canvas-grid:#4e4137;
   --wall:       #7e7468;
-  --difficult:  #8b6d2c;
+  --difficult:  #8c6f2e;
 
   --radius: 9px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -330,7 +330,13 @@ body {
 /* one row per enemy */
 .card-tight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-tight .card-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 500; }
-.card-tight .card-vitals { flex: 0 0 auto; width: 112px; margin-top: 0; }
+/* The bar is the fixed part; the number beside it is not. "0/11 — dead" is how
+   every enemy ends a fight and "0/11 — down 0✓/2✗" is what a non-monster on the
+   other side reads, and neither fits a box sized for "11/11" — they printed
+   straight through the AC. The box takes what the number needs, and the row
+   wraps when that is more than the line has. */
+.card-tight .card-vitals { flex: 0 1 auto; min-width: 0; margin-top: 0; }
+.card-tight .hpbar { flex: 0 0 56px; }
 .card-tight .card-sub { flex: 0 0 auto; margin-left: 0; }
 .card-tight .tags { flex: 1 0 100%; margin-top: 2px; }
 
@@ -340,14 +346,22 @@ body {
    text they were the first thing between the reader and the story. */
 /* It takes the height the viewport has left over once the deck is placed, so
    the page itself does not scroll and the story is never a strip at the bottom
-   of a tall column. Below that floor it goes back to being a scroll region on
-   a scrolling page. */
+   of a tall column.
+
+   The floor for that sits on the PANEL, not on the scroll region inside it. On
+   the region it was a length the region would not go below while every
+   ancestor was still free to shrink, so on a viewport too short to hold it —
+   a 1366x768 laptop, which is most of them — the text and its toggles rendered
+   194px BELOW the panel's own border, on bare page background. On the panel it
+   is a length the panel will not shrink below, so the page scrolls instead and
+   the region flexes inside it. */
 .transcript {
   flex: 1 1 auto;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
-  min-height: 300px;
+  min-height: 0;
   padding-right: 6px;
 }
+.feed .panel-fill { min-height: 390px; }   /* the title, 300px of story, the toggles */
 .transcript-tools {
   display: flex; gap: 14px; align-items: center;
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -605,7 +619,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   display: grid; grid-template-columns: 1fr 130px 100px; gap: 4px 10px;
   align-items: center;
 }
-.party-seat > span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-seat > span:not(.party-cast) { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .party-seat select { margin: 0; min-width: 0; }
 .party-cast {
   grid-column: 1 / -1;
@@ -632,6 +646,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .feed { flex: 0 0 auto; }
   .transcript { flex: 0 0 auto; height: 56vh; min-height: 300px; }
 }
+/* On a phone the transcript comes before the map, the controls and the
+   narration bar rather than after all three. The rail stays above it: those are
+   the lists you read the transcript against, and they are three tight panels
+   rather than a strip of instruments. */
 @media (max-width: 760px) {
   .deck { order: 2; grid-template-columns: minmax(0, 1fr); }
   .feed { order: 1; }

@@ -274,7 +274,7 @@ def _pick(pool: list[Voice], h: int) -> Voice:
 #: character is worse than an unfamiliar language tag (`accent_for`).
 #:
 #: en-GB-WLS is Welsh-accented English rather than Welsh, which is why it is
-#: keyed separately and why the lookup below tries the full code first.
+#: keyed on the whole code rather than on the `en-GB` it starts with.
 ACCENTS: dict[str, str] = {
     "en-au": "Australian",
     "en-gb": "British",

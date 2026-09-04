@@ -55,12 +55,11 @@ class CharacterSheet:
     spellcasting_ability: str | None
     features: list[str]                # engine-recognized feature ids: "second_wind","action_surge","sneak_attack","cunning_action","channel_divinity_turn_undead","arcane_recovery","extra_attack",...
     persona: str                       # free text; not used by engine
-    gender: str                        # as stated, or ""; casts the voice (tts/), no rules meaning
-    pronouns: str                      # resolved once: stated, else implied by gender, else "they/them"
+    pronouns: str                      # as stated, or ""; read by agents.views.pronouns_for and tts/. No rules meaning
+    gender: str                        # the older spelling of the same answer, still read underneath it
 
 def build_character(spec: dict, rng: RNG) -> CharacterSheet
-# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str, "gender": str, "pronouns": str}
-def normalize_pronouns(said="", gender="") -> str   # the one place a config's answer is read
+# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str, "pronouns": str}
 def monster_to_combatant(name: str, cid: str, rng: RNG, roll_hp: bool=False) -> "Combatant"
 ```
 

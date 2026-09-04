@@ -546,7 +546,9 @@
     if (c.dead) hpText += ' — dead';
     vitals.appendChild(el('span', 'hpnum', hpText));
     node.appendChild(vitals);
-    if (compact) node.appendChild(subEl);
+    // Only where there is something to say: an empty span still takes the
+    // row's flex gap, which on a one-line card is a visible notch.
+    if (compact && sub.length) node.appendChild(subEl);
 
     var tags = el('div', 'tags');
     (c.conditions || []).forEach(function (cond) {
@@ -2236,7 +2238,15 @@
   var THEMES = ['auto', 'light', 'dark'];
   var THEME_KEY = 'dndsim.theme';
 
-  function themeLoad() {
+  //: The theme this page is showing. `localStorage` is where it is kept
+  //: between visits, not where it is kept between clicks: a browser that
+  //: refuses storage (Safari with cookies blocked, an embedded WebView, a
+  //: quota that is full) throws on the read, and a cycle that asked storage
+  //: what it was showing would answer "auto" every time and step to "light"
+  //: for ever — a button that visibly works once and is then inert.
+  var themeNow = 'auto';
+
+  function themeStored() {
     try {
       var t = localStorage.getItem(THEME_KEY);
       return (t === 'light' || t === 'dark') ? t : 'auto';
@@ -2244,6 +2254,7 @@
   }
 
   function themeApply(t) {
+    themeNow = t;
     if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
     else document.documentElement.removeAttribute('data-theme');
     try {
@@ -2262,14 +2273,14 @@
   }
 
   function themeInit() {
-    themeApply(themeLoad());
+    themeApply(themeStored());
     $('btn-theme').addEventListener('click', function () {
-      themeApply(THEMES[(THEMES.indexOf(themeLoad()) + 1) % THEMES.length]);
+      themeApply(THEMES[(THEMES.indexOf(themeNow) + 1) % THEMES.length]);
     });
     // On "auto", the system flipping is a repaint the canvas has to follow.
     var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
     if (mq && typeof mq.addEventListener === 'function') {
-      mq.addEventListener('change', function () { if (themeLoad() === 'auto') drawGrid(); });
+      mq.addEventListener('change', function () { if (themeNow === 'auto') drawGrid(); });
     }
   }
 
