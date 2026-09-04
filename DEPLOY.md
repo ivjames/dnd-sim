@@ -41,9 +41,12 @@ names, one per LLM platform the app can seat at the table:
 | `DEEPSEEK_API_KEY` | DeepSeek |
 | `SILICONFLOW_API_KEY` | SiliconFlow (international platform, `api.siliconflow.com`) — a host; seats are `siliconflow:<model id>` |
 | `DEEPINFRA_API_KEY` | DeepInfra — a host; seats are `deepinfra:<model id>` |
+| `AWS_ACCESS_KEY_ID` | Amazon Polly, which reads the game aloud — with `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` |
+| `AWS_SECRET_ACCESS_KEY` | the other half of the pair |
+| `AWS_REGION` | e.g. `us-east-1`; not a secret, but adopted with the pair because boto3 needs all three in the same file |
 
-(`CARTESIA_API_KEY`, also in the store, is text-to-speech, not an LLM platform,
-and is deliberately not a known key.) Any subset is fine. A seat configured for a platform whose key is missing
+(`CARTESIA_API_KEY`, also in the store, is a text-to-speech key this app does
+not use — narration is Polly — and is deliberately not a known key.) Any subset is fine. A seat configured for a platform whose key is missing
 fails at game creation with a message naming the variable — that is the app's
 behaviour, not the CLI's — and the other seats are unaffected. To adopt a key
 for a platform not in this list, set `DNDSIM_KEYS` (space-separated names) when
@@ -157,6 +160,16 @@ override the process environment pm2 provides.
 | `DEEPSEEK_API_KEY` | DeepSeek — optional; adopted the same way |
 | `SILICONFLOW_API_KEY` | SiliconFlow (international, `api.siliconflow.com`) — optional; adopted the same way; seats use `siliconflow:<id>` |
 | `DEEPINFRA_API_KEY` | DeepInfra — optional; adopted the same way; seats use `deepinfra:<id>` |
+| `AWS_ACCESS_KEY_ID` | Amazon Polly narration — optional; adopted the same way |
+| `AWS_SECRET_ACCESS_KEY` | ditto |
+| `AWS_REGION` | Polly region, e.g. `us-east-1`; adopted the same way. boto3 will not build a client without one |
+| `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
+| `DND_TTS_ENGINE` | `standard` — Polly engine. `neural`, `long-form` and `generative` are priced too, but the monster timbre effect (`vocal-tract-length`) and pitch control are standard-only |
+| `DND_TTS_LANG` | `en-US` — the language whose voices are cast from |
+| `DND_TTS_DM_VOICE` | `Brian` — the DM's own voice; everyone else is dealt out of the rest |
+| `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` — where synthesized clips live |
+| `DND_TTS_CACHE_MB` | `512` — ceiling; least-recently-played clips are dropped past it |
+| `DND_TTS_MAX_CHARS` | `400` — longest line the endpoint will synthesize (the browser chunks at 220) |
 | `DND_SIM_MOCK` | unset in production; `1` → `MockLLMClient`, zero API calls |
 | `DND_SIM_DB` | `/var/www/dndsim/data/dndsim.sqlite3` — SQLite transcript store |
 | `DND_SIM_EXAMPLES` | `./examples` — where `/api/presets` reads scenarios from |
@@ -206,6 +219,9 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 | wipe history | `pm2 stop dnd-sim`, delete `data/dndsim.sqlite3*`, `dndsim restart` |
 | tests | `.venv/bin/python -m pytest -q` |
 | cost safety | every game carries `budget_usd`; the orchestrator halts at `budget_exceeded`. When in doubt, `DND_SIM_MOCK=1`. |
+| narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.tts` in the ledger). A game's whole narration is a few cents at `standard`; `DND_TTS=0` removes it entirely. |
+| clip cache | `du -sh data/tts` — safe to delete wholesale; the next listen re-synthesizes and re-pays. |
+| voices sound wrong | `curl -s localhost:8071/api/tts` says whether Polly answered and which engine; `available:false` means the page is using each spectator's own browser voices. |
 
 ## Overrides
 
@@ -215,5 +231,5 @@ keys are adopted from, first hit wins; default
 `/etc/environment:/var/www/ffc/server/.env` — set it to just
 `/etc/environment` to stop the second file being consulted),
 `DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
-to adopt, report and unset for pm2; default is the eight known keys above —
+to adopt, report and unset for pm2; default is the eleven known keys above —
 setting it replaces the list, so include `ANTHROPIC_API_KEY`).

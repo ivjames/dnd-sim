@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from .client import LLMResponse
 
 __all__ = ["PRICES", "CACHE_READ_PRICES", "Ledger", "price_for", "has_price", "cache_read_price_for"]
@@ -187,11 +189,30 @@ def cache_read_price_for(model: str) -> float:
 
 
 class Ledger:
-    """Running USD/token totals, overall and per role."""
+    """Running USD/token totals, overall and per role.
+
+    Locked, because it is no longer written only by the game thread: spoken
+    narration is synthesized on a Flask request thread and charged here
+    (`add_usd`), so two writers can arrive at once. The lock covers the
+    mutation only; readers take a copy.
+    """
+
+    #: every counter a row carries, so `to_dict` can sum across rows that
+    #: count different things (tokens for a model, characters for a voice).
+    ROW = {"calls": 0, "in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "chars": 0}
 
     def __init__(self) -> None:
         self.total_usd: float = 0.0
         self.by_role: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def _row(self, role: str) -> dict:
+        row = self.by_role.get(role)
+        if row is None:
+            row = dict(self.ROW)
+            row["usd"] = 0.0
+            self.by_role[role] = row
+        return row
 
     def add(self, role: str, resp: LLMResponse) -> float:
         pin, pout = price_for(resp.model)
@@ -201,24 +222,43 @@ class Ledger:
             + resp.cache_read_tokens * cache_read_price_for(resp.model)
             + resp.cache_write_tokens * pin * CACHE_WRITE_MULT
         ) / 1_000_000.0
-        row = self.by_role.setdefault(
-            role,
-            {"calls": 0, "in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "usd": 0.0},
-        )
-        row["calls"] += 1
-        row["in"] += resp.input_tokens
-        row["out"] += resp.output_tokens
-        row["cache_read"] += resp.cache_read_tokens
-        row["cache_write"] += resp.cache_write_tokens
-        row["usd"] = round(row["usd"] + usd, 8)
-        self.total_usd = round(self.total_usd + usd, 8)
+        with self._lock:
+            row = self._row(role)
+            row["calls"] += 1
+            row["in"] += resp.input_tokens
+            row["out"] += resp.output_tokens
+            row["cache_read"] += resp.cache_read_tokens
+            row["cache_write"] += resp.cache_write_tokens
+            row["usd"] = round(row["usd"] + usd, 8)
+            self.total_usd = round(self.total_usd + usd, 8)
+        return usd
+
+    def add_usd(self, role: str, usd: float, **counters: int) -> float:
+        """Charge a cost that is not a model call — a priced-elsewhere service.
+
+        Used by the web layer for Polly narration (`role="tts"`,
+        `chars=<billed characters>`): it is real money the game spent, so it
+        belongs against the same `budget_usd` as the model calls rather than
+        in a second budget nobody is watching.
+        """
+        usd = float(usd or 0.0)
+        with self._lock:
+            row = self._row(role)
+            row["calls"] += 1
+            for name, n in counters.items():
+                row[name] = row.get(name, 0) + int(n)
+            row["usd"] = round(row["usd"] + usd, 8)
+            self.total_usd = round(self.total_usd + usd, 8)
         return usd
 
     def to_dict(self) -> dict:
+        with self._lock:
+            rows = {k: dict(v) for k, v in self.by_role.items()}
+            total = self.total_usd
         return {
-            "total_usd": round(self.total_usd, 6),
-            "by_role": {k: dict(v) for k, v in self.by_role.items()},
-            "calls": sum(v["calls"] for v in self.by_role.values()),
-            "input_tokens": sum(v["in"] for v in self.by_role.values()),
-            "output_tokens": sum(v["out"] for v in self.by_role.values()),
+            "total_usd": round(total, 6),
+            "by_role": rows,
+            "calls": sum(v.get("calls", 0) for v in rows.values()),
+            "input_tokens": sum(v.get("in", 0) for v in rows.values()),
+            "output_tokens": sum(v.get("out", 0) for v in rows.values()),
         }

@@ -131,6 +131,25 @@ class Database:
         finally:
             self._close(conn)
 
+    def add_cost(self, game_id: str, usd: float) -> None:
+        """Add to a game's running total, atomically.
+
+        `set_cost` writes what the caller worked out; this adds to what is
+        there. Spoken narration is charged from Flask request threads, where a
+        read-then-write would lose one spectator's clip against another's.
+        Only for games no process is running: a live game's total comes from
+        its `Ledger` on the next snapshot and would overwrite this.
+        """
+        conn = self.connect()
+        try:
+            conn.execute(
+                "UPDATE games SET cost_usd = COALESCE(cost_usd, 0) + ? WHERE id=?",
+                (float(usd), game_id),
+            )
+            conn.commit()
+        finally:
+            self._close(conn)
+
     def save_snapshot(
         self, game_id: str, snapshot: dict[str, Any], status: str | None = None,
         cost_usd: float | None = None,

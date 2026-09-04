@@ -7,8 +7,9 @@
 //   (the unset list is KNOWN_KEYS in bin/dndsim, plus GITHUB_TOKEN)
 //
 // The platform API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
-// XAI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY) are NOT set here and are
-// NOT inherited from the shell. They live in /var/www/dndsim/.env (mode 600,
+// XAI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY) and the AWS credentials
+// Polly narration uses (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION)
+// are NOT set here and are NOT inherited from the shell. They live in /var/www/dndsim/.env (mode 600,
 // gitignored), which `dndsim deploy` writes by copying each value out of
 // /etc/environment, and which run.sh sources before exec'ing python. pm2 is
 // deliberately launched with every known key unset so ~/.pm2/dump.pm2 never
@@ -35,6 +36,8 @@ module.exports = {
         PYTHONUNBUFFERED: '1',
         // DND_SIM_MOCK: '1',         // uncomment (or set in .env) to run without touching the API
         // DND_DM_MODEL / DND_PLAYER_MODEL / DND_SUMMARY_MODEL override the defaults
+        // DND_TTS: '0',              // no Polly narration; the browser's own voices instead
+        // DND_TTS_ENGINE / DND_TTS_REGION / DND_TTS_DM_VOICE / DND_TTS_CACHE_MB — see DEPLOY.md
       },
       out_file: '/var/log/pm2/dnd-sim.out.log',
       error_file: '/var/log/pm2/dnd-sim.err.log',

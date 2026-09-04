@@ -211,12 +211,82 @@ def db_file(tmp_path):
     return str(tmp_path / "test.sqlite3")
 
 
+class FakeTTS:
+    """The slice of `tts.PollyTTS` that `web/routes/tts.py` uses.
+
+    Records what it was asked for, so a test can tell a cache hit from a
+    synthesis — which is the difference between a clip that costs money and one
+    that does not.
+    """
+
+    def __init__(self, *, up: bool = True, fail: str = "", price: float = 4.0) -> None:
+        self.engine = "standard"
+        self.language = "en-US"
+        self.max_chars = 40
+        self.price_per_million = price
+        self.up = up
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+        self.clips: dict[str, bytes] = {}
+
+    def available(self) -> bool:
+        return self.up
+
+    def price_of(self, chars: int) -> float:
+        return max(0, int(chars)) * self.price_per_million / 1_000_000.0
+
+    def cast(self, key: str):
+        from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
+
+        return cast_for(key, STANDARD_ENGLISH, "Brian")
+
+    def cache_key_for(self, key: str, text: str):
+        from tts.cache import cache_key  # noqa: PLC0415
+
+        cast = self.cast(key)
+        return cast, cache_key(self.engine, cast.cache_key(), text)
+
+    def synthesize(self, key: str, text: str):
+        from tts.client import TTSError, TTSResult  # noqa: PLC0415
+
+        self.calls.append((key, text))
+        if self.fail:
+            raise TTSError(self.fail)
+        cast, ckey = self.cache_key_for(key, text)
+        if ckey in self.clips:
+            return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
+        audio = b"\xff\xfb" + text.encode("utf-8")
+        self.clips[ckey] = audio
+        return TTSResult(audio, cast, len(text), self.price_of(len(text)), False, ckey)
+
+
+@pytest.fixture()
+def tts():
+    return FakeTTS()
+
+
 @pytest.fixture()
 def app(db_file):
-    app = create_app(game_factory=fake_factory, db_path=db_file)
+    # Server voices off unless a test asks for them: `create_app` would
+    # otherwise build a real Polly service from whatever AWS variables happen
+    # to be in the environment running the suite.
+    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": None})
     app.config["TESTING"] = True
     yield app
     app.config["DND_REGISTRY"].shutdown()
+
+
+@pytest.fixture()
+def tts_app(db_file, tts):
+    app = create_app(game_factory=fake_factory, db_path=db_file, config={"DND_TTS": tts})
+    app.config["TESTING"] = True
+    yield app
+    app.config["DND_REGISTRY"].shutdown()
+
+
+@pytest.fixture()
+def tts_client(tts_app):
+    return tts_app.test_client()
 
 
 @pytest.fixture()

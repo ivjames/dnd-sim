@@ -473,12 +473,23 @@
   }
 
 
-  // ---------- narration playback (Web Speech API) ----------
+  // ---------- narration playback ----------
   // The selection + wording live in speech.js (pure, node-testable); this is
-  // the transport and the speechSynthesis glue. Designed around iPad Safari:
-  // speech only starts inside a user gesture, the voice list arrives late (or
-  // never fires voiceschanged), onend can go missing, and speak() right after
-  // cancel() is dropped — each of which has a line below.
+  // the transport and the glue to whichever engine is speaking.
+  //
+  // There are two. Server voices (Amazon Polly, rendered by /api/games/<id>/tts
+  // and played through one <audio> element) are the good ones and the default
+  // where the server has them. The browser's own speechSynthesis is the
+  // fallback, and it is a real fallback rather than a legacy path: it answers
+  // for a line the server refuses (no budget left, a mock game, a failed
+  // synthesis) and for a whole session where the server has no Polly at all.
+  // Which one spoke changes nothing above this layer — same playhead, same
+  // transport, same holds.
+  //
+  // Designed around iPad Safari: audio and speech both only start inside a
+  // user gesture (voiceUnlock arms BOTH, because the fallback is per line),
+  // the voice list arrives late (or never fires voiceschanged), onend can go
+  // missing, and speak() right after cancel() is dropped — each has a line below.
   //
   // The model is a PLAYHEAD, not a queue. `V.cursor` is an index into
   // `S.events`, the whole transcript in arrival order, and the narrator reads
@@ -490,6 +501,12 @@
   // holding it — see voiceHoldEval.
   var Speech = window.DndSpeech || null;
   var VOICE_RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
+  // 25 ms of nothing, played inside the tap that turns voice on. An <audio>
+  // element that has played once may be played again from script, which is the
+  // only way server clips ever sound on iOS.
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRuwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YcgAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+  var CLIP_KEEP = 8;        // fetched clips kept as object URLs (one line ahead, a few behind)
+  var CLIP_FAILS = 3;       // consecutive server failures before we stop asking
   var HOLD_HIGH = 3;        // unread speakable lines at which we ask the game to wait
   var HOLD_LOW = 1;         // ... and at which we let it go again (hysteresis)
   var HOLD_LEASE = 12;      // seconds asked for; the server caps it and it self-expires
@@ -510,8 +527,18 @@
   })();
 
   var V = {
-    supported: false,
-    synth: null,
+    supported: false,      // something here can speak: server voices, the browser's, or both
+    synth: null,           // speechSynthesis, where this browser has it
+    audio: null,           // the one <audio> element every server clip plays through
+    // Server voices. `available` is what /api/tts said; `degraded` is this
+    // page giving up on them for now — a settled refusal (no budget, a mock
+    // game) or three failures running — after which every line is spoken by
+    // the browser and the panel says so.
+    tts: { available: false, checked: false, engine: '', maxChars: 400,
+           degraded: false, fails: 0, reason: '' },
+    clips: {},             // clip URL → object URL, for what has been fetched
+    clipOrder: [],
+    gestureArmed: false,   // the document-level "first tap starts it" listener is on
     settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true },
     unlocked: false,       // a user gesture has started speech on this page
     playing: false,        // transport state: the spectator wants to hear it
@@ -533,6 +560,12 @@
   function pageHidden() { return typeof document !== 'undefined' && !!document.hidden; }
   // Backgrounded tabs suspend synthesis and hand back garbled audio, so the
   // playhead stops there too — but it stops, it does not move.
+  //
+  // Server-rendered clips have no such problem: an <audio> element keeps
+  // playing in a background tab, so this rule could be relaxed for them. It
+  // deliberately is not, because it is not only about garbling — a tab nobody
+  // is looking at goes on HOLDING the game for a narrator nobody is listening
+  // to. Relaxing it is a decision about the hold, not about the audio.
   function voiceArmed() {
     return V.supported && V.settings.enabled && V.unlocked && V.playing &&
            !V.loading && !pageHidden();
@@ -582,17 +615,95 @@
 
   function voiceRefreshVoices() {
     var list = [];
-    try { list = V.synth.getVoices() || []; } catch (e) { list = []; }
+    if (V.synth) { try { list = V.synth.getVoices() || []; } catch (e) { list = []; } }
     V.voices = list;
     V.profiles = {};
   }
   function voiceProfile(key) {
+    if (!V.synth) return { voice: null, pitch: 1, rate: 1, key: key };
     if (!V.voices.length) voiceRefreshVoices();    // Safari: no voiceschanged, voices just appear
     if (!V.profiles[key]) {
       var lang = document.documentElement.lang || navigator.language || 'en';
       V.profiles[key] = Speech.voiceProfileFor(key, V.voices, lang);
     }
     return V.profiles[key];
+  }
+
+  // ---- server voices ----
+  // Whether the next line should be asked of the server. A game id is part of
+  // it because the endpoint is per game: the budget a clip is charged against
+  // is that game's.
+  function ttsOn() {
+    return !!(V.tts.available && !V.tts.degraded && V.audio && S.gameId);
+  }
+
+  function ttsUrl(key, text) {
+    return '/api/games/' + encodeURIComponent(S.gameId) + '/tts' +
+           '?key=' + encodeURIComponent(key) + '&text=' + encodeURIComponent(text);
+  }
+
+  // Fetched clips are kept as object URLs so a line can be prefetched while
+  // the one before it plays — the gap between chunks is what makes synthesized
+  // narration sound like a machine reading rather than someone talking.
+  function clipKeep(url, obj) {
+    V.clips[url] = obj;
+    V.clipOrder.push(url);
+    while (V.clipOrder.length > CLIP_KEEP) {
+      var old = V.clipOrder.shift();
+      if (old === url || !V.clips[old]) continue;
+      try { URL.revokeObjectURL(V.clips[old]); } catch (e) { /* ignore */ }
+      delete V.clips[old];
+    }
+  }
+
+  function clipForget() {
+    Object.keys(V.clips).forEach(function (u) {
+      try { URL.revokeObjectURL(V.clips[u]); } catch (e) { /* ignore */ }
+    });
+    V.clips = {};
+    V.clipOrder = [];
+  }
+
+  // Resolves to a playable object URL. Rejects with `.status` set from the
+  // response, because which refusal it was decides whether to ask again.
+  function clipFetch(url) {
+    if (V.clips[url]) return Promise.resolve(V.clips[url]);
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (body) {
+          var msg = body;
+          try { msg = (JSON.parse(body) || {}).error || body; } catch (e) { /* not JSON */ }
+          var err = new Error(msg || ('HTTP ' + r.status));
+          err.status = r.status;
+          throw err;
+        });
+      }
+      return r.blob();
+    }).then(function (blob) {
+      var obj = URL.createObjectURL(blob);
+      clipKeep(url, obj);
+      return obj;
+    });
+  }
+
+  // Ask once, at start-up: can this server speak at all? A no is not an error
+  // — it is the browser's own voices being the answer, which is what they were
+  // before any of this existed.
+  function ttsProbe() {
+    return fetch('/api/tts', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (d) {
+        V.tts.checked = true;
+        if (!d || !d.available) {
+          V.tts.reason = (d && d.reason) || 'this server renders no voices';
+          return false;
+        }
+        V.tts.available = true;
+        V.tts.engine = d.engine || '';
+        V.tts.maxChars = Number(d.max_chars) || V.tts.maxChars;
+        return true;
+      });
   }
 
   // {id: true} for every party member: the snapshot's combatants with side
@@ -687,7 +798,8 @@
       }
       voiceSavePos();
     }
-    if (V.supported) { try { V.synth.cancel(); } catch (e) { /* ignore */ } }
+    audioDetach();
+    if (V.synth) { try { V.synth.cancel(); } catch (e) { /* ignore */ } }
   }
 
   // iOS drops a speak() issued synchronously after cancel(), so every transport
@@ -773,7 +885,8 @@
       }
       V.resumeChunk = null;
       var node = transcriptEl().querySelector('[data-seq="' + ev.seq + '"]');
-      var cur = { ev: ev, phrase: phrase, chunks: chunks, idx: idx, node: node, timer: null, utt: null };
+      var cur = { ev: ev, phrase: phrase, chunks: chunks, idx: idx, node: node,
+                  timer: null, utt: null, clip: null };
       V.current = cur;
       if (node) { node.classList.add('speaking'); voiceFollow(node); }
       voiceSavePos();
@@ -781,7 +894,8 @@
       // the snapshot that first names it, and every moment the line waits its
       // turn is a moment that fetch has to land.
       var ctx = voiceCtx();
-      voiceSpeakChunk(cur, voiceProfile(Speech.voiceKeyFor(ev, ctx.party, ctx.monsters)));
+      cur.vkey = Speech.voiceKeyFor(ev, ctx.party, ctx.monsters);
+      voiceSpeakChunk(cur);
       voiceRenderControls();
       return;
     }
@@ -789,7 +903,124 @@
     voiceRenderControls();
   }
 
-  function voiceSpeakChunk(cur, prof) {
+  // Speak the chunk the playhead is on, in whichever engine is answering.
+  // Both paths end at the same `voiceChunkDone`, so everything above here —
+  // the playhead, the transport, the holds, the read marks — is untouched by
+  // which one it was.
+  function voiceSpeakChunk(cur) {
+    // `cur.local` is set when a line has already fallen back: a line that
+    // changes voice halfway through sounds like two people reading it.
+    // A chunk over the server's cap would be refused, and a refusal counts
+    // toward giving up on the server entirely — so it is not even asked. The
+    // chunker caps at 220 and the server at 400, so this is only reachable on
+    // a server configured tighter than its client.
+    var over = cur.chunks[cur.idx].length > V.tts.maxChars;
+    if (ttsOn() && !cur.local && !over) voiceSpeakServer(cur);
+    else voiceSpeakLocal(cur, voiceProfile(cur.vkey));
+  }
+
+  // Let go of the audio element: its handlers are per chunk, and one left
+  // bound fires against a line that has moved on.
+  function audioDetach() {
+    var a = V.audio;
+    if (!a) return;
+    a.onended = null;
+    a.onerror = null;
+    try { a.pause(); } catch (e) { /* ignore */ }
+  }
+
+  // Advance within the line, or finish it. Guards against a stale callback:
+  // the utterance or clip that was in flight when the spectator skipped.
+  function voiceChunkDone(cur, token) {
+    if (V.current !== cur || cur.token !== token) return;
+    clearTimeout(cur.timer);
+    cur.idx++;
+    if (cur.idx < cur.chunks.length) { voiceSpeakChunk(cur); return; }
+    voiceFinishLine();
+  }
+
+  // ---- server voices: one clip, one <audio> element ----
+  function voiceSpeakServer(cur) {
+    var text = cur.chunks[cur.idx];
+    var url = ttsUrl(cur.vkey, text);
+    var token = cur.token = url + '#' + cur.idx;
+    clipFetch(url).then(function (src) {
+      if (V.current !== cur || cur.token !== token) return;   // skipped while it was in flight
+      // Three failures RUNNING is what gives up on the server; a clip that
+      // arrives clears the count, so three unlucky minutes an hour apart do not
+      // add up to a verdict.
+      V.tts.fails = 0;
+      V.tts.reason = '';
+      var audio = V.audio;
+      var done = function () { voiceChunkDone(cur, token); };
+      audio.onended = done;
+      audio.onerror = function () { voiceServerFailed(cur, null); };
+      // The per-actor rate is baked into the clip's SSML; this is the
+      // spectator's own slow/normal/fast, which must not cost a re-synthesis.
+      try { audio.playbackRate = VOICE_RATES[V.settings.rate] || 1; } catch (e) { /* ignore */ }
+      audio.src = src;
+      // Same watchdog reasoning as the browser path: a stalled element that
+      // never fires `ended` would park the playhead forever.
+      cur.timer = setTimeout(done, Math.max(4000, text.length * 110) + 4000);
+      var p = audio.play();
+      if (p && p['catch']) p['catch'](function () { voiceServerFailed(cur, null); });
+      ttsPrefetch(cur);
+    })['catch'](function (err) {
+      if (V.current !== cur || cur.token !== token) return;
+      voiceServerFailed(cur, err);
+    });
+  }
+
+  // A line the server would not or could not say. Say it in this browser's own
+  // voice rather than dropping it — a missed line is the one outcome the
+  // playhead exists to prevent — and decide whether to keep asking.
+  function voiceServerFailed(cur, err) {
+    audioDetach();
+    if (cur) clearTimeout(cur.timer);
+    var status = err && err.status;
+    var settled = status === 402 || status === 404 || status === 503;
+    if (settled) V.tts.fails = CLIP_FAILS;
+    else V.tts.fails += 1;
+    if (V.tts.fails >= CLIP_FAILS) {
+      V.tts.degraded = true;
+      V.tts.reason = (err && err.message) || 'server voices stopped answering';
+    }
+    if (V.current !== cur) { voiceRenderControls(); return; }
+    cur.local = true;
+    if (V.synth) {
+      voiceSpeakLocal(cur, voiceProfile(cur.vkey));
+    } else {
+      // Nothing else here can speak. Stop rather than run the playhead
+      // silently through the transcript.
+      voicePausePlayback();
+    }
+    voiceRenderControls();
+  }
+
+  // Fetch what comes next while this plays: the rest of this line, or the
+  // first chunk of the next line worth speaking.
+  function ttsPrefetch(cur) {
+    if (!ttsOn()) return;
+    var url = null;
+    if (cur.idx + 1 < cur.chunks.length) {
+      url = ttsUrl(cur.vkey, cur.chunks[cur.idx + 1]);
+    } else {
+      var at = indexOfSeq(cur.ev.seq);
+      var next = at < 0 ? null : S.events[voiceNextSpeakable(at + 1)];
+      var phrase = next ? voicePhrase(next) : null;
+      var chunks = phrase ? Speech.chunksFor(phrase) : [];
+      if (chunks.length) {
+        var ctx = voiceCtx();
+        url = ttsUrl(Speech.voiceKeyFor(next, ctx.party, ctx.monsters), chunks[0]);
+      }
+    }
+    // A prefetch that fails is not news: the real attempt will report it.
+    if (url) clipFetch(url)['catch'](function () { /* ignore */ });
+  }
+
+  // ---- the browser's own voices ----
+  function voiceSpeakLocal(cur, prof) {
+    if (!V.synth) { voicePausePlayback(); return; }
     var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
     var text = cur.chunks[cur.idx];
     var u = new SpeechSynthesisUtterance(text);
@@ -797,12 +1028,10 @@
     u.pitch = prof.pitch || 1;
     u.rate = rate;
     cur.utt = u;   // hold the reference: an unreferenced utterance can be GC'd mid-speech and never fire onend
+    var token = cur.token = 'utt#' + cur.idx;
     var done = function () {
-      if (V.current !== cur || cur.utt !== u) return;   // stale: skipped or cancelled
-      clearTimeout(cur.timer);
-      cur.idx++;
-      if (cur.idx < cur.chunks.length) { voiceSpeakChunk(cur, prof); return; }
-      voiceFinishLine();
+      if (cur.utt !== u) return;                        // stale: skipped or cancelled
+      voiceChunkDone(cur, token);
     };
     u.onend = done;
     u.onerror = done;     // not-allowed / synthesis-failed / interrupted: move on rather than stall
@@ -912,6 +1141,12 @@
     V.holdWanted = false;
     V.holdSentAt = 0;
     V.holdBroken = false;
+    // Clips are keyed by game id, so the old game's are dead weight; and a
+    // refusal belonged to that game's budget, not to this one's.
+    clipForget();
+    V.tts.degraded = false;
+    V.tts.fails = 0;
+    V.tts.reason = '';
     voiceCtxDirty();
     voiceRenderControls();
   }
@@ -956,13 +1191,31 @@
   function voiceUnlock() {
     if (V.unlocked || !V.supported) return;
     V.unlocked = true;
-    voiceRefreshVoices();
-    var u = new SpeechSynthesisUtterance('Voice on.');
-    var p = voiceProfile('dm');
-    if (p.voice) { u.voice = p.voice; u.lang = p.voice.lang || u.lang; }
-    V.heldUtt = u;
-    u.onend = u.onerror = function () { V.heldUtt = null; };
-    try { V.synth.speak(u); } catch (e) { /* ignore */ }
+    // Both engines, whichever is going to speak. The <audio> element needs to
+    // have played once inside a gesture before script may play it, and
+    // speechSynthesis needs to have spoken once — and since the server path
+    // falls back to the browser LINE BY LINE, arming only the one in use would
+    // make that fallback silent on exactly the devices that need it.
+    if (V.audio) {
+      try {
+        V.audio.src = SILENT_WAV;
+        var q = V.audio.play();
+        if (q && q['catch']) q['catch'](function () { /* nothing to hear anyway */ });
+      } catch (e) { /* ignore */ }
+    }
+    if (V.synth) {
+      voiceRefreshVoices();
+      var server = ttsOn();
+      var u = new SpeechSynthesisUtterance(server ? ' ' : 'Voice on.');
+      // With server voices answering, the confirmation is the first real line
+      // in a real voice; this utterance is only here to arm the fallback.
+      if (server) u.volume = 0;
+      var p = voiceProfile('dm');
+      if (p.voice) { u.voice = p.voice; u.lang = p.voice.lang || u.lang; }
+      V.heldUtt = u;
+      u.onend = u.onerror = function () { V.heldUtt = null; };
+      try { V.synth.speak(u); } catch (e) { /* ignore */ }
+    }
   }
 
   function voiceEnable() {
@@ -1054,6 +1307,16 @@
     badge.textContent = (behind >= BACKLOG_SCAN ? BACKLOG_SCAN + '+' : behind) +
       ' behind' + (V.holding ? ' · holding' : '');
 
+    var src = $('vt-src');
+    if (!V.settings.enabled || !V.tts.checked) {
+      src.hidden = true;
+    } else {
+      src.hidden = false;
+      src.textContent = ttsOn()
+        ? ('server voices' + (V.tts.engine ? ' · polly ' + V.tts.engine : ''))
+        : ("this browser's own voices" + (V.tts.reason ? ' — ' + V.tts.reason : ''));
+    }
+
     var now = voiceNowText();
     var el0 = $('vt-now');
     clear(el0);
@@ -1065,20 +1328,47 @@
     t.classList.toggle('has-playhead', on && behind > 0);
   }
 
-  function voiceInit() {
-    var synth = window.speechSynthesis;
-    if (!synth || typeof window.SpeechSynthesisUtterance !== 'function' || !Speech) {
-      console.info('dnd-sim: speechSynthesis unavailable; spoken narration hidden');
-      return;
-    }
-    V.supported = true;
-    V.synth = synth;
-    voiceLoadSettings();
+  function voiceShow() {
     $('voice').hidden = false;
     $('voice-panel').hidden = false;
-    voiceRefreshVoices();
-    if (typeof synth.addEventListener === 'function') synth.addEventListener('voiceschanged', voiceRefreshVoices);
-    else synth.onvoiceschanged = voiceRefreshVoices;
+  }
+
+  // The first tap anywhere starts playback, because that is the only moment a
+  // browser will let anything make a sound. Armed once, whichever engine ends
+  // up speaking.
+  function voiceArmGesture() {
+    if (V.gestureArmed || !V.settings.enabled) return;
+    V.gestureArmed = true;
+    var unlockOnce = function (e) {
+      var id = e && e.target && e.target.id;
+      if (id === 'voice-on' || id === 'vt-play' || id === 'vt-play2') return;  // those decide for themselves
+      document.removeEventListener('click', unlockOnce, true);
+      document.removeEventListener('touchend', unlockOnce, true);
+      if (V.settings.enabled && !V.unlocked) voicePlay();
+    };
+    document.addEventListener('click', unlockOnce, true);
+    document.addEventListener('touchend', unlockOnce, true);
+  }
+
+  function voiceInit() {
+    if (!Speech) {
+      console.info('dnd-sim: speech.js missing; spoken narration hidden');
+      return;
+    }
+    // Either engine on its own is enough to show the narration UI: a browser
+    // with no speechSynthesis (some Linux builds, locked-down kiosks) still
+    // plays audio, and a server with no Polly still has speechSynthesis.
+    var synth = window.speechSynthesis;
+    if (synth && typeof window.SpeechSynthesisUtterance === 'function') {
+      V.synth = synth;
+      V.supported = true;
+      voiceRefreshVoices();
+      if (typeof synth.addEventListener === 'function') synth.addEventListener('voiceschanged', voiceRefreshVoices);
+      else synth.onvoiceschanged = voiceRefreshVoices;
+    }
+    try { V.audio = new Audio(); V.audio.preload = 'auto'; } catch (e) { V.audio = null; }
+    voiceLoadSettings();
+    if (V.supported) voiceShow();
 
     $('voice-on').addEventListener('change', function () {
       if (this.checked) voiceEnable(); else voiceDisable();
@@ -1116,23 +1406,25 @@
       if (isFinite(seq)) voicePlayFromSeq(seq);
     });
 
-    if (V.settings.enabled) {
-      var unlockOnce = function (e) {
-        var id = e && e.target && e.target.id;
-        if (id === 'voice-on' || id === 'vt-play' || id === 'vt-play2') return;  // those decide for themselves
-        document.removeEventListener('click', unlockOnce, true);
-        document.removeEventListener('touchend', unlockOnce, true);
-        if (V.settings.enabled && !V.unlocked) voicePlay();
-      };
-      document.addEventListener('click', unlockOnce, true);
-      document.addEventListener('touchend', unlockOnce, true);
-    }
+    voiceArmGesture();
 
     window.addEventListener('pagehide', function () {
       voiceStopCurrent(false);
       voiceHoldStop();
     });
     voiceRenderControls();
+
+    // Asked once, and late on purpose: everything above works without an
+    // answer, and a browser that cannot speak for itself gets its narration
+    // panel only when the answer is yes.
+    ttsProbe().then(function (ok) {
+      if (ok && V.audio && !V.supported) {
+        V.supported = true;
+        voiceShow();
+        voiceArmGesture();
+      }
+      voiceRenderControls();
+    });
   }
 
   // ---------- stream ----------
