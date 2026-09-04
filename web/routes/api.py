@@ -246,10 +246,13 @@ def hold(game_id: str):
         seconds = float(raw)
     except (TypeError, ValueError):
         return _err("seconds must be a number")
+    # One lease per spectator: the loop waits for whoever is furthest behind,
+    # so a second tab catching up cannot cut short a first tab that is not.
+    client = str(body.get("client") or "")[:64]
     fn = getattr(entry.game, "hold", None)
     if not callable(fn):
         return _err("game does not support hold", 501)
-    granted = fn(seconds)
+    granted = fn(seconds, client)
     return jsonify({"id": game_id, "status": entry.status(), "holding": granted}), 202
 
 

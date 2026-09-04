@@ -269,7 +269,7 @@ GET  /api/games/<id>                    snapshot + config + ledger
 GET  /api/games/<id>/events?after=seq   history (from SQLite)
 GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>`; on connect replays history after ?after=, then live; heartbeat comment every 15s; on finish sends `event: end`
 POST /api/games/<id>/pause | /resume | /stop
-POST /api/games/<id>/hold   {"seconds"}  → 202 {"holding": <granted>}  narration lease; expires by itself, leaves status alone
+POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
@@ -788,9 +788,19 @@ Two changes, at the two ends of that gap.
      meaningful and the two never fight.
    - `stop()` releases it, so a held loop notices the stop immediately.
 
-   Exposed as `POST /api/games/<id>/hold {"seconds": n}` → `202 {"id",
-   "status", "holding": <seconds granted>}`. Non-numeric `seconds` is a 400;
-   a game not running in this process is a 409, as for the other controls.
+   - Leases are **per client** (`hold(seconds, client="")`), and the loop waits
+     for the longest outstanding. One global deadline would make every
+     spectator the last writer of everyone else's: a second tab catching up
+     and releasing would cut short a first tab that is still behind, and a
+     renewal in flight when another released would reinstate the hold.
+     `release(client)` drops one; `release_all()` drops every one, and is what
+     `stop()` calls. The table is bounded at `MAX_HOLD_CLIENTS = 64` — ids come
+     from callers, and leases expire, so evicting the soonest to go costs at
+     most that one lease.
+
+   Exposed as `POST /api/games/<id>/hold {"seconds": n, "client": id}` → `202
+   {"id", "status", "holding": <seconds granted>}`. Non-numeric `seconds` is a
+   400; a game not running in this process is a 409, as for the other controls.
    Unlike them it writes no snapshot — it is called every few seconds.
    `Game.snapshot()` gains `"holding": bool` so other spectators can see why a
    game is quiet.

@@ -261,13 +261,15 @@ body {
 }
 .mech.speaking { color: var(--ink); }
 
-/* the line the narrator has already read: a quiet playhead, so a spectator
-   coming back to the tab can see where they were */
-.transcript.has-playhead .narration,
-.transcript.has-playhead .dialogue,
-.transcript.has-playhead .scene,
-.transcript.has-playhead .dmnote { opacity: .55; }
-.transcript.has-playhead .unread { opacity: 1; }
+/* What the narrator has already read is dimmed, so a spectator coming back to
+   the tab can see where they were. Only while it is actually behind: caught up,
+   every line is read and dimming them all would say nothing. app.js marks the
+   nodes (`read`) as the playhead passes them. */
+.transcript.has-playhead .read.narration,
+.transcript.has-playhead .read.dialogue,
+.transcript.has-playhead .read.scene,
+.transcript.has-playhead .read.dmnote,
+.transcript.has-playhead .read.turn-head { opacity: .5; }
 .transcript.voice-clickable .narration,
 .transcript.voice-clickable .dialogue,
 .transcript.voice-clickable .scene,

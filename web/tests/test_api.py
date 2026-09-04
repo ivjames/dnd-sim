@@ -132,6 +132,19 @@ def test_hold_validates_and_caps(client, sample_config):
     assert client.post("/api/games/%s/hold" % gid, json={"seconds": 9999}).get_json()["holding"] == 30.0
 
 
+def test_hold_leases_are_per_client(client, sample_config):
+    gid = create(client, sample_config)["id"]
+    game = client.application.config["DND_REGISTRY"].get(gid).game
+    url = "/api/games/%s/hold" % gid
+
+    client.post(url, json={"seconds": 20, "client": "tab-a"})
+    client.post(url, json={"seconds": 20, "client": "tab-b"})
+    client.post(url, json={"seconds": 0, "client": "tab-b"})   # b caught up
+    assert game.hold_remaining() > 0                            # a is still behind
+    client.post(url, json={"seconds": 0, "client": "tab-a"})
+    assert game.hold_remaining() == 0
+
+
 def test_hold_on_an_unknown_or_dead_game(client, sample_config):
     assert client.post("/api/games/nope/hold", json={"seconds": 5}).status_code == 404
 

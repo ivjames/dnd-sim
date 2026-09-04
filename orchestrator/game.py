@@ -38,6 +38,7 @@ MAX_TURNS_PER_COMBAT = 400
 DEFAULT_BEATS_PER_SCENE = 2
 RECENT_EVENTS = 12
 MAX_HOLD_SECONDS = 30.0  # ceiling on one narration hold; see Game.hold
+MAX_HOLD_CLIENTS = 64  # distinct spectators that may hold at once; see Game.hold
 
 
 class _Stopped(Exception):
@@ -105,7 +106,7 @@ class Game:
         self._resume.set()
         self._stop = threading.Event()
         self._live = False  # run() has taken over; distinguishes created from running
-        self._hold_until = 0.0  # monotonic deadline of the current narration hold
+        self._holds: dict[str, float] = {}  # client id -> monotonic deadline of its hold
         self._hold_wake = threading.Event()  # poked so a hold ends the instant it is lifted
         self._notes: list[str] = []
         self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
@@ -139,9 +140,9 @@ class Game:
     def stop(self) -> None:
         self._stop.set()
         self._resume.set()  # release a paused loop so it can notice the stop
-        self.release()  # ... and a held one
+        self.release_all()  # ... and a held one, whoever is holding it
 
-    def hold(self, seconds: float = 0.0) -> float:
+    def hold(self, seconds: float = 0.0, client: str = "") -> float:
         """Ask the loop to wait `seconds` before emitting anything further.
 
         A *lease*, not a pause: it expires on its own, so a spectator whose
@@ -150,6 +151,13 @@ class Game:
         `release()`) to lift it now. Deliberately does not touch `status` —
         holding is the narration keeping step, not the table pausing, and the
         two must stay separately controllable. Returns the seconds granted.
+
+        Leases are held **per client**, and the loop waits for the longest one
+        outstanding. One global deadline would make every spectator the last
+        writer of everyone else's: a second tab catching up and releasing would
+        cut short a first tab that is still behind, and a renewal in flight
+        when another released would put the hold back on. Whoever is furthest
+        behind sets the pace, which is what a shared table means.
         """
         try:
             secs = float(seconds)
@@ -158,19 +166,39 @@ class Game:
         if secs != secs:  # NaN compares false against everything, min/max included
             secs = 0.0
         secs = max(0.0, min(secs, MAX_HOLD_SECONDS))
+        key = str(client or "")[:64]
+        now = time.monotonic()
         with self._lock:
-            self._hold_until = (time.monotonic() + secs) if secs else 0.0
+            for k in [k for k, v in self._holds.items() if v <= now]:
+                del self._holds[k]
+            if secs:
+                # Bounded: a client id is whatever a caller sent, so a stream of
+                # fresh ones must not grow this without limit. Leases expire, so
+                # dropping the soonest to go costs at most that one lease.
+                if key not in self._holds and len(self._holds) >= MAX_HOLD_CLIENTS:
+                    del self._holds[min(self._holds, key=self._holds.get)]
+                self._holds[key] = now + secs
+            else:
+                self._holds.pop(key, None)
         self._hold_wake.set()
         return secs
 
-    def release(self) -> None:
-        """Lift any narration hold immediately."""
-        self.hold(0.0)
+    def release(self, client: str = "") -> None:
+        """Lift one client's narration hold immediately."""
+        self.hold(0.0, client)
+
+    def release_all(self) -> None:
+        """Lift every narration hold immediately (the game is going away)."""
+        with self._lock:
+            self._holds.clear()
+        self._hold_wake.set()
 
     def hold_remaining(self) -> float:
+        """Seconds until the longest outstanding lease expires; 0 if none."""
+        now = time.monotonic()
         with self._lock:
-            until = self._hold_until
-        return max(0.0, until - time.monotonic())
+            deadlines = list(self._holds.values())
+        return max([d - now for d in deadlines] + [0.0])
 
     def join(self, timeout: float | None = None) -> None:
         if self._thread is not None:

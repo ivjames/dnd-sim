@@ -494,6 +494,19 @@
   var HOLD_LEASE = 12;      // seconds asked for; the server caps it and it self-expires
   var HOLD_TICK = 4000;     // renewal interval, comfortably inside the lease
   var BACKLOG_SCAN = 400;   // cap the count: the badge only needs "lots"
+  // This tab's hold lease. Per tab, not per browser: two tabs on one game are
+  // two listeners at different places in it, and the server waits for whichever
+  // is furthest behind. sessionStorage keeps the id across a reload of *this*
+  // tab, so a reload renews its own lease instead of stranding one to expire.
+  var CLIENT_ID = (function () {
+    var k = 'dndsim.client', id = null;
+    try { id = sessionStorage.getItem(k); } catch (e) { /* private mode */ }
+    if (!id) {
+      id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      try { sessionStorage.setItem(k, id); } catch (e) { /* ignore */ }
+    }
+    return id;
+  })();
 
   var V = {
     supported: false,
@@ -501,6 +514,7 @@
     settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true },
     unlocked: false,       // a user gesture has started speech on this page
     playing: false,        // transport state: the spectator wants to hear it
+    loading: false,        // a game's history is being replayed; the playhead is not placed yet
     cursor: 0,             // index into S.events of the line to read next
     current: null,         // { ev, chunks, idx, node, timer, utt }
     resumeChunk: null,     // { seq, idx }: pick a part-read line up where it stopped
@@ -517,7 +531,8 @@
   // Backgrounded tabs suspend synthesis and hand back garbled audio, so the
   // playhead stops there too — but it stops, it does not move.
   function voiceArmed() {
-    return V.supported && V.settings.enabled && V.unlocked && V.playing && !pageHidden();
+    return V.supported && V.settings.enabled && V.unlocked && V.playing &&
+           !V.loading && !pageHidden();
   }
   function voiceUsable() { return V.supported && V.settings.enabled; }
 
@@ -541,7 +556,12 @@
   function voicePosKey() { return S.gameId ? 'dndsim.pos.' + S.gameId : null; }
   function voiceSavePos() {
     var k = voicePosKey();
-    if (!k) return;
+    // Never while loading: the replay would overwrite the very position
+    // voiceStartAt is about to read back, and file the top of the transcript
+    // as where this spectator was. Never with an empty transcript either:
+    // "position 0 of a game we hold no events for" is not a place anyone was,
+    // and writing it would send that game back to its first line.
+    if (!k || V.loading || !S.events.length) return;
     var ev = S.events[V.cursor];
     var seq = ev ? ev.seq : (S.lastSeq + 1);
     try { localStorage.setItem(k, String(seq)); } catch (e) { /* ignore */ }
@@ -592,6 +612,22 @@
     return V.ctx;
   }
   function voiceCtxDirty() { V.ctx = null; }
+
+  // The transcript dims what the narrator has already read, so a spectator
+  // coming back to the tab can see where they were. Marked one node at a time
+  // as the playhead advances; a jump (back, live, a click, a game load) moves
+  // it arbitrarily, so those resync the lot.
+  function voiceMarkRead(node) { if (node) node.classList.add('read'); }
+
+  function voiceResyncRead() {
+    var at = S.events[V.cursor];
+    var upto = at ? at.seq : Infinity;   // cursor past the end: everything is read
+    var nodes = transcriptEl().querySelectorAll('[data-seq]');
+    for (var i = 0; i < nodes.length; i++) {
+      var seq = Number(nodes[i].getAttribute('data-seq'));
+      nodes[i].classList.toggle('read', isFinite(seq) && seq < upto);
+    }
+  }
 
   function voicePhrase(ev) {
     if (!ev || !Speech.shouldSpeak(ev, V.settings)) return null;
@@ -659,6 +695,7 @@
     if (!voiceUsable()) return;
     if (V.current) voiceStopCurrent(true);
     else { V.cursor = voiceNextSpeakable(V.cursor + 1); V.resumeChunk = null; voiceSavePos(); }
+    voiceResyncRead();
     voiceRenderControls();
     voiceRepump();
   }
@@ -671,6 +708,7 @@
     var prev = voicePrevSpeakable(from - 1);
     if (prev !== null) V.cursor = prev;
     voiceSavePos();
+    voiceResyncRead();
     voiceRenderControls();
     voiceRepump();
   }
@@ -681,6 +719,7 @@
     V.resumeChunk = null;
     V.cursor = S.events.length;
     voiceSavePos();
+    voiceResyncRead();
     voiceHoldRelease();
     voiceRenderControls();
     voiceRepump();
@@ -695,6 +734,7 @@
     V.resumeChunk = null;
     V.cursor = i;
     voiceSavePos();
+    voiceResyncRead();
     voicePlay();
     voiceRepump();
   }
@@ -773,7 +813,7 @@
     var cur = V.current;
     if (!cur) return;
     clearTimeout(cur.timer);
-    if (cur.node) cur.node.classList.remove('speaking');
+    if (cur.node) { cur.node.classList.remove('speaking'); voiceMarkRead(cur.node); }
     V.current = null;
     V.cursor++;
     V.resumeChunk = null;
@@ -825,7 +865,8 @@
     if (!S.gameId) return;
     if (seconds > 0) V.holding = true;
     var id = S.gameId;
-    api('/api/games/' + encodeURIComponent(id) + '/hold', { method: 'POST', body: { seconds: seconds } })
+    api('/api/games/' + encodeURIComponent(id) + '/hold',
+        { method: 'POST', body: { seconds: seconds, client: CLIENT_ID } })
       .catch(function () {
         // 404/409/501: this game cannot be held (ended, restarted, or served by
         // another process). Stop asking; the narrator just runs behind.
@@ -835,8 +876,12 @@
 
   // ---- lifecycle ----
   // Switching games: silence, and start at the saved playhead if there is one.
+  // Called while the outgoing game is still S.gameId, so the playhead is saved
+  // and the lease released against the game they belong to.
   function voiceReset() {
     voiceStopCurrent(false);
+    voiceHoldStop();
+    V.loading = true;   // until voiceStartAt places the playhead in the new game
     V.resumeChunk = null;
     V.cursor = 0;
     V.holding = false;
@@ -857,6 +902,9 @@
     }
     V.cursor = i < 0 ? S.events.length : i;
     V.resumeChunk = null;
+    V.loading = false;   // the history is on screen and the playhead is placed
+    voiceSavePos();
+    voiceResyncRead();
     voiceRenderControls();
     voicePump();
   }
@@ -1131,11 +1179,16 @@
   // ---------- game selection ----------
   function selectGame(id) {
     if (!id) return;
+    // Leave the game we are on before taking on the next one's identity.
+    // voiceSavePos() and the hold both key on S.gameId, so reassigning it first
+    // would file the outgoing playhead under the incoming game — and with the
+    // transcript already cleared it files seq 0, which would make the new game
+    // replay from its first line — and would leave the old game held.
+    voiceReset();
     S.gameId = id;
     S.activeId = null;
     S.status = 'idle';   // clears the terminal latch: a different game may be live
     resetTranscript();
-    voiceReset();
     S.snapshot = null;
     S.game = null;
     ctlNote('');
@@ -1153,7 +1206,11 @@
         else { setConn('ended (' + S.status + ')', 'conn-off'); voiceOnGameEnd(); }
         startPolling();
       })
-      .catch(function (e) { ctlNote('load failed: ' + e.message, true); });
+      .catch(function (e) {
+        V.loading = false;
+        voiceRenderControls();
+        ctlNote('load failed: ' + e.message, true);
+      });
   }
 
   function startPolling() {

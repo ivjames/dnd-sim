@@ -379,10 +379,58 @@ def test_hold_is_capped_and_renewable(cfg):
     assert game.hold_remaining() <= first
 
 
+def test_holds_are_per_client(cfg):
+    """One tab catching up must not cut short a tab that is still behind.
+
+    A single global deadline would make every spectator the last writer of
+    everyone else's lease: b releasing would end a's hold, and a renewal in
+    flight when the other released would put it back on.
+    """
+    game, _ = make_game(cfg)
+    game.hold(20, "a")
+    game.hold(20, "b")
+    assert game.hold_remaining() > 0
+
+    game.release("b")               # b caught up; a is still behind
+    assert game.hold_remaining() > 0
+
+    game.release("a")               # now nobody is holding
+    assert game.hold_remaining() == 0
+
+    # A late renewal from b cannot reinstate a hold a has released...
+    game.hold(20, "b")
+    assert game.hold_remaining() > 0
+    game.release("b")
+    assert game.hold_remaining() == 0
+
+
+def test_hold_waits_for_the_longest_lease(cfg):
+    game, _ = make_game(cfg)
+    game.hold(2, "short")
+    game.hold(25, "long")
+    assert game.hold_remaining() > 20     # the one furthest behind sets the pace
+    game.release("long")
+    assert 0 < game.hold_remaining() <= 2
+
+
+def test_hold_clients_are_bounded(cfg):
+    """Client ids come from callers, so a stream of fresh ones must not grow
+    the lease table without limit."""
+    game, _ = make_game(cfg)
+    for i in range(game_mod.MAX_HOLD_CLIENTS * 2):
+        game.hold(20, "client-%d" % i)
+    assert len(game._holds) <= game_mod.MAX_HOLD_CLIENTS
+    assert game.hold_remaining() > 0
+    game.release_all()
+    assert game.hold_remaining() == 0
+    assert game._holds == {}
+
+
 def test_stop_releases_a_held_loop(cfg):
     cfg.tempo_ms = 0
     game, _ = make_game(cfg)
-    game.hold(20)
+    game.hold(20, "a")
+    game.hold(20, "b")
     game.start()
     time.sleep(0.1)
     game.stop()

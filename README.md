@@ -256,15 +256,25 @@ minutes ahead of what you are hearing. **hold the game for the narrator** (on
 by default) fixes that from the listening end: while the narrator is more than
 a few lines behind, the page asks the game to wait.
 
-That ask is `POST /api/games/<id>/hold {"seconds": n}` — a renewable *lease*,
-not a pause. It expires by itself, so a tab that is closed mid-hold costs the
-game a few seconds rather than freezing it for good; the page renews it every
-4 s while it is behind and drops it the moment it catches up, when the tab goes
-to the background, or when the game ends. It deliberately leaves `status`
-alone: holding is the narration keeping step, the table's own pause is
-something else, and the two stay separately controllable. The other half of the
-fix is upstream — the DM's word ceilings (`agents/dm.py`) are a *listening*
-budget, roughly 150 words a minute of speech, not just a token budget.
+That ask is `POST /api/games/<id>/hold {"seconds": n, "client": id}` — a
+renewable *lease*, not a pause. It expires by itself, so a tab that is closed
+mid-hold costs the game a few seconds rather than freezing it for good; the
+page renews it every 4 s while it is behind and drops it the moment it catches
+up, when the tab goes to the background, or when the game ends. It deliberately
+leaves `status` alone: holding is the narration keeping step, the table's own
+pause is something else, and the two stay separately controllable.
+
+Leases are per spectator, and the game waits for the longest one outstanding.
+One shared deadline would make every spectator the last writer of everyone
+else's: a second tab catching up and releasing would cut short a first tab that
+is still behind, and a renewal in flight when another released would put the
+hold back on. Whoever is furthest behind sets the pace, which is what a shared
+table means. The id is per *tab*, kept in `sessionStorage`, so a reload renews
+its own lease rather than stranding one to expire.
+
+The other half of the fix is upstream — the DM's word ceilings
+(`agents/dm.py`) are a *listening* budget, roughly 150 words a minute of
+speech, not just a token budget.
 
 This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
 the device and it costs nothing, so voice quality is whatever the OS ships.
