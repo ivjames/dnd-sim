@@ -3,12 +3,15 @@
     harvest   search the libraries for every cue and write candidates.json,
               then bake the picker page
     picker    rebuild the page from an existing candidates.json
-    fetch     download a picked config into assets/ + manifest.json + CREDITS.md
+    fetch     download a picked config into assets/ + manifest.json + CREDITS.md,
+              and normalise what it downloaded where ffmpeg is installed
+    normalize re-run that levelling over an already-fetched directory
     verify    re-hash a fetched directory against its manifest
     cues      print the cue table (--json for the machine-readable form)
 
-Everything writes under `audio/` unless told otherwise; that directory is
-gitignored, so nothing here can drag a 40 MB loop into the repo by accident.
+Everything writes under `audio/` unless told otherwise. What lands there is
+tracked apart from the two build artefacts — see AUDIO.md, which also carries
+the licence rules and the levelling profiles.
 """
 
 from __future__ import annotations
@@ -41,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--required", action="store_true", help="only the required cues")
     h.add_argument("--per-query", type=int, default=8, help="results per search term (default 8)")
     h.add_argument("--source", action="append", default=[],
-                   help="limit to a source: freesound, jamendo, archive (repeatable)")
+                   help="limit to a source: freesound, jamendo, incompetech, archive (repeatable)")
     h.add_argument("--no-picker", action="store_true", help="do not rebuild picker.html")
 
     p = sub.add_parser("picker", help="rebuild picker.html from candidates.json")
@@ -54,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--allow", default="", help="extra licence codes to accept, comma-separated")
     f.add_argument("--force", action="store_true", help="re-download files already present")
     f.add_argument("--dry-run", action="store_true", help="validate and list, download nothing")
+    f.add_argument("--no-normalize", action="store_true",
+                   help="keep the files exactly as downloaded (default is to level them)")
+
+    n = sub.add_parser("normalize", help="level and re-encode what a manifest names")
+    _add_common(n)
+    n.add_argument("--force", action="store_true",
+                   help="redo files already carrying the current profile")
 
     v = sub.add_parser("verify", help="check a fetched directory against its manifest")
     _add_common(v)
@@ -71,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_picker(args)
     if args.cmd == "fetch":
         return _cmd_fetch(args)
+    if args.cmd == "normalize":
+        return _cmd_normalize(args)
     if args.cmd == "verify":
         return _cmd_verify(args)
     return 2
@@ -145,11 +157,29 @@ def _cmd_fetch(args) -> int:
                       headers={"User-Agent": "dnd-sim-audio-sourcing/1"}) as client:
         manifest = F.fetch_all(doc, args.out, client=client, force=args.force)
     F.write_manifest(manifest, args.out)
+
+    if not args.no_normalize:
+        from . import normalize as N
+        if N.have_ffmpeg():
+            manifest = N.normalize_manifest(args.out)
+        else:
+            print("ffmpeg not on PATH — files kept as downloaded, so levels will "
+                  "not match between cues (see AUDIO.md)", file=sys.stderr)
     F.write_credits(manifest, args.out)
+
     got = len(manifest["cues"])
     want = len(F.plan(doc))
     print(f"{got}/{want} cues fetched into {args.out}; manifest.json and CREDITS.md written")
     return 0 if got == want else 1
+
+
+def _cmd_normalize(args) -> int:
+    from . import normalize as N
+    if not N.have_ffmpeg():
+        print("ffmpeg and ffprobe are not on PATH; nothing to do", file=sys.stderr)
+        return 2
+    N.normalize_manifest(args.out, force=args.force)
+    return 0
 
 
 def _cmd_verify(args) -> int:

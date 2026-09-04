@@ -12,7 +12,8 @@ export JAMENDO_CLIENT_ID=...            # optional, for full-length music
 .venv/bin/python -m tools.audio harvest # search every cue → audio/candidates.json + picker.html
 open audio/picker.html                  # audition, assign, tune, Copy configuration
 # save what you copied as audio/config.json
-.venv/bin/python -m tools.audio fetch   # download → audio/assets/, manifest.json, CREDITS.md
+.venv/bin/python -m tools.audio fetch   # download → audio/assets/, manifest.json, CREDITS.md,
+                                        # levelled with ffmpeg where you have it
 .venv/bin/python -m tools.audio verify  # re-hash what was fetched
 ```
 
@@ -21,9 +22,9 @@ open audio/picker.html                  # audition, assign, tune, Copy configura
 deploy hard-resets the checkout from git and anything untracked would not
 survive one. Only two build artefacts are ignored — `candidates.json` (a search
 dump) and `picker.html` (generated from it), both re-made by one `harvest`.
-Budget for it: a five-minute music bed off incompetech is ~10 MB at source
-quality, so a full 55-cue set is a hundred-odd megabytes unless it is
-re-encoded on the way in (see "What this deliberately does not do").
+That makes size a real cost, which is half of why `fetch` re-encodes: a
+five-minute bed off incompetech is ~10 MB as published and about a fifth of
+that afterwards.
 
 ## Where the audio comes from
 
@@ -91,6 +92,40 @@ it stands.
 
 Nothing here touches game *content* licensing: SRD 5.1 (CC-BY-4.0) still governs
 what the rules engine knows, and audio licences are a separate obligation.
+
+## Levelling
+
+Fifty-five cues pulled from four libraries do not match each other. One sting
+is 12 dB hotter than the next, a Freesound clip carries 300 ms of silence
+before the hit so it fires late, and the beds are large. Setting a gain per cue
+by ear is a worse version of measuring, and it fixes neither of the other two —
+so `fetch` measures and re-encodes, with the numbers `sheep` arrived at by
+auditioning the results:
+
+| Group | What happens |
+|---|---|
+| music, ambience (`bed-v1`) | EBU R128 loudnorm to **-16 LUFS**, true peak **-1.5 dB**, LRA 11; 44.1 kHz stereo, VBR MP3 (`-q:a 6`, ~115 kbps) |
+| stings, swells, effects (`oneshot-v1`) | silence trimmed off both ends at -50 dB, peak normalised to **-0.7 dBFS**, **8 ms** edge fades, mono 64 kbps |
+
+Two details worth knowing. Beds are levelled in **two passes** — measure, then
+apply the measurement — because single-pass `loudnorm` runs in dynamic mode and
+compresses to hit the target, which is an effect applied to the score rather
+than a level change; the second pass is linear, one constant gain. One-shots
+are peak-normalised instead, because a half-second sting has no meaningful
+integrated loudness, and the 8 ms fades are what stop a trimmed edge clicking.
+The peak lands a few tenths of a dB off target after encoding, since it is
+measured before the MP3 stage.
+
+This needs **ffmpeg** on PATH. It is not a dependency of this repo and nothing
+else here wants it: without it, `fetch` says so and keeps the files exactly as
+downloaded. `fetch --no-normalize` opts out where you have it; `python -m
+tools.audio normalize` runs it over a directory fetched earlier.
+
+Processing is destructive, and the manifest records it — each entry gains a
+`normalized` block naming the profile, so a second run is a no-op rather than a
+second generation of lossy encoding. Bump the version in a profile's `id` when
+you change its numbers and the next run will redo the files. To get an original
+back: `fetch --force --no-normalize`.
 
 ## Quality and the preview caveat
 
@@ -206,14 +241,8 @@ redone.
   handoff point; wiring it into the spectator UI is a separate change with its
   own decisions (per-viewer volume, ducking under the narration voice, whether
   beds cross-fade on the client or a mixer runs server-side).
-- **No transcoding, normalising or trimming of the files.** The knobs are
-  recorded as intent, not applied — no ffmpeg dependency, and a player can honour
-  them at runtime. This is the open question, and `sheep` answered it the other
-  way: it normalised music to −16 LUFS (EBU R128, true peak −1.5 dB) at ~100 kbps
-  VBR, and effects to −0.7 dBFS peak with 8 ms edge fades, silence-trimmed, mono
-  64 kbps. Fifty-five cues pulled from four libraries will not match each other
-  in loudness, and a per-cue gain set by ear is a worse version of the same fix
-  — with the added benefit that re-encoding is what keeps the committed set from
-  being a couple of hundred megabytes.
+- **The playback knobs are still intent, not baked in.** Levelling is applied
+  to the file; `gain_db`, `loop`, the fades and the trim points recorded per cue
+  are for a player to honour at runtime, and nothing applies them yet.
 - **No original-quality Freesound downloads.** That needs the OAuth2 flow;
   previews are what is fetched.

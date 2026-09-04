@@ -158,7 +158,10 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
 - **Audio is sourced, not yet played.** `tools/audio/` (docs: `AUDIO.md`) is a
   dev tool — cue table, library search, a self-contained picker page, a fetcher
   that writes `audio/manifest.json` + `CREDITS.md`. It sits outside the layering
-  and nothing on the runtime path imports it. The picked audio, manifest and
+  and nothing on the runtime path imports it. `fetch` levels what it downloads
+  where **ffmpeg** is on PATH (beds to -16 LUFS, one-shots trimmed and peaked to
+  -0.7 dBFS, both re-encoded); ffmpeg is not a dependency and its absence only
+  means the files are kept as downloaded. The picked audio, manifest and
   credits are **committed** (a deploy hard-resets the checkout, so untracked
   files would not survive); only `audio/candidates.json` and `audio/picker.html`
   are ignored, both re-made by one `harvest`. The cue

@@ -365,7 +365,9 @@ cues — two of those need no key at all —
 `audio/picker.html` is a self-contained preview screen you audition and assign
 in, and `python -m tools.audio fetch` turns what you picked into files, a
 `manifest.json` carrying each cue's event-match rule, and a `CREDITS.md`. Only
-public-domain and attribution licences pass the gate.
+public-domain and attribution licences pass the gate, and what is fetched is
+levelled to a common loudness where **ffmpeg** is installed (optional; without
+it the files are kept as downloaded).
 
 Nothing plays yet: no event currently makes a sound, and neither `web/` nor
 `orchestrator/` imports any of it. The manifest is the handoff point. Full
