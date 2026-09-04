@@ -122,12 +122,16 @@ def test_a_clip_is_charged_to_the_game_that_played_it(tts_app, tts_client, tts, 
     assert tts_client.get(speak_url(game, text=text)).status_code == 200
     led = entry.game.ledger.to_dict()
     row = led["by_role"]["narrator"]
-    assert row["chars"] == len(text) and row["calls"] == 1
+    assert row["chars"] == len(text) and row["clips"] == 1
     assert led["total_usd"] == pytest.approx(len(text) * 4.0 / 1_000_000, rel=1e-6)
+
+    # Narration is not a model call and must not be counted as one: the
+    # orchestrator's end-of-game line reports this figure as "model calls".
+    assert row["calls"] == 0 and led["calls"] == 0
 
     # A cache hit costs nothing, so it is charged nothing.
     assert tts_client.get(speak_url(game, text=text)).status_code == 200
-    assert entry.game.ledger.by_role["narrator"]["calls"] == 1
+    assert entry.game.ledger.by_role["narrator"]["clips"] == 1
 
 
 def test_narration_stops_at_the_budget(tts_app, tts_client, tts, game):

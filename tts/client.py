@@ -124,7 +124,7 @@ class PollyTTS:
         self._client_tried = client is not None
         self._voices: dict[str, tuple[Voice, ...]] = {}   # per engine
         self._lock = threading.Lock()
-        self._inflight: dict[str, threading.Lock] = {}
+        self._inflight: dict[str, tuple[threading.Lock, int]] = {}   # gate, holders+waiters
 
     # -- price ---------------------------------------------------------------
 
@@ -212,8 +212,11 @@ class PollyTTS:
         if str(engine or self.engine) != "standard":
             return ()
         prefix = self.language.split("-")[0].lower()
-        pool = tuple(v for v in STANDARD_ENGLISH if v.language.lower().startswith(prefix))
-        return pool or STANDARD_ENGLISH
+        # And English, which is the other half of what its name says. Reading
+        # French with an English voice is not a degraded narrator, it is a
+        # wrong one — and the capability probe would report it as working. No
+        # roster is the honest answer, as it is for the other engines.
+        return tuple(v for v in STANDARD_ENGLISH if v.language.lower().startswith(prefix))
 
     def _describe(self, engine: str = "") -> tuple[Voice, ...]:
         client = self.client()
@@ -298,15 +301,24 @@ class PollyTTS:
         have the second refused for a clip the first is about to make free.
         """
         with self._lock:
-            gate = self._inflight.setdefault(ckey, threading.Lock())
+            gate, waiting = self._inflight.get(ckey) or (threading.Lock(), 0)
+            self._inflight[ckey] = (gate, waiting + 1)
         try:
             with gate:
                 yield
         finally:
-            # Whether it worked or not: a gate left behind is a slow leak of
-            # one lock per distinct line the game ever speaks.
+            # Reference-counted, not simply popped. Retiring the entry while a
+            # queued holder still owns that lock lets the next arrival mint a
+            # SECOND lock and render alongside them — which, now that the
+            # budget reservation happens in here, is a duplicate charge or a
+            # 402 that ends server voices for the game. It still cannot be left
+            # behind: one lock per distinct line ever spoken is a slow leak.
             with self._lock:
-                self._inflight.pop(ckey, None)
+                gate_now, waiting = self._inflight.get(ckey) or (gate, 1)
+                if waiting <= 1:
+                    self._inflight.pop(ckey, None)
+                else:
+                    self._inflight[ckey] = (gate_now, waiting - 1)
 
     def render(self, key: str, text: str, gender: str = "") -> TTSResult:
         """Synthesize unconditionally, and cache it.

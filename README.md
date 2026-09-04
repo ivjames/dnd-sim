@@ -361,10 +361,12 @@ rendered on another; each engine keeps its own voice roster, its own cached
 clips and its own rate in the ledger. Set the two equal for one engine
 throughout.
 
-One thing the neural default costs: the built-in fallback roster is standard's,
-so if `DescribeVoices` cannot be reached the table has nothing to cast from and
-the page falls back to the browser's voices. Under a standard default that call
-failing was survivable.
+One thing the neural default costs: the built-in fallback roster is standard's
+and English's, so if `DescribeVoices` cannot be reached the table has nothing to
+cast from and the page falls back to the browser's voices. Under a standard,
+English default that call failing was survivable. It is deliberate in both
+directions — a French line read by an English voice is not a degraded narrator
+but a wrong one, and the probe would report it as working.
 
 ### What it costs
 

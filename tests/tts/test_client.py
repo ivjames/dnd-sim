@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import threading
+import time
 
 import pytest
 
@@ -374,3 +375,69 @@ def test_the_two_engines_have_their_own_rosters(tmp_path):
 
     assert svc.cast("monster:goblin_1").voice_id in {"Joanna", "Geraint"}
     assert svc.cast("pc_1").voice_id in {"Joanna", "Arthur"}
+
+
+def test_no_roster_beats_the_wrong_one(tmp_path):
+    """The built-in roster is standard's AND English's.
+
+    Reading French with an English voice is not a degraded narrator, it is a
+    wrong one — and the capability probe would report it as working.
+    """
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), engine="standard",
+                   monster_engine="standard", language="fr-FR")
+    svc._client_tried = True                      # DescribeVoices cannot be reached
+    assert svc.voices() == ()
+
+    english = PollyTTS(AudioCache(str(tmp_path), 0), engine="standard",
+                       monster_engine="standard", language="en-GB")
+    english._client_tried = True
+    assert {v.language for v in english.voices()} <= {
+        "en-GB", "en-GB-WLS", "en-US", "en-AU", "en-IN"}
+    assert english.voices()
+
+
+def test_the_gate_outlives_everyone_queued_on_it(tmp_path):
+    """Retiring a gate while a queued holder still owns that lock lets the next
+    arrival mint a second one and render alongside them — a duplicate charge,
+    or a 402 that ends server voices for the game.
+
+    The window only opens for a request that arrives AFTER the entry is
+    retired: threads that queued up beforehand all hold the same lock object
+    and are safe either way. So this sequences the arrivals rather than
+    starting them together.
+    """
+    svc = service(tmp_path)
+    inside, overlaps, guard = [], [], threading.Lock()
+    a_in, a_go, b_in = (threading.Event() for _ in range(3))
+
+    def body(name, entered=None, release=None, hold=0.0):
+        with svc.exclusive("same-line"):
+            with guard:
+                inside.append(name)
+                if len(inside) > 1:
+                    overlaps.append(sorted(inside))
+            if entered is not None:
+                entered.set()
+            if release is not None:
+                release.wait(timeout=5)
+            elif hold:
+                time.sleep(hold)
+            with guard:
+                inside.remove(name)
+
+    a = threading.Thread(target=body, args=("a",), kwargs={"entered": a_in, "release": a_go})
+    b = threading.Thread(target=body, args=("b",), kwargs={"entered": b_in, "hold": 0.3})
+    a.start()
+    assert a_in.wait(timeout=5)
+    b.start()
+    time.sleep(0.05)              # b is now queued on a's gate
+    a_go.set()                    # a leaves, and retires the entry if it may
+    assert b_in.wait(timeout=5)   # b is inside, still holding that same lock
+
+    c = threading.Thread(target=body, args=("c",), kwargs={"hold": 0.05})
+    c.start()                     # arrives after the retirement: mints its own?
+    for t in (a, b, c):
+        t.join(timeout=10)
+
+    assert overlaps == [], f"two holders at once: {overlaps}"
+    assert svc._inflight == {}     # and nothing is left behind

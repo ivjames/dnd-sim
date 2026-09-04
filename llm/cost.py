@@ -237,14 +237,17 @@ class Ledger:
         """Charge a cost that is not a model call — a priced-elsewhere service.
 
         Used by the web layer for Polly narration (`role="narrator"`,
-        `chars=<billed characters>`): it is real money the game spent, so it
+        `clips=1, chars=<billed characters>`): it is real money the game spent, so it
         belongs against the same `budget_usd` as the model calls rather than
         in a second budget nobody is watching.
         """
         usd = float(usd or 0.0)
         with self._lock:
             row = self._row(role)
-            row["calls"] += 1
+            # `calls` is deliberately NOT touched: `to_dict()["calls"]` and the
+            # orchestrator's end-of-game line both report it as MODEL calls,
+            # and this is by definition not one. The caller counts its own
+            # units through `counters` (narration passes `clips=1, chars=n`).
             for name, n in counters.items():
                 row[name] = row.get(name, 0) + int(n)
             row["usd"] = round(row["usd"] + usd, 8)

@@ -242,7 +242,7 @@ def _charge(game_id: str, entry: Any, chars: int, usd: float) -> None:
         # `_CHARGE_LOCKS`. `persist_snapshot` writes an absolute total, so
         # unordered writes lose spend rather than merely reorder it.
         with _charge_lock(game_id):
-            ledger.add_usd("narrator", usd, chars=chars)
+            ledger.add_usd("narrator", usd, clips=1, chars=chars)
             # ...and write it down. A `GameEntry` stays in the registry for the
             # life of the process, but its monitor thread returns at the first
             # terminal status — so for a finished game, which is exactly the

@@ -165,7 +165,7 @@ PRICES = {"claude-sonnet-5": (2.0, 10.0), "claude-haiku-4-5-20251001": (1.0, 5.0
 class Ledger:
     def add(self, role: str, resp: LLMResponse) -> float   # returns USD for this call
     def add_usd(self, role: str, usd: float, **counters: int) -> float   # a priced-elsewhere service; see the 2026-09-04 tts amendment
-    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}, "narrator": {"calls","chars","usd"}}
+    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}, "narrator": {"clips","chars","usd"} — `calls` stays 0, it means MODEL calls}
     def to_dict(self)
 ```
 Model names come from env: `DND_DM_MODEL` (default `claude-sonnet-5`), `DND_PLAYER_MODEL` (default `claude-haiku-4-5-20251001`), `DND_SUMMARY_MODEL` (default = player model). A model id may name any platform in `llm/providers.py`; see the amendment "2026-09-03 — llm/ — multi-provider routing" for `RouterClient`, `OpenAICompatClient` and per-seat `model`.
@@ -969,12 +969,17 @@ with the browser's voices kept as a real fallback rather than deleted.
 
 4. **Narration is charged to `budget_usd`.** `Ledger.add_usd(role, usd,
    **counters)` is new (§2 above) and takes a cost that is not a model call;
-   the web layer calls it as `add_usd("narrator", usd, chars=n)`, so
+   the web layer calls it as `add_usd("narrator", usd, clips=1, chars=n)`, so
    `by_role["narrator"]` (the role name TTS-COSTS.md §3 asks for, and the right
    one: `by_role` holds seats at the table, not technologies)
    sits beside the model rows and the orchestrator's existing budget check stops
    a game whose narration has spent it. Only an actual synthesis is charged — a
    cache hit costs nothing and is charged nothing.
+
+   `add_usd` does **not** touch `calls`. `to_dict()["calls"]` and the line
+   `Game` emits at the end of a game (`"... over N model calls"`) both report
+   that figure as model calls, and a clip is by definition not one; the caller
+   counts its own units through `**counters` instead.
 
    `Ledger` is now **locked**: it was written only by the game thread, and
    narration is charged from Flask request threads. `Ledger.ROW` names every
@@ -1003,7 +1008,11 @@ with the browser's voices kept as a real fallback rather than deleted.
      second be refused for a clip the first is a moment from making free —
      which the page reads as a settled refusal and gives up on server voices
      for the whole game. `render()` is `synthesize()` without the gate or the
-     cache read, for a caller that holds both.
+     cache read, for a caller that holds both. The gate entry is
+     reference-counted rather than popped on exit: retiring it while a queued
+     holder still owns that lock lets the next arrival mint a second one and
+     render alongside them, which is now a duplicate charge rather than merely
+     a duplicate clip.
 
    **A charge is persisted where it is made.** A `GameEntry` lives in the
    registry for the life of the process but its monitor thread returns at the
@@ -1101,8 +1110,9 @@ with the browser's voices kept as a real fallback rather than deleted.
    long-form; generative gets plain text, because its prosody tag is documented
    as full-sentences-only and a chunk can be a fragment.
 
-   `STANDARD_ENGLISH` is the standard engine's roster and nothing else, so on
-   another engine a failed `DescribeVoices` leaves no roster to vouch for:
+   `STANDARD_ENGLISH` is the standard engine's **English** roster and nothing
+   else, so on another engine — or in another language — a failed
+   `DescribeVoices` leaves no roster to vouch for:
    `voices()` comes back empty, `/api/tts` reports unavailable, and the page
    uses the browser's voices — rather than casting a standard-only voice with
    `Engine=neural` and reaching the same 502 loop by another route.
