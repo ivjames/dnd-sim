@@ -1907,8 +1907,14 @@ def source_fingerprint() -> str     # folded into `voices.source_fingerprint`
 
 4. **`Cast` gains `fx: MonsterFX | None`** (None for every seat but a monster)
    and `Cast.cache_key` folds it in, as does `PollyTTS.cache_key_for` — the
-   token is empty for an untreated seat, so **the table's existing clips keep
-   the keys they were paid for** and only the monsters' are orphaned.
+   token is **appended only when there is one**, so **the table's existing
+   clips keep the keys they were paid for** and only the monsters' are
+   orphaned. Appended rather than passed as an empty string because
+   `cache_key` writes a NUL after every part it is given: a fourth empty part
+   is a different digest from three parts, which re-keys every DM, PC and NPC
+   clip on a deployed cache — the table pays for its narration a second time,
+   and a game already at its budget is answered 402 where a cache hit would
+   have been served free.
    `cast_for` takes `monster_fx: bool = True`; `voices.source_fingerprint`
    now covers `tts/dsp.py` too, so an edit to the audio maths retires the
    browser's year-immutable copies as an edit to the casting does.

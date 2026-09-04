@@ -302,11 +302,22 @@ def test_the_cache_key_is_the_document_that_will_be_sent(tmp_path):
     # A seat that does follow the table's engine keys differently under each.
     assert neural.cache_key_for("dm", "Fee fi.")[1] != std.cache_key_for("dm", "Fee fi.")[1]
 
-    # An untreated seat keys on exactly what it always did — the token is empty
-    # — so the table's clips are not orphaned by any of this.
+    # An untreated seat keys on exactly what it always did — THREE parts, not
+    # three and an empty fourth. `cache_key` writes a NUL after every part it
+    # is given, so passing "" for the treatment is a different digest, and on
+    # a deployed cache that re-keys every DM, PC and NPC clip: the whole table
+    # pays for its narration a second time, and a game already at its budget
+    # gets 402s where it should have been served free replays.
     dm, dkey = neural.cache_key_for("dm", "Fee fi.")
     assert dm.fx is None
-    assert dkey == cache_key(dm.engine, dm.voice_id, neural.ssml("Fee fi.", dm), "")
+    assert dkey == cache_key(dm.engine, dm.voice_id, neural.ssml("Fee fi.", dm))
+    assert dkey != cache_key(dm.engine, dm.voice_id, neural.ssml("Fee fi.", dm), "")
+
+    # The same rule on the `Cast` itself, which is the other place a key is
+    # spelled (`web/tests/conftest.py`'s fake builds one from it).
+    assert dm.cache_key() == f"{dm.engine}|{dm.voice_id}|0|100|0"
+    assert cast.cache_key().startswith(f"{cast.engine}|{cast.voice_id}|")
+    assert cast.cache_key().endswith("|" + cast.fx.token())
 
     # Two casts that this engine renders identically ARE the same clip.
     a = Cast("pc_1", "Joanna", "en-US", "neural", pitch_pct=-10)

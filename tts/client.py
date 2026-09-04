@@ -340,11 +340,19 @@ class PollyTTS:
         cast = self.cast(key, gender, age)
         # Plus the treatment, which is the half of the audio the document does
         # not describe: two monsters can be dealt one voice and one rate and
-        # differ entirely in what happens to the samples afterwards. The token
-        # is empty for every untreated seat, so the table's existing clips keep
-        # the keys they were paid for.
-        treated = cast.fx.token() if cast.fx else ""
-        return cast, cache_key(cast.engine, cast.voice_id, self.ssml(text, cast), treated)
+        # differ entirely in what happens to the samples afterwards.
+        #
+        # APPENDED, not passed as an empty string. `cache_key` writes a NUL
+        # after every part it is given, so a fourth empty part is a different
+        # digest from three parts — which would have re-keyed every DM, PC and
+        # NPC clip on a deployed cache and made the whole table pay for its
+        # narration a second time (and answered 402 for a game already at its
+        # budget, where a cache hit is served whatever the budget says). An
+        # untreated seat keys on exactly what it always did.
+        parts = [cast.engine, cast.voice_id, self.ssml(text, cast)]
+        if cast.fx:
+            parts.append(cast.fx.token())
+        return cast, cache_key(*parts)
 
     def _check(self, text: str) -> str:
         text = str(text or "").strip()

@@ -293,9 +293,11 @@ class Cast:
     fx: MonsterFX | None = None
 
     def cache_key(self) -> str:
-        treated = self.fx.token() if self.fx else ""
-        return (f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}"
-                f"|{self.vtl_pct}|{treated}")
+        base = f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
+        # Appended only when there is one, so an untreated cast spells exactly
+        # what it always did — the same rule, and the same reason, as
+        # `PollyTTS.cache_key_for`.
+        return base + ("|" + self.fx.token() if self.fx else "")
 
 
 def hash_key(s: str) -> int:
