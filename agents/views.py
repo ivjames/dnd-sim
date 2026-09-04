@@ -11,11 +11,74 @@ from typing import Any, Iterable
 
 from .common import event_text
 
-__all__ = ["player_view", "dm_view", "render_actions", "hp_band", "party_summary"]
+__all__ = [
+    "player_view",
+    "dm_view",
+    "render_actions",
+    "hp_band",
+    "party_summary",
+    "pronouns_for",
+    "PRONOUNS",
+    "DEFAULT_PRONOUNS",
+]
 
 MAX_RECENT_EVENTS = 12
 # Mechanical noise the LLM does not need one line each for.
 _SKIP_KINDS = {"roll", "turn_start", "turn_end", "round_start", "system", "cost"}
+
+
+#: How a character's LEGACY stated gender is read as pronouns for narration.
+#:
+#: A party spec states `pronouns` now, and where it does this table is not
+#: consulted at all: the authored answer is already the thing this column
+#: wants, and reading it needs no inference. The table remains for the older
+#: `gender` key, which a stranger's config and a game persisted before the
+#: change still carry.
+#:
+#: The spellings are exactly those `tts.voices.GENDERS` accepts, and
+#: `tests/orchestrator/test_narration_attribution.py` runs the two against each other
+#: so they cannot drift apart: one authored answer on a party spec should not
+#: cast a voice one way and narrate a character the other. It is not imported
+#: from there — `agents/` sits under `orchestrator/` in the layering and `tts/`
+#: is the web layer's, so the table is copied and pinned rather than reached
+#: across for.
+PRONOUNS = {
+    "f": "she/her", "female": "she/her", "woman": "she/her",
+    "m": "he/him", "male": "he/him", "man": "he/him",
+}
+
+#: Everything else, and that is the answer far more often than not.
+#:
+#: A monster gets this always. `monster_to_combatant` builds from an SRD stat
+#: block, which states a size and a type and no gender, so there is nothing
+#: authored to read — and the fix for a Bandit Captain who is "she" in round 2
+#: and "he" in round 5 is not to deal her a gender out of the dice, it is to
+#: stop the question being open. Singular "they" is what English already does
+#: for a referent whose gender is not established, it is stable because it is
+#: the same for every monster in every game rather than drawn per instance, and
+#: it invents nothing about a creature nobody wrote. The same goes for a party
+#: member whose own spec is silent: unstated stays unstated.
+DEFAULT_PRONOUNS = "they/them"
+
+
+def pronouns_for(c: Any) -> str:
+    """The pronouns narration should use for `c` — from its sheet, or the default.
+
+    A stated `pronouns` is used **as written**: it is already the answer this
+    column asks for, and the same authored string is what `tts.voices` reads to
+    pick a voice, so the DM narrates a character in the pronouns it is spoken
+    in. A spec that states only the older `gender` is read through `PRONOUNS`.
+
+    Only a character sheet can carry an answer, and only where the party spec
+    that built it stated one. Nothing is inferred from a name, a class or a
+    stat block.
+    """
+    sheet = getattr(c, "sheet", None)
+    said = str(getattr(sheet, "pronouns", "") or "").strip()
+    if said:
+        return said
+    stated = str(getattr(sheet, "gender", "") or "").strip().lower()
+    return PRONOUNS.get(stated, DEFAULT_PRONOUNS)
 
 
 # --- small helpers ---------------------------------------------------------
@@ -69,6 +132,22 @@ def _distance_ft(state: Any, a: Any, b: Any) -> int:
 
 def _active(c: Any) -> bool:
     return not getattr(c, "dead", False)
+
+
+def _active_id(state: Any) -> str | None:
+    """The combatant whose turn it is, or None outside combat.
+
+    Duck-typed like everything else here: a state object that cannot answer
+    (a test fake, a snapshot dict) simply has no turn to report.
+    """
+    fn = getattr(state, "active_id", None)
+    if not callable(fn):
+        return None
+    try:
+        cid = fn()
+    except Exception:  # noqa: BLE001 - a view must never be the thing that fails
+        return None
+    return str(cid) if cid else None
 
 
 def _sheet_line(c: Any) -> str:
@@ -232,8 +311,19 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
     if summary:
         lines.append(f"SO FAR: {' '.join(str(summary).split())}")
 
+    # Whose turn it is, said outright. The DM used to have to infer it from
+    # which name happened to lead the event list, and that is wrong whenever a
+    # turn opens with someone else's reaction — an opportunity attack on the
+    # mover goes first in the list about half the time — which is how a turn
+    # belonging to a PC gets narrated as the monster's, and how the DM ends up
+    # acting for a player character it was told not to act for.
+    actor_id = _active_id(state)
+    if actor_id is not None:
+        actor = combatants.get(actor_id)
+        lines.append(f"TURN: {actor_id} {getattr(actor, 'name', '?')}")
+
     lines.append("")
-    lines.append("COMBATANTS (id | name | side | HP | AC | pos | conditions)")
+    lines.append("COMBATANTS (id | name | pronouns | side | HP | AC | pos | conditions)")
     for cid, c in combatants.items():
         status = ""
         if getattr(c, "dead", False):
@@ -242,7 +332,8 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
             status = " DOWN"
         pos = _pos(c)
         lines.append(
-            f"{cid} | {getattr(c, 'name', '?')} | {getattr(c, 'side', '?')} | "
+            f"{cid} | {getattr(c, 'name', '?')} | {pronouns_for(c)} | "
+            f"{getattr(c, 'side', '?')} | "
             f"{getattr(c, 'hp', 0)}/{getattr(c, 'max_hp', 0)} | AC {getattr(c, 'ac', 10)} | "
             f"({pos[0]},{pos[1]}) | {_conds(c)}{status}"
         )

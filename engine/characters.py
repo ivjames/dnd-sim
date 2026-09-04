@@ -46,6 +46,17 @@ class CharacterSheet:
     spellcasting_ability: str | None = None
     features: list[str] = field(default_factory=list)
     persona: str = ""
+    #: The pronouns the character's own spec states, verbatim ("she/her",
+    #: "they/them", "xe/xem", ""), or "" where it states none. Inert: nothing
+    #: in the rules reads it. It is here so the one authored answer reaches
+    #: both the readers that want it — `tts.voices` for casting and
+    #: `agents.views` for the pronouns the DM narrates in — instead of each
+    #: inventing its own.
+    pronouns: str = ""
+    #: The older spelling of the same answer ("female", "m", ""), still carried
+    #: for a stranger's config and for games persisted before `pronouns`
+    #: existed. Both readers prefer `pronouns` and fall back to this.
+    gender: str = ""
     # extras the engine consults; not part of the minimal contract signature
     expertise: list[str] = field(default_factory=list)
     inventory: list[str] = field(default_factory=list)
@@ -97,6 +108,7 @@ class CharacterSheet:
             "spell_slots": {str(k): v for k, v in self.spell_slots.items()},
             "spellcasting_ability": self.spellcasting_ability,
             "features": list(self.features), "persona": self.persona,
+            "pronouns": self.pronouns, "gender": self.gender,
             "expertise": list(self.expertise), "inventory": list(self.inventory),
             "size": self.size,
             "damage_resistances": list(self.damage_resistances),
@@ -117,6 +129,8 @@ class CharacterSheet:
             spell_slots={int(k): int(v) for k, v in (d.get("spell_slots") or {}).items()},
             spellcasting_ability=d.get("spellcasting_ability"),
             features=list(d.get("features", [])), persona=d.get("persona", ""),
+            pronouns=str(d.get("pronouns", "") or ""),
+            gender=str(d.get("gender", "") or ""),
             expertise=list(d.get("expertise", [])), inventory=list(d.get("inventory", [])),
             size=d.get("size", "M"),
             damage_resistances=list(d.get("damage_resistances", [])),
@@ -209,7 +223,8 @@ def _default_spells(klass_row: dict, level: int, mod_wis: int) -> list[str]:
 def build_character(spec: dict, rng: RNG) -> CharacterSheet:
     """Build a CharacterSheet from a compact spec.
 
-    spec keys: id, name, race, klass, level, abilities, equipment, spells, persona.
+    spec keys: id, name, race, klass, level, abilities, equipment, spells, persona,
+    pronouns (or the older gender).
     HP uses the fixed average-per-level rule (deterministic); `rng` is accepted
     for signature compatibility and used only if spec["roll_hp"] is true.
     """
@@ -319,6 +334,8 @@ def build_character(spec: dict, rng: RNG) -> CharacterSheet:
         spells_known=spells_known, spell_slots=slots,
         spellcasting_ability=spellcasting_ability,
         features=features, persona=str(spec.get("persona", "")),
+        pronouns=str(spec.get("pronouns", "") or ""),
+        gender=str(spec.get("gender", "") or ""),
         expertise=expertise, inventory=items, size=race_row.get("size", "M"),
         damage_resistances=list(race_row.get("damage_resistances", [])),
         save_advantages=list(race_row.get("saving_throw_advantages", [])),

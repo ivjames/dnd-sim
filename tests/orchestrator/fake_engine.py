@@ -105,6 +105,7 @@ class CharacterSheet:
     spellcasting_ability: str | None = None
     features: list = field(default_factory=list)
     persona: str = ""
+    gender: str = ""
 
 
 @dataclass
@@ -264,6 +265,7 @@ def build_character(spec: dict, rng: RNG) -> CharacterSheet:
         spell_slots={1: 2} if klass in ("Cleric", "Wizard") else {},
         features=[],
         persona=spec.get("persona", ""),
+        gender=str(spec.get("gender", "") or ""),
     )
 
 

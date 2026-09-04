@@ -1517,6 +1517,79 @@ Client-side only: no route, no payload and no `Game` method changes.
 nothing left to hold — and a backgrounded tab still drops its lease, which is a
 separate deliberate rule and not this bug.
 
+### 2026-09-04 — agents + engine — the DM is told whose turn it is, and what to call everyone
+
+The DM's per-turn narration was mechanically faithful and repeatedly wrong
+about attribution: it acted for player characters on a monster's turn, gave the
+actor's own blow to its target, asserted knockouts the engine never reported,
+and swapped a monster's gender between rounds. `dm_narrate.txt` already said
+"Do not act for player characters" and was ignored, because the prompt never
+established the two facts those errors need — who is acting, and what each
+creature is called.
+
+Measured over `examples/tollhouse.json` at seed 23 (62 narrations): **34 of
+them (55%) handed the DM an event list naming more than one creature**, and one
+of them opened with `Bandit 2 makes an opportunity attack on Captain Isolde
+Rooke …` on *Rooke's* turn. Inferring the actor from whichever name leads the
+list is the only thing the prompt allowed, and that is the inference that fails.
+
+**`dm_view` output changes in two ways** (§3; the `dm_view` and `DMAgent`
+signatures do not change):
+
+1. A `TURN: <id> <name>` line, above the combatants table, whenever
+   `state.active_id()` answers. It is absent outside combat and absent for a
+   state that cannot answer — the views stay duck-typed.
+2. The combatants table gains a pronouns column:
+   `id | name | pronouns | side | HP | AC | pos | conditions`.
+
+`dm_narrate.txt` gains one paragraph tying the two together — everything in the
+list other than the TURN creature is a reaction, pronouns come from the table
+and do not change, and a creature is bloodied/down/dead only where a line says
+so — and loses the now-redundant "Do not act for player characters".
+
+**`CharacterSheet` gains `gender: str = ""`** (§1.3), read by `build_character`
+from `spec["gender"]`, serialized both ways. Inert: no rule reads it. It exists
+so the one authored answer already on a party spec — `tts/voices.py` has read it
+for casting since 2026-09-04 — also reaches narration, instead of each reader
+inventing its own.
+
+**Pronouns are not dealt.** `agents/views.py` maps a *stated* gender to
+`she/her` / `he/him` on exactly the spellings `tts.voices.GENDERS` accepts
+(pinned against each other by a test, since `agents/` cannot import `tts/`), and
+everything else — every monster, and any party member whose spec is silent —
+gets `they/them`.
+
+That is a deliberate reading of the rule the `tts/` amendments set down. A
+shipped party character states a gender only where its own persona already
+does; the same principle says a `Bandit 3` built from an SRD stat block, which
+records a size and a type and no gender, has nothing to state. So nothing is
+inferred from a name and nothing is drawn from the dice — a pronoun out of the
+RNG is a pronoun that can drift, which is the bug. Singular *they* is what
+English already does for an unestablished referent, it is stable because it is
+the same for every monster in every game rather than per-instance, and it
+invents nothing about a creature nobody wrote.
+
+**No TTS consequence.** `web/routes/tts.py: _voice_traits_for` reads the game
+*config's* party list keyed by the voice key, and a monster's key is
+`monster:<id>`, which never matches a `pc_N` id. Monsters were cast as an adult
+of unstated gender before this and still are; `pronouns_for` lives in `agents/`
+and nothing in `tts/` reads it.
+
+**Frugality.** `orchestrator/game.py: _narrate` now builds its view with no
+`recent`. It was passing the turn's own events, so the view's RECENT block
+reprinted, line for line, the events block directly beneath it — across all 62
+narrations of that game every RECENT line was already in the events block,
+costing ~3.7k tokens a game for a second copy. Netting that against the TURN
+line, the pronouns column and the new paragraph, one full tollhouse game's
+accounted spend moves **$1.1082 → $1.1188, +1.0%**, and the game itself is
+unchanged: same 328 model calls, same events, same round 11.
+
+*Determinism:* nothing added draws from anything. A pronoun is a pure function
+of an authored string, and the turn's actor is state the engine already holds.
+`--mock --seed 23` is byte-identical across runs, and
+`tests/orchestrator/test_narration_attribution.py` asserts the narration
+prompts themselves are identical across two runs of one seed.
+
 ### 2026-09-04 — tts/ + web/ — a character states pronouns, not a gender
 
 The narration amendment gave a party member a `gender`, `female` or `male`,

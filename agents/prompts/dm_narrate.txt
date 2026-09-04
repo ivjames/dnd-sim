@@ -6,5 +6,6 @@ THE ENGINE JUST RESOLVED THESE EVENTS (authoritative, already final):
 RESPONSE_SHAPE: dm_narration
 Reply with JSON only:
 {{"narration": "<describe those exact events in-world, 60 words max>"}}
-Cover what happened, in order, without contradicting a single number, hit, miss, or death above. Add no new events. Do not roll. Do not act for player characters.
+Cover what happened, in order, without contradicting a single number, hit, miss, or death above. Add no new events. Do not roll.
+TURN above names the one creature acting here. Everything else in the list is a reaction to it — an opportunity attack, a save, damage taken — so give no other creature a decision, and never a player character. Each creature's pronouns are in the table and do not change. Call a creature bloodied, down, or dead only where a line above says so.
 This is read aloud at the table as it arrives, so it has to be shorter than the turn it describes. Two or three sentences. Lead with the blow that landed; skip anything the engine already stated plainly. No preamble, no summing up, no restating the situation the table can see.
