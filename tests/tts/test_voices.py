@@ -18,6 +18,10 @@ import pytest
 from tts.voices import (
     ACCENTS,
     CHILD_VOICE_IDS,
+    MONSTER_CAVE,
+    MONSTER_GROWL,
+    MONSTER_SIZE,
+    MONSTER_TEMPO,
     MONSTER_VTL,
     STANDARD_ENGLISH,
     Cast,
@@ -79,14 +83,37 @@ def test_the_same_actor_lands_in_the_same_seat_every_time():
 
 
 def test_a_monster_never_just_sounds_like_a_person():
-    """Polly has no novelty voices, so the costume is the vocal tract."""
+    """Polly has no novelty voices, so the costume is made afterwards."""
     for ident in ("goblin_1", "ogre_1", "wolf_1", "dragon"):
         c = cast_for("monster:" + ident, STANDARD_ENGLISH, "Brian")
-        assert c.vtl_pct in MONSTER_VTL and c.vtl_pct != 0
-        assert -20 <= c.pitch_pct <= 10 and 90 <= c.rate_pct <= 105
+        assert c.fx is not None
+        # The size shift is the one every monster gets, so no monster is dealt
+        # nothing: grit and a room are characteristics, not a uniform.
+        assert c.fx.size_pct in MONSTER_SIZE and c.fx.size_pct != 0
+        assert c.fx.growl_pct in MONSTER_GROWL and c.fx.cave_pct in MONSTER_CAVE
+        # The rate carries the compensation for what the size shift does to
+        # duration, times how fast this one talks.
+        assert any(c.rate_pct == round(c.fx.rate_pct() * t / 100) for t in MONSTER_TEMPO)
+        # And none of the standard-only SSML, which is the point of it.
+        assert c.vtl_pct == 0 and c.pitch_pct == 0
     # An ordinary seat is never given the treatment.
     for key in ("dm", "npc", "pc_1"):
-        assert cast_for(key, STANDARD_ENGLISH, "Brian").vtl_pct == 0
+        assert cast_for(key, STANDARD_ENGLISH, "Brian").fx is None
+
+
+def test_the_old_standard_only_treatment_is_still_there_behind_the_switch():
+    """`DND_TTS_MONSTER_FX=0`, which `PollyTTS` passes through as
+    `monster_fx=False`: no post-processing, and the SSML that needed the
+    standard engine back in its place."""
+    for ident in ("goblin_1", "ogre_1", "wolf_1", "dragon"):
+        c = cast_for("monster:" + ident, STANDARD_ENGLISH, "Brian", monster_fx=False)
+        assert c.fx is None
+        assert c.vtl_pct in MONSTER_VTL and c.vtl_pct != 0
+        assert -20 <= c.pitch_pct <= 10 and 90 <= c.rate_pct <= 105
+    # It changes nothing for anyone else.
+    for key in ("dm", "npc", "pc_1"):
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", monster_fx=False) == \
+            cast_for(key, STANDARD_ENGLISH, "Brian")
 
 
 def test_a_thin_pool_leans_on_pitch_instead():
@@ -112,8 +139,13 @@ def test_ssml_is_well_formed_and_escaped():
     assert "&amp;" in said and "&lt;the&gt;" in said and "&quot;" in said
     assert "<the>" not in said
 
+    # A treated monster writes only a rate — the size shift is not markup.
     monster = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian")
-    doc = ssml_for("Fee fi fo.", monster)
+    assert ssml_for("Fee fi fo.", monster) == \
+        f'<speak><prosody rate="{monster.rate_pct}%">Fee fi fo.</prosody></speak>'
+
+    untreated = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", monster_fx=False)
+    doc = ssml_for("Fee fi fo.", untreated)
     assert doc.startswith("<speak><amazon:effect vocal-tract-length=")
     assert "<prosody" in doc and doc.endswith("</amazon:effect></speak>")
 
@@ -273,7 +305,8 @@ def test_each_engine_is_only_sent_what_it_accepts():
     neural and long-form; generative gets neither, because its prosody tag is
     documented as full-sentences-only and a chunk can be a fragment.
     """
-    monster = cast_for("monster:goblin_1", STANDARD_ENGLISH, "Brian")
+    # The untreated cast, which is the only one that writes all three.
+    monster = cast_for("monster:goblin_1", STANDARD_ENGLISH, "Brian", monster_fx=False)
     assert monster.pitch_pct and monster.rate_pct != 100 and monster.vtl_pct
 
     standard = ssml_for("Fee fi.", monster, "standard")
@@ -296,11 +329,13 @@ def test_the_engine_travels_with_the_cast():
     Keeping the two together is why `Cast` carries the engine rather than
     `ssml_for` taking it from a setting that may have moved on.
     """
-    monster = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "standard")
+    monster = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "standard",
+                       monster_fx=False)
     assert monster.engine == "standard"
     assert "vocal-tract-length" in ssml_for("Fee fi.", monster)
 
-    on_neural = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "neural")
+    on_neural = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian", "", "neural",
+                         monster_fx=False)
     assert on_neural.engine == "neural"
     assert "vocal-tract-length" not in ssml_for("Fee fi.", on_neural)
 

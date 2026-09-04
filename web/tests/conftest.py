@@ -239,6 +239,7 @@ class FakeTTS:
     def __init__(self, *, up: bool = True, fail: str = "", price: float = 4.0) -> None:
         self.engine = "standard"
         self.monster_engine = "standard"
+        self.monster_fx = True
         self.language = "en-US"
         self.max_chars = 40
         self.price_per_million = price
@@ -270,15 +271,23 @@ class FakeTTS:
 
         return self.monster_engine if is_monster_key(key) else self.engine
 
+    def media_type_for(self, cast) -> str:
+        from tts.client import MPEG, WAVE  # noqa: PLC0415
+
+        return WAVE if cast.fx else MPEG
+
     def cast(self, key: str, gender: str = "", age=""):
         from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
 
-        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key), age)
+        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key), age,
+                        monster_fx=self.monster_fx)
 
     def cache_key_for(self, key: str, text: str, gender: str = "", age=""):
         from tts.cache import cache_key  # noqa: PLC0415
 
         cast = self.cast(key, gender, age)
+        # `Cast.cache_key` already folds in the treatment, so a monster keys on
+        # what will be done to its audio here as it does in the real service.
         return cast, cache_key(self.engine, cast.cache_key(), text)
 
     def cached(self, ckey: str):
@@ -311,13 +320,14 @@ class FakeTTS:
         if self.fail:
             raise TTSError(self.fail)
         cast, ckey = self.cache_key_for(key, text, gender, age)
+        media = self.media_type_for(cast)
         if ckey in self.clips:
-            return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
-        audio = b"\xff\xfb" + text.encode("utf-8")
+            return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey, media)
+        audio = (b"RIFF" if cast.fx else b"\xff\xfb") + text.encode("utf-8")
         self.clips[ckey] = audio
         # At the seat's own engine's rate, as `PollyTTS.render` does.
         usd = self.price_of(len(text), cast.engine)
-        return TTSResult(audio, cast, len(text), usd, False, ckey)
+        return TTSResult(audio, cast, len(text), usd, False, ckey, media)
 
 
 @pytest.fixture()

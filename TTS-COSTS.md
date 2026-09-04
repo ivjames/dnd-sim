@@ -395,11 +395,11 @@ same day, built the rest.
   per-writer identity, and a rate limit. The last of those protects a *leaked*
   token, which is a different threat from the open door.
 
-### The engine, settled
+### The engine, settled, and then unsettled
 
-Both engines ship, chosen per seat. `DND_TTS_ENGINE` (**neural**) speaks the
-DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (**standard**) speaks
-anything cast as `monster:<id>`. Setting them equal puts the whole table on one.
+Both engines shipped, chosen per seat. `DND_TTS_ENGINE` (**neural**) spoke the
+DM, the players and the NPCs; `DND_TTS_MONSTER_ENGINE` (**standard**) spoke
+anything cast as `monster:<id>`. Setting them equal put the whole table on one.
 
 §5's case carried for the table: at this quality nothing can pitch-shift, so
 distinctness is bought as separate voices, and Neural's roster is the larger and
@@ -411,8 +411,8 @@ voice they drew. It is Standard-only, like pitch. Hence the split rather than a
 choice: the one thing Standard alone can do is the one thing only monsters
 need.
 
-Cost lands between the two rows in §3. Monsters are a small share of spoken
-characters, so a game is ~$0.45 rather than Neural's $0.48 or Standard's $0.12.
+Cost landed between the two rows in §3. Monsters are a small share of spoken
+characters, so a game was ~$0.45 rather than Neural's $0.48 or Standard's $0.12.
 
 Two consequences worth stating:
 
@@ -425,6 +425,50 @@ Two consequences worth stating:
 - **A game crosses two rates.** `by_role.narrator` is one row and the ledger
   charges each clip at its own engine's rate, so the per-character figure for a
   game is a blend and not a constant.
+
+### The split, reconsidered after listening to it
+
+The argument above has one unexamined premise: that the effect had to come from
+the vendor. It did not. A clip is synthesized once and cached forever — §4's
+own finding, and the cost model this whole document rests on — so **anything
+done to the audio after Polly hands it over is paid for once per line and never
+again**. That reopens the question the split was the answer to.
+
+`tts/dsp.py` is the answer instead. Playing a recording at a different sample
+rate scales the whole spectrum, pitch and formants together, which is what a
+bigger creature is; it costs one integer in a WAV header rather than a pass
+over the samples, and the duration it would cost is bought back with `<prosody
+rate>`, which every engine takes. Grit and a stone room are dealt to some
+monsters on top, and those do touch samples — about 150 ms for a 20-second
+clip, in pure Python, once.
+
+So the split is gone from the defaults: monsters are cast on the table's
+engine, treated afterwards, and `DND_TTS_MONSTER_FX=0` restores the old
+arrangement whole. What that costs is stated plainly:
+
+* **Monsters move from $4/1M to $16/1M.** A game is Neural's ~$0.48 now, not
+  the blended ~$0.45 above. The §3 row that applies is the all-Neural one, and
+  a game no longer crosses two rates (which retires the second of the two
+  consequences below).
+* **A monster's clip is `pcm`, and `pcm` is capped at 16 kHz** against the
+  24 kHz an MP3 gets. It is the only Polly format that can be post-processed
+  without a codec, and an MP3 back out would need an encoder — a system
+  dependency this app deliberately does not have. The lost band is the top of
+  the spectrum of a voice that is being shifted downward anyway.
+* **A WAV is roughly seven times the bytes of the equivalent MP3.** It is
+  bounded by dialogue, which §1 measured as a small share of a game, and both
+  the on-disk cache (`DND_TTS_CACHE_MB`, LRU) and a local nginx take it.
+
+What is bought is that the whole table is one production. The thing a listener
+noticed first about the split was not that the monsters were undistinguished —
+they were not — but that they were audibly rendered by a different, older
+system than the narrator speaking over them.
+
+**Whether it actually sounds better is not settled here**, and cannot be: the
+treatment is a cruder effect than Amazon's applied to much better audio, and
+which way that trade falls is a judgement made by listening. `python -m
+tools.polly_check --ab --out DIR` renders the same monster line both ways for
+exactly that.
 
 ### Attribution, after listening to it
 

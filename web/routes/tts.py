@@ -321,6 +321,11 @@ def capability():
             # A monster is cast on whichever engine can still change its
             # timbre, so the table's engine is not the whole answer.
             "monster_engine": svc.monster_engine,
+            # Whether a monster is made to sound like one after synthesis
+            # (`tts/dsp.py`) or by the standard-only SSML that needed its own
+            # engine. Reported for the same reason the engines are: it decides
+            # what a monster costs and what format its clip arrives in.
+            "monster_fx": bool(getattr(svc, "monster_fx", False)),
             "language": svc.language,
             "max_chars": svc.max_chars,
             # Two engines, two rates. Advertising only the table's would
@@ -442,7 +447,9 @@ def cast_preview():
 
 @bp.get("/games/<game_id>/tts")
 def speak(game_id: str):
-    """One line, in one seat's voice, as `audio/mpeg`.
+    """One line, in one seat's voice: `audio/mpeg`, or `audio/wav` for a
+    monster, whose clip is post-processed between Polly and here (`tts/dsp.py`)
+    and so cannot be handed back in the format Polly sent it in.
 
     Every refusal is a JSON error the page can fall back from, never a hang:
     503 no service, 402 no budget left, 400 nothing sayable, 502 Polly said no.
@@ -488,7 +495,7 @@ def speak(game_id: str):
     # out of money stays listenable right to the end of its transcript.
     hit = svc.cached(ckey)
     if hit is not None:
-        return _audio(hit, cast.voice_id, etag)
+        return _audio(svc, hit, cast, etag)
 
     # The lower of what the game asked for and what this server allows.
     budget = min(_budget_of(entry, row), _server_cap())
@@ -500,7 +507,7 @@ def speak(game_id: str):
         with svc.exclusive(ckey):
             hit = svc.cached(ckey)
             if hit is not None:                       # whoever held the gate paid for it
-                return _audio(hit, cast.voice_id, etag)
+                return _audio(svc, hit, cast, etag)
             # The charge lands INSIDE the reservation. Releasing the one before
             # making the other leaves a gap in which a waiting request reads a
             # ledger that does not yet know about this clip, and reserves money
@@ -526,7 +533,8 @@ def speak(game_id: str):
         # after three CONSECUTIVE failures — so a seat that fails every time
         # while the rest of the table succeeds never trips that counter and
         # never surfaces at all. The monster seats are exactly that shape: they
-        # render on their own engine with SSML no other seat writes. This log
+        # ask Polly for a format no other seat asks for, and with
+        # `DND_TTS_MONSTER_FX=0` an engine and SSML no other seat uses. This log
         # line is the only place the difference between "the monsters are all
         # falling back" and "narration is fine" is visible, so it says which.
         current_app.logger.warning(
@@ -534,17 +542,23 @@ def speak(game_id: str):
         )
         return _err(str(exc), 502)
 
-    return _audio(result.audio, result.cast.voice_id, etag)
+    return _audio(svc, result.audio, result.cast, etag)
 
 
-def _audio(data: bytes, voice_id: str, etag: str):
+def _audio(svc: Any, data: bytes, cast: Any, etag: str):
+    """The clip, typed by the CAST rather than by the bytes.
+
+    A cache hit is served without looking at what is on disk, so the two paths
+    cannot disagree about what a given key holds — and the key is a digest over
+    the cast, so the cast is the authority on the format either way.
+    """
     return Response(
         data,
-        mimetype="audio/mpeg",
+        mimetype=svc.media_type_for(cast),
         headers={
             "Cache-Control": IMMUTABLE,
             "ETag": etag,
             "Content-Length": str(len(data)),
-            "X-Dnd-Voice": voice_id,
+            "X-Dnd-Voice": cast.voice_id,
         },
     )

@@ -28,8 +28,9 @@ ENGLISH.append(("Olivia", "en-AU", "Female", ["neural"]))
 class FakePolly:
     """Enough of the boto3 client for the tool, and nothing more."""
 
-    def __init__(self, *, fail_on: str = "") -> None:
+    def __init__(self, *, fail_on: str = "", fail_on_format: str = "") -> None:
         self.fail_on = fail_on            # an engine whose requests raise
+        self.fail_on_format = fail_on_format   # an OutputFormat whose requests raise
         self.sent: list[dict] = []
 
     def describe_voices(self, **_kw):
@@ -42,6 +43,8 @@ class FakePolly:
         self.sent.append(kw)
         if self.fail_on and kw.get("Engine") == self.fail_on:
             raise RuntimeError("InvalidSsmlException: Invalid SSML request")
+        if self.fail_on_format and kw.get("OutputFormat") == self.fail_on_format:
+            raise RuntimeError("InvalidSampleRateException: The specified sample rate is not valid")
         return {
             "AudioStream": _Stream(MP3 + kw["Text"].encode()),
             # What Polly bills: the words, not the markup.
@@ -72,24 +75,58 @@ def test_a_working_polly_is_a_clean_pass(capsys):
     assert "all checks passed" in out
     assert "FAIL" not in out
 
-    # Both lines, on the two engines the split puts them on, in that order.
+    # Both lines on the table's engine, in that order — the monster does not
+    # need its own any more.
+    assert [s["Engine"] for s in polly.sent] == ["neural", "neural"]
+    assert all(s["TextType"] == "ssml" for s in polly.sent)
+    # And only the monster asks for the format that can be post-processed.
+    assert [s["OutputFormat"] for s in polly.sent] == ["mp3", "pcm"]
+    assert polly.sent[1]["SampleRate"] == "16000"
+    assert all("vocal-tract-length" not in s["Text"] for s in polly.sent)
+
+
+def test_the_old_arrangement_still_passes_too(capsys):
+    """`--no-monster-fx` is `DND_TTS_MONSTER_FX=0`, and it has to keep
+    working: it is the way back if the treatment turns out to sound worse."""
+    polly = FakePolly()
+    code, out = run(["--no-monster-fx"], polly, capsys)
+    assert code == 0, out
     assert [s["Engine"] for s in polly.sent] == ["neural", "standard"]
-    assert all(s["TextType"] == "ssml" and s["OutputFormat"] == "mp3" for s in polly.sent)
+    assert all(s["OutputFormat"] == "mp3" for s in polly.sent)
     assert "vocal-tract-length" in polly.sent[1]["Text"]
     assert "vocal-tract-length" not in polly.sent[0]["Text"]
+
+
+def test_the_ab_pass_renders_the_monster_line_both_ways(capsys, tmp_path):
+    """Whether the treatment sounds better than the engine it replaced is a
+    judgement, and this is the only place it can be made: three clips, two of
+    them the same words in the same seat."""
+    polly = FakePolly()
+    out_dir = tmp_path / "clips"
+    code, out = run(["--ab", "--out", str(out_dir)], polly, capsys)
+    assert code == 0, out
+    assert [s["Engine"] for s in polly.sent] == ["neural", "neural", "standard"]
+    assert [s["OutputFormat"] for s in polly.sent] == ["mp3", "pcm", "mp3"]
+    assert "vocal-tract-length" in polly.sent[2]["Text"]
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "dm.mp3", "monster_goblin_1.old.mp3", "monster_goblin_1.wav"]
+    assert "the old monster voice" in out
 
 
 def test_a_monster_line_polly_refuses_is_a_non_zero_exit(capsys):
     """The whole point. A table line succeeding must not be enough to pass —
     that is exactly the state the droplet could be in right now, and the
     browser would sound fine in it."""
-    polly = FakePolly(fail_on="standard")
+    # The monster line is the only one that asks for `pcm`, so a Polly that
+    # refuses that format refuses exactly the monsters — which is the shape of
+    # the failure this tool exists for.
+    polly = FakePolly(fail_on_format="pcm")
     code, out = run([], polly, capsys)
     assert code == 1
-    assert "InvalidSsmlException" in out
+    assert "InvalidSampleRateException" in out
     assert "monster:goblin_1" in out
     # The table line still worked, and the run still failed.
-    assert [s["Engine"] for s in polly.sent] == ["neural", "standard"]
+    assert [s["OutputFormat"] for s in polly.sent] == ["mp3", "pcm"]
 
 
 def test_a_table_line_polly_refuses_is_also_a_failure(capsys):
@@ -99,9 +136,16 @@ def test_a_table_line_polly_refuses_is_also_a_failure(capsys):
 
 def test_it_says_which_engine_and_voice_each_line_used(capsys):
     _, out = run([], FakePolly(), capsys)
-    assert "engine   standard" in out and "engine   neural" in out
+    assert "engine   neural" in out
     assert "billed   35 chars by this app, 35 by Polly" in out   # the monster line
     assert "bytes" in out
+    # And what was done to the monster afterwards, which nothing else reports:
+    # the size shift is a sample rate, so an untreated monster would show 16000.
+    assert re.search(r"treated  size [+-]\d+%", out)
+    assert re.search(r"it plays at \d+ Hz", out)
+
+    _, old = run(["--no-monster-fx"], FakePolly(), capsys)
+    assert "engine   standard" in old and "treated" not in old
 
 
 def test_the_dry_run_sends_nothing_and_needs_no_credentials(capsys):
@@ -110,13 +154,18 @@ def test_the_dry_run_sends_nothing_and_needs_no_credentials(capsys):
     assert code == 0
     assert polly.sent == []
     assert "nothing is sent to Polly" in out
-    assert "vocal-tract-length" in out       # the document it would have sent
+    assert "-> pcm at" in out                 # what it would have done to the monster
 
     # And with no client at all, which is a laptop: it still prints the
     # documents rather than refusing, using the built-in roster to cast.
     code, out = run(["--dry-run"], None, capsys)
-    assert code == 0 and "vocal-tract-length" in out
+    assert code == 0 and "-> pcm at" in out
     assert "built-in roster" in out
+
+    # The old arrangement prints the document it would have sent, which is the
+    # one thing a dry run of it can show.
+    code, out = run(["--dry-run", "--no-monster-fx"], FakePolly(), capsys)
+    assert code == 0 and "vocal-tract-length" in out
 
 
 def test_no_credentials_is_exit_2_not_a_pass(capsys):
@@ -146,8 +195,11 @@ def test_it_can_keep_the_clips_to_listen_to(tmp_path, capsys):
     out_dir = tmp_path / "clips"
     assert run(["--out", str(out_dir)], FakePolly(), capsys)[0] == 0
     written = sorted(p.name for p in out_dir.iterdir())
-    assert written == ["dm.mp3", "monster_goblin_1.mp3"]
-    assert (out_dir / "monster_goblin_1.mp3").read_bytes().startswith(MP3)
+    # Saved under what each clip actually is: the monster's has been through
+    # `tts/dsp.py` and is a WAV, and a `.mp3` holding one plays nowhere.
+    assert written == ["dm.mp3", "monster_goblin_1.wav"]
+    assert (out_dir / "dm.mp3").read_bytes().startswith(MP3)
+    assert (out_dir / "monster_goblin_1.wav").read_bytes()[:4] == b"RIFF"
 
 
 def test_a_voice_the_standard_engine_does_not_serve_is_a_failure(capsys):
@@ -196,10 +248,11 @@ def test_a_failed_listing_is_not_a_verified_roster(capsys):
     assert "DescribeVoices answered" in out and "FAIL" in out
     # The claim it must not make.
     assert "built-in fallback roster is all served here" not in out
-    # The monster line still goes out — on standard, cast from that very
-    # fallback roster, which is exactly the situation the check is warning is
-    # unverified. The DM has no neural roster to be cast from at all.
-    assert [s["Engine"] for s in polly.sent] == ["standard"]
+    # Neither line goes out: both seats are cast from the table's engine now,
+    # and a failed listing leaves that engine with no roster at all. Under the
+    # old split the monster would still have been sent, cast from the built-in
+    # fallback — which is the situation the check is warning is unverified.
+    assert polly.sent == []
     assert "a neural voice to cast from" in out
 
 
@@ -252,8 +305,8 @@ def test_a_seat_with_no_voices_is_reported_not_raised(capsys):
     assert code == 1
     assert "a neural voice to cast from" in out
     assert "no voices to cast from" in out
-    # It got all the way to the end: the split section and the summary ran.
-    assert "the split" in out and "check(s) FAILED" in out
+    # It got all the way to the end: the summary section and the tally ran.
+    assert "the monsters" in out and "check(s) FAILED" in out
     assert "Traceback" not in out
     # The table line still went out; the monster never reached Polly.
     assert [s["Engine"] for s in polly.sent] == ["standard"]

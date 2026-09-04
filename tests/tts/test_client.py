@@ -55,10 +55,10 @@ class FakePolly:
 def service(tmp_path, client=None, **kw):
     """A service pinned to `standard` unless a test says otherwise.
 
-    The shipped default is neural for the table and standard for monsters (see
-    `test_a_monster_keeps_the_engine_that_can_still_change_its_timbre`); these
-    tests are about mechanics that do not depend on which, so they pin one
-    rather than re-deriving it.
+    The shipped default is neural for the whole table, monsters included (see
+    `test_a_monster_stays_on_the_tables_engine_and_is_treated_afterwards`);
+    these tests are about mechanics that do not depend on which, so they pin
+    one rather than re-deriving it.
     """
     kw.setdefault("engine", "standard")
     kw.setdefault("monster_engine", "standard")
@@ -190,7 +190,9 @@ def test_from_env_reads_the_knobs(tmp_path, monkeypatch):
     monkeypatch.setenv("DND_TTS_CACHE", str(tmp_path / "clips"))
     svc = from_env(str(tmp_path))
     assert svc.engine == "neural" and svc.dm_voice == "Joanna" and svc.max_chars == 128
-    assert svc.monster_engine == "standard"                       # the default split
+    # No split by default any more: the monsters are treated after synthesis,
+    # so they stay wherever the table is.
+    assert svc.monster_engine == "neural" and svc.monster_fx is True
     assert svc.cache.root.endswith("clips")
 
     # An engine with no price row would make the budget stop blind; it is not
@@ -203,6 +205,18 @@ def test_from_env_reads_the_knobs(tmp_path, monkeypatch):
     monkeypatch.setenv("DND_TTS_MONSTER_ENGINE", "neural")
     one = from_env(str(tmp_path))
     assert one.engine_for("monster:goblin_1") == "neural"
+
+    # Turning the treatment off puts the monsters back on the only engine that
+    # can make one sound like a monster without it.
+    monkeypatch.delenv("DND_TTS_MONSTER_ENGINE")
+    monkeypatch.setenv("DND_TTS_MONSTER_FX", "0")
+    off = from_env(str(tmp_path))
+    assert off.monster_fx is False and off.engine_for("monster:goblin_1") == "standard"
+    assert off.cast("monster:goblin_1").vtl_pct                     # and the SSML with it
+
+    # A stated engine still wins over that.
+    monkeypatch.setenv("DND_TTS_MONSTER_ENGINE", "neural")
+    assert from_env(str(tmp_path)).engine_for("monster:goblin_1") == "neural"
 
 
 class FakeSession:
@@ -278,11 +292,21 @@ def test_the_cache_key_is_the_document_that_will_be_sent(tmp_path):
     # that can still change its timbre rather than the table's.
     cast, ckey = neural.cache_key_for("monster:goblin_1", "Fee fi.")
     assert cast.engine == "standard"
-    assert ckey == cache_key(cast.engine, cast.voice_id, neural.ssml("Fee fi.", cast))
+    # Plus the treatment, which the document does not describe: two monsters
+    # can share a voice and a rate and differ entirely in what is done to the
+    # samples afterwards.
+    assert ckey == cache_key(cast.engine, cast.voice_id, neural.ssml("Fee fi.", cast),
+                             cast.fx.token())
     assert ckey == std.cache_key_for("monster:goblin_1", "Fee fi.")[1]   # same seat, same clip
 
     # A seat that does follow the table's engine keys differently under each.
     assert neural.cache_key_for("dm", "Fee fi.")[1] != std.cache_key_for("dm", "Fee fi.")[1]
+
+    # An untreated seat keys on exactly what it always did — the token is empty
+    # — so the table's clips are not orphaned by any of this.
+    dm, dkey = neural.cache_key_for("dm", "Fee fi.")
+    assert dm.fx is None
+    assert dkey == cache_key(dm.engine, dm.voice_id, neural.ssml("Fee fi.", dm), "")
 
     # Two casts that this engine renders identically ARE the same clip.
     a = Cast("pc_1", "Joanna", "en-US", "neural", pitch_pct=-10)
@@ -326,12 +350,40 @@ def test_the_fingerprint_moves_when_the_casting_code_does(tmp_path, monkeypatch)
     assert PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly()).config_id() == before
 
 
-def test_a_monster_keeps_the_engine_that_can_still_change_its_timbre(tmp_path):
-    """The shipped default: the table on neural for the voices, monsters on
-    standard because `vocal-tract-length` is the only vendor equivalent for the
-    novelty-voiced monsters, and it exists on no other engine."""
+def test_a_monster_stays_on_the_tables_engine_and_is_treated_afterwards(tmp_path):
+    """The shipped default. A monster is not a worse-sounding engine any more:
+    it is the same voice as everyone else with `tts/dsp.py` applied to it, so
+    the whole table is one production."""
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly(), engine="neural")
+
+    for key in ("dm", "pc_1", "npc", "monster:goblin_1"):
+        assert svc.engine_for(key) == "neural"
+
+    goblin = svc.cast("monster:goblin_1")
+    assert goblin.engine == "neural" and goblin.fx and goblin.vtl_pct == 0
+    assert "vocal-tract-length" not in svc.ssml("Fee fi.", goblin)
+    assert svc.media_type_for(goblin) == "audio/wav"
+    assert svc.media_type_for(svc.cast("dm")) == "audio/mpeg"
+
+    # One engine on the wire, and a monster asks for the one format that can be
+    # worked on without a codec.
+    assert svc.render("monster:goblin_1", "Fee fi.").media_type == "audio/wav"
+    assert svc.render("dm", "Narration.").media_type == "audio/mpeg"
+    calls = svc.client().calls
+    assert {c["Engine"] for c in calls} == {"neural"}
+    assert [c["OutputFormat"] for c in calls] == ["pcm", "mp3"]
+    assert calls[0]["SampleRate"] == "16000" and "SampleRate" not in calls[1]
+
+    # Which means one rate on the bill, where the split crossed two.
+    assert svc.render("monster:ogre_1", "x" * 100).usd == pytest.approx(16.0 / 10_000)
+
+
+def test_the_old_split_is_what_turning_the_treatment_off_restores(tmp_path):
+    """`DND_TTS_MONSTER_FX=0`: the table on neural for the voices, monsters on
+    standard because `vocal-tract-length` is the only vendor equivalent there
+    is for a novelty voice, and it exists on no other engine."""
     svc = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly(),
-                   engine="neural", monster_engine="standard")
+                   engine="neural", monster_engine="standard", monster_fx=False)
 
     assert svc.engine_for("dm") == "neural"
     assert svc.engine_for("pc_1") == "neural"
@@ -339,8 +391,9 @@ def test_a_monster_keeps_the_engine_that_can_still_change_its_timbre(tmp_path):
     assert svc.engine_for("monster:goblin_1") == "standard"
 
     goblin = svc.cast("monster:goblin_1")
-    assert goblin.engine == "standard" and goblin.vtl_pct
+    assert goblin.engine == "standard" and goblin.vtl_pct and goblin.fx is None
     assert "vocal-tract-length" in svc.ssml("Fee fi.", goblin)
+    assert svc.media_type_for(goblin) == "audio/mpeg"       # no treatment, no wrapper
 
     dm = svc.cast("dm")
     assert dm.engine == "neural"

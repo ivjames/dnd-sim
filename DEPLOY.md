@@ -173,7 +173,8 @@ override the process environment pm2 provides.
 | `DND_WRITE_TOKEN` | the shared secret the write routes require (`X-Dnd-Token` header): `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. Unset → each answers 503 with `{"code": "writes_unconfigured"}`, and reading a game, listing games, the SSE stream, `/api/tts` and the narration hold stay anonymous. Set it with **`dndsim token`**, which writes it straight into `.env`; it is not kept in `/etc/environment`, being this app's own secret rather than one of the box's shared vendor keys. Unset for pm2's launch like every other key |
 | `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
 | `DND_TTS_ENGINE` | `neural` — Polly engine for the table ($16/1M). `standard`, `long-form` and `generative` also work; each is sent only the SSML it accepts |
-| `DND_TTS_MONSTER_ENGINE` | `standard` — engine for speaking monsters ($4/1M), separate because `vocal-tract-length` is standard-only and it is what makes an ogre sound bigger than a goblin. Set equal to `DND_TTS_ENGINE` for one engine throughout |
+| `DND_TTS_MONSTER_ENGINE` | unset — speaking monsters sit on `DND_TTS_ENGINE` with everyone else. They were held on `standard` ($4/1M) for `vocal-tract-length`; `tts/dsp.py` makes an ogre bigger than a goblin now, so name an engine here only if you want the split back for its own sake |
+| `DND_TTS_MONSTER_FX` | `1` — post-process a speaking monster: a playback-rate size shift, and grit or a stone room for some of them. Its clip is asked for as `pcm` and served as `audio/wav`. `0` restores the old arrangement, `vocal-tract-length` on the standard engine, and with it the $4/1M rate for monster lines |
 | `DND_TTS_LANG` | `en-US` — the language whose voices are cast from |
 | `DND_TTS_DM_VOICE` | `Brian` — the DM's own voice; everyone else is dealt out of the rest |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` — where synthesized clips live |
@@ -266,13 +267,15 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 ### That the monsters can speak
 
 `/api/tts` answering `available:true` says the table's engine has a roster; it
-does not say Polly will read a **monster** line. Those are the only seats that
-write `<amazon:effect vocal-tract-length>`, and the only ones routed to
-`DND_TTS_MONSTER_ENGINE` (standard) to do it, because that tag exists on no
-other engine. Polly errors on a tag its engine does not support rather than
-ignoring it, so a wrong monster document is a 502 per line — which the page
-answers by speaking that line in the spectator's own browser voice. The game
-sounds fine. Nothing on the page says otherwise.
+does not say Polly will read a **monster** line. Those are the only seats asked
+for as `pcm` rather than `mp3` — their clips are post-processed (`tts/dsp.py`)
+and `pcm` is the one format that can be worked on without a codec — and, with
+`DND_TTS_MONSTER_FX=0`, the only ones writing `<amazon:effect
+vocal-tract-length>` and routed to `DND_TTS_MONSTER_ENGINE` (standard) to be
+allowed to. Polly errors on a tag or a sample rate its engine does not support
+rather than ignoring it, so a wrong monster request is a 502 per line — which
+the page answers by speaking that line in the spectator's own browser voice. The
+game sounds fine. Nothing on the page says otherwise.
 
 ```bash
 cd /var/www/dndsim && (set -a; . ./.env; set +a; .venv/bin/python -m tools.polly_check)
@@ -292,7 +295,10 @@ engine, voice, SSML, byte count and billed characters for each, and exiting
 non-zero if either fails. It uses a temporary cache directory and no game, so
 it neither fills `data/tts` nor charges a ledger; the two clips cost about
 $0.0005. `--dry-run` prints the documents without sending them, `--out DIR`
-keeps the mp3s to listen to.
+keeps the clips to listen to, and `--ab` renders the monster line a second time
+the old way — standard engine, `vocal-tract-length` — so the treated voice and
+the one it replaced can be played back to back. Whether the new one is better
+is a judgement; that is where it is made.
 
 When a monster line does fail, `dndsim logs` is the only place it shows:
 

@@ -275,9 +275,9 @@ GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>
 POST /api/games/<id>/pause | /resume | /stop                                   **write token**
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202                                  **write token**
-GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
+GET  /api/tts                           {"available":bool,"engine","monster_engine","monster_fx":bool,"language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
 POST /api/tts/cast       {party}       {"available":bool,"seats":[{"id","voice","language","accent","gender"}]} — who will read each seat, before the game exists; casts nothing, spends nothing
-GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
+GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line — audio/wav for a `monster:<id>` seat, whose clip is post-processed (`tts/dsp.py`); 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 Routes marked **write token** require the `X-Dnd-Token` header to match
 `DND_WRITE_TOKEN`; every other route is anonymous. See the 2026-09-04 `web/`
@@ -1848,3 +1848,94 @@ end, not one per turn. That one is still open.
 
 `tests/engine/test_threat_pathing.py` pins the lot, replaying the recorded
 board.
+
+
+### 2026-09-04 — tts/ — the monster voice is made here, not asked for
+
+The monsters were on Polly's **standard** engine and the rest of the table on
+**neural**, for one reason: `<amazon:effect vocal-tract-length>` exists on no
+other engine, and it was the only vendor equivalent for the novelty voices
+`speech.js` casts a monster from on a device. The price was every monster line
+being read by the older, flatter engine — audibly a different production from
+the narrator speaking over it, which is what a listener actually noticed.
+
+**New module `tts/dsp.py`** (pure; no boto3, no I/O, imports nothing else in
+the app), and the effect is made after synthesis instead:
+
+```python
+SAMPLE_RATE = 16000                 # pcm's ceiling, and what we ask for
+@dataclass(frozen=True)
+class MonsterFX:                    # size_pct, growl_pct, cave_pct; all 0 = falsy
+    def token(self) -> str          # the cache key's share, incl. this module's fingerprint
+    def rate_pct(self) -> int       # 100 + size_pct: the duration compensation
+    def playback_rate(self, in_rate=SAMPLE_RATE) -> int
+def apply(pcm: bytes, fx: MonsterFX, in_rate=SAMPLE_RATE) -> tuple[bytes, int]
+def wav(pcm: bytes, rate: int) -> bytes
+def source_fingerprint() -> str     # folded into `voices.source_fingerprint`
+```
+
+1. **The size shift is a sample rate.** Playing a recording at a different rate
+   scales the whole spectrum — pitch and formants together, which is what "a
+   bigger creature" means — so it is an integer in the WAV header rather than a
+   pass over the samples, and the browser's own resampler does the arithmetic.
+   What it also scales is duration, and that is undone before the audio exists:
+   the line is spoken at `<prosody rate>` = `100 + size_pct`, which is exactly
+   the factor the playback rate slows it by. `rate` is legal on every engine
+   this app uses, unlike the tag it replaces. It is a **cruder** effect than
+   Amazon's — VTL moves formants without pitch — applied to much better audio;
+   which of the two sounds better is a judgement, and `tools/polly_check.py
+   --ab` renders the same line both ways so it can be made by listening.
+
+2. **Only grit and a room touch samples**, and they are dealt to some monsters
+   rather than all: soft saturation (a rational `tanh`) and a feedback comb at
+   `CAVE_DELAY_S`, counted in samples of the *playback* rate so the cave is the
+   same size whatever the creature is. Both raise the level as a side effect,
+   so the RMS the clip arrived with is restored afterwards and the result is
+   normalized if anything still passes full scale: a monster is a different
+   voice, not a louder one. Worst case is ~150 ms for a 20-second clip, once —
+   a clip is cached forever, so this never runs twice for the same line.
+
+3. **A monster's clip is `pcm`, and is served as `audio/wav`.** `pcm` is the
+   one Polly format that can be worked on without a codec ("signed 16-bit, 1
+   channel (mono), little-endian", 8000 or 16000 Hz only), and an MP3 back out
+   would need an encoder — a system dependency on the one path that must not
+   acquire one. `PollyTTS.media_type_for(cast)` decides, `TTSResult.media_type`
+   carries it, and the route types the response from the **cast** rather than
+   the bytes, so a cache hit and a fresh synthesis cannot disagree. The 16 kHz
+   ceiling against the table's 24 kHz is the cost, and it lands where it is
+   least audible: a monster is shifted down the spectrum anyway.
+
+4. **`Cast` gains `fx: MonsterFX | None`** (None for every seat but a monster)
+   and `Cast.cache_key` folds it in, as does `PollyTTS.cache_key_for` — the
+   token is empty for an untreated seat, so **the table's existing clips keep
+   the keys they were paid for** and only the monsters' are orphaned.
+   `cast_for` takes `monster_fx: bool = True`; `voices.source_fingerprint`
+   now covers `tts/dsp.py` too, so an edit to the audio maths retires the
+   browser's year-immutable copies as an edit to the casting does.
+
+5. **`DEFAULT_MONSTER_ENGINE` is now `""` — the table's.**
+   `DND_TTS_MONSTER_ENGINE` still names one if a deployment wants the split for
+   its own reasons. §7 above no longer describes the default; everything it
+   says about the split — the per-seat engine on the `Cast`, the per-engine
+   roster, reserving at the seat's own rate, `/api/tts` needing every
+   configured engine to have a roster — still holds and is still exercised,
+   because the split is still reachable.
+
+6. **`DND_TTS_MONSTER_FX=0` restores the whole old arrangement**: no
+   post-processing, `vocal-tract-length` back in the SSML, and the monster
+   engine defaulting to `standard` because that tag exists nowhere else. It is
+   the way back if the treatment turns out to sound worse, and it is a
+   supported configuration rather than a dead branch —
+   `tests/tts/test_polly_contract.py` holds every document **both**
+   arrangements can emit against Amazon's matrix, and `polly_check
+   --no-monster-fx` sends one.
+
+**Cost.** Monsters move from $4/1M characters to $16/1M, since they are on the
+neural engine now. TTS-COSTS.md §6 put a game at ~$0.45 with the split against
+$0.48 all-neural; it is the second number now.
+
+`tests/tts/test_dsp.py` is new and covers the arithmetic — the identity case,
+the duration compensation across the whole `size_pct` range, the level being
+held, the comb's delay in wall-clock, a ragged stream costing a sample rather
+than the line, and the header being one the standard library's `wave` can
+open. Whether it sounds good is not something a test can say.
