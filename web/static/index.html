@@ -58,38 +58,16 @@
 
 <main class="layout">
 
-  <!-- BOARD: the map, and beside it the whole table in initiative order —
-       party and enemies in one list rather than three panels of the same
-       people sorted three ways. Fixed in height so a long fight cannot push
-       the transcript off the screen; the roster scrolls inside itself. -->
-  <section class="board" aria-label="Battle map and the table">
-
-    <div class="panel quad quad-map">
-      <h2 class="panel-title">Battle map</h2>
-      <div class="canvas-wrap">
-        <canvas id="grid" width="480" height="400" role="img" aria-label="Battle grid"></canvas>
-      </div>
-      <div id="grid-legend" class="legend">
-        <span><i class="sw party"></i>party</span>
-        <span><i class="sw enemy"></i>enemy</span>
-        <span><i class="sw neutral"></i>neutral</span>
-        <span><i class="sw diff"></i>difficult</span>
-        <span><i class="sw wall"></i>wall</span>
-      </div>
-    </div>
-
-    <div class="panel quad">
-      <h2 class="panel-title">The table</h2>
-      <div class="panel-body">
-        <div id="roster" class="roster"><p class="empty">No game loaded.</p></div>
-      </div>
-    </div>
-
-  </section>
-
   <!-- FEED: the transcript, capped so that new lines scroll inside it rather
        than lengthening the page, and under it the narrator's transport with
-       the table controls beside it. -->
+       the table controls beside it.
+
+       It is FIRST in the source and painted second: on a wide screen the
+       stylesheet orders the board above it, and on a phone the order is
+       dropped and the page reads as it is written. A reader who is browsing
+       this by keyboard or by screen reader gets the story before the
+       instruments at every width, which `order` alone could not give them —
+       it moves the boxes, not the reading. -->
   <section class="feed" aria-label="Transcript, narration and controls">
     <div class="panel panel-fill">
       <h2 class="panel-title">Transcript</h2>
@@ -151,6 +129,35 @@
         <p id="conn" class="conn conn-off">stream: offline</p>
       </div>
     </div>
+  </section>
+
+  <!-- BOARD: the map, and beside it the whole table in initiative order —
+       party and enemies in one list rather than three panels of the same
+       people sorted three ways. Fixed in height so a long fight cannot push
+       the transcript off the screen; the roster scrolls inside itself. -->
+  <section class="board" aria-label="Battle map and the table">
+
+    <div class="panel quad quad-map">
+      <h2 class="panel-title">Battle map</h2>
+      <div class="canvas-wrap">
+        <canvas id="grid" width="480" height="400" role="img" aria-label="Battle grid"></canvas>
+      </div>
+      <div id="grid-legend" class="legend">
+        <span><i class="sw party"></i>party</span>
+        <span><i class="sw enemy"></i>enemy</span>
+        <span><i class="sw neutral"></i>neutral</span>
+        <span><i class="sw diff"></i>difficult</span>
+        <span><i class="sw wall"></i>wall</span>
+      </div>
+    </div>
+
+    <div class="panel quad">
+      <h2 class="panel-title">The table</h2>
+      <div class="panel-body">
+        <div id="roster" class="roster"><p class="empty">No game loaded.</p></div>
+      </div>
+    </div>
+
   </section>
 
 </main>

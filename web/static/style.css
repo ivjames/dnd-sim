@@ -268,6 +268,9 @@ body {
    is 150px taller once a write token is in — comes out of the board rather
    than out of the bottom of the viewport, down to the floor below. */
 .board {
+  /* Painted above the feed, though the feed is written first: see the source
+     order note in index.html. */
+  order: 1;
   display: grid; gap: 12px;
   grid-template-columns: minmax(260px, min(var(--board-h), 60%)) minmax(0, 1fr);
   flex: 0 1 var(--board-h);
@@ -290,7 +293,7 @@ body {
    that because the transcript panel has a definite flex basis below — with an
    `auto` basis the feed would ask for the whole transcript, thousands of
    pixels of it, and take the board with it. */
-.feed { flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+.feed { order: 2; flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 /* Narration and controls share the line under the transcript; with no
    narration on this game the controls take the whole of it. */
 .under { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; flex: 0 0 auto; }
@@ -720,13 +723,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
      band may shrink here, because the page scrolls. With `flex: 1 1 auto`
      still on the feed it shrank to nothing under a board that no longer
      fitted, and the board drew straight over the transcript. */
+  /* Source order, which is already story-first: the ordering above is what is
+     dropped here, not added to. */
   .board {
     grid-template-columns: minmax(0, 1fr);
-    order: 2; flex: 0 0 auto; min-height: 0;
+    order: 0; flex: 0 0 auto; min-height: 0;
   }
   .quad { height: var(--board-h); }
   .roster { columns: auto 1; }
-  .feed { order: 1; flex: 0 0 auto; min-height: auto; }
+  .feed { order: 0; flex: 0 0 auto; min-height: auto; }
   :root { --board-h: 300px; }
   .feed .panel-fill { flex: 0 0 auto; height: 58vh; min-height: 280px; }
   .row, .row-4 { grid-template-columns: 1fr; }
