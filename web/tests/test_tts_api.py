@@ -121,13 +121,13 @@ def test_a_clip_is_charged_to_the_game_that_played_it(tts_app, tts_client, tts, 
     text = "The cart still smoulders."
     assert tts_client.get(speak_url(game, text=text)).status_code == 200
     led = entry.game.ledger.to_dict()
-    row = led["by_role"]["tts"]
+    row = led["by_role"]["narrator"]
     assert row["chars"] == len(text) and row["calls"] == 1
     assert led["total_usd"] == pytest.approx(len(text) * 4.0 / 1_000_000, rel=1e-6)
 
     # A cache hit costs nothing, so it is charged nothing.
     assert tts_client.get(speak_url(game, text=text)).status_code == 200
-    assert entry.game.ledger.by_role["tts"]["calls"] == 1
+    assert entry.game.ledger.by_role["narrator"]["calls"] == 1
 
 
 def test_narration_stops_at_the_budget(tts_app, tts_client, tts, game):
@@ -374,3 +374,31 @@ def test_the_shipped_parties_state_a_gender_only_where_their_persona_does():
             elif not female and not male:
                 assert not stated, (path, member["name"], "persona states no gender")
     assert seen >= 28
+
+
+def test_a_stranger_cannot_raise_the_ceiling_by_asking(tts_app, tts_client, tts,
+                                                       sample_config, monkeypatch):
+    """`budget_usd` arrives in the request body on a route that takes no
+    credential (TTS-COSTS.md §1), so narration stops at the lower of the game's
+    own budget and one this server owns."""
+    monkeypatch.setenv("DND_TTS_MAX_USD", "0.0001")     # ~25 characters
+    game = create(tts_client, dict(sample_config, budget_usd=1_000_000))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+
+    assert tts_client.get(speak_url(game, text="Twenty characters..")).status_code == 200
+    over = tts_client.get(speak_url(game, text="And now some more of them."))
+    assert over.status_code == 402
+    assert "server ceiling" in over.get_json()["error"]
+
+    # The game's own budget still binds when it is the lower of the two, and
+    # the message says which one stopped it.
+    monkeypatch.setenv("DND_TTS_MAX_USD", "1000")
+    poor = create(tts_client, dict(sample_config, budget_usd=0))["id"]
+    said = tts_client.get(speak_url(poor, text="Anything.")).get_json()["error"]
+    assert "budget of $0.00" in said
+
+
+def test_a_bad_ceiling_is_the_default_not_a_crash(tts_app, tts_client, tts, game, monkeypatch):
+    monkeypatch.setenv("DND_TTS_MAX_USD", "not a number")
+    assert tts_client.get(speak_url(game)).status_code == 200

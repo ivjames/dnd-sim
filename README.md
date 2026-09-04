@@ -163,6 +163,7 @@ world stay the engine's and the DM's.
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
 | `DND_TTS_CACHE_MB` | `512` | Cache ceiling; least-recently-played clips go first. |
 | `DND_TTS_MAX_CHARS` | `400` | Longest line the endpoint will synthesize. |
+| `DND_TTS_MAX_USD` | `10.00` | Server-owned ceiling on a game's spend before narration stops, whatever `budget_usd` says. |
 
 Any of the three `DND_*_MODEL` values, and a party member's per-seat `model`,
 may name a model on any platform above — the platform is chosen from the
@@ -353,9 +354,16 @@ DM, not a PC, not an NPC that isn't a monster.
 
 Polly's standard engine is **$4.00 per million characters**, and that spend is
 charged to the game's own `budget_usd` alongside the model calls — it shows up
-as `by_role.tts` in the ledger, and a game that has spent its budget goes back
+as `by_role.narrator` in the ledger, and a game that has spent its budget goes back
 to the browser's voices rather than quietly spending more. A whole game's
 narration is a few cents.
+
+Narration stops at the **lower** of the game's own `budget_usd` and
+`DND_TTS_MAX_USD` (default $10), a ceiling the server owns and a submitted
+config cannot raise — `POST /api/games` takes no credential, so left alone a
+stranger picks the ceiling (`TTS-COSTS.md` §1). That bounds one game; it does
+not bound how many games a stranger may create, which needs spectator
+authentication the app does not have.
 
 A game that states no `budget_usd` gets `GameConfig`'s default rather than a
 blank cheque, and a zero or negative budget refuses everything — the

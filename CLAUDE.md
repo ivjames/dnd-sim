@@ -121,9 +121,13 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   no Polly (no AWS credentials, a mock game, the budget spent) the page speaks
   it with the browser's own `speechSynthesis`, which is what it did before and
   is still the fallback for a single failed line. Standard engine, $4/1M
-  characters, charged to the game's `budget_usd` as `by_role.tts`, every clip
-  cached in `data/tts` so a line is paid for once. `DND_TTS=0` turns it off;
-  mock games never touch it unless `DND_TTS=1`.
+  characters, charged to the game's `budget_usd` as `by_role.narrator`, every clip
+  cached in `data/tts` so a line is paid for once, and stopped at the lower of
+  the game's `budget_usd` and the server-owned `DND_TTS_MAX_USD` (default $10),
+  because `POST /api/games` is unauthenticated and the config's budget is
+  whatever the caller asked for. `DND_TTS=0` turns it off; mock games never
+  touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
+  its §6 records what Polly changed and what is still open.
 - **Live mode is real money.** Each game config carries `budget_usd`; the
   orchestrator tracks spend per role and halts the game at `budget_exceeded`.
   Prompts are built for frugality (compact state views, enumerated legal

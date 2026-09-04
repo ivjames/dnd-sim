@@ -5,8 +5,10 @@ Today's spoken narration is the browser's own `speechSynthesis` (see README,
 an estimate of what it would cost to render narration on the server instead,
 through a paid TTS API — Smallest.ai, Deepgram, Cartesia or ElevenLabs.
 
-Nothing here is implemented. It is a costing, plus the two design facts that
-decide whether the costing holds.
+It is a costing, plus the two design facts that decide whether the costing
+holds. It was written before anything was implemented; **Amazon Polly is now
+implemented** on the strength of it — see "Amazon Polly, after the fact" at the
+bottom, which is the only part of this document written after the decision.
 
 ## 1. How much text a game speaks
 
@@ -139,6 +141,7 @@ unless noted.
 
 | provider / model | $/1M chars | notes |
 |---|---|---|
+| Amazon Polly standard | **$4.00** | added after the fact; see the last section |
 | Deepgram Aura-1 | **$15.00** | $13.50 on Growth (~$4k/yr commitment) |
 | Smallest.ai Lightning v3.1 | **$17.50** | $19.50 for v3.1 Pro; 15 concurrent streams, 100 RPM |
 | Deepgram Aura-2 | **$30.00** | $27.00 on Growth |
@@ -162,6 +165,7 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 
 | provider | per game, all spoken | per game, mechanics muted | per listening hour |
 |---|---|---|---|
+| Amazon Polly standard | $0.12 | $0.09 | $0.21 |
 | Deepgram Aura-1 | $0.45 | $0.33 | $0.78 |
 | Smallest.ai Lightning v3.1 | $0.53 | $0.39 | $0.91 |
 | Deepgram Aura-2 | $0.90 | $0.66 | $1.57 |
@@ -286,3 +290,52 @@ server-owned budget cap that the submitted config cannot raise, plus
 authentication on the routes that create games and inject notes. Three separate
 findings in this document land there. Paid narration is the change that makes
 the existing gap expensive rather than merely open.
+
+## 6. Amazon Polly, after the fact
+
+Written after §1–5, and the only section that describes something that exists.
+Polly was not costed above — the four vendors there are the ones that were on
+the table — so this records what it changes and, more usefully, what it does
+not.
+
+**It is the cheap end by a wide margin.** $4.00/1M characters on the standard
+engine ([pricing](https://aws.amazon.com/polly/pricing/), read 2026-09-04):
+3.75× under Aura-1, the cheapest option §5 recommends. At the central 30,000
+characters that is **$0.12 a game**, against model spend of $1.47 and $0.86 for
+the same two runs — **8–14% on the cost of a game**, where §3's "the number
+that matters" put the cheapest credible option at 30–60%. The bad case §1
+declines to bound is $1.36 rather than $5.10.
+
+That does not make §3's conclusion wrong; it makes it cheaper to satisfy.
+Narration is still a line item, still unbounded by anything in the
+configuration, and still had to go into the ledger before being turned on.
+
+**What §5's recommendation was weighing does not disappear.** Polly's standard
+voices are concatenative and older than any of the four; §5's framing — "better
+voices than the OS ships", not "voice agents" — is the bar it is being held to,
+and the neural engine at $16.00 is available (and priced in `tts/client.py`)
+for anyone who wants to pay Aura-2 money for it. What Polly has that none of
+the four do is `<amazon:effect vocal-tract-length>`, which is how a speaking
+monster gets a voice at all now that the OS novelty voices are gone — §4 called
+that feature killed, and it turns out to be portable after all, but only on the
+standard engine.
+
+**§4's two design facts held.** Caching is by `hash(engine, voice, ssml)` and is
+the cost model, exactly as argued. The phrasing stayed in JavaScript: the page
+sends the phrase and the voice key it already computed, which is §4's first
+option — the cheaper one, whose price was the auth question.
+
+**That price is unpaid.** §1 and §4 land three times on the same missing piece,
+and implementing narration did not build it:
+
+- `DND_TTS_MAX_USD` (default $10.00) is now a **server-owned per-game ceiling**
+  that the submitted `budget_usd` cannot raise, which is the narrow half of
+  §1's ask. Narration stops at the lower of the two.
+- **Spectator authentication does not exist**, so nothing bounds how many games
+  a stranger may create, and `POST /api/games/<id>/note` still takes 2,000
+  unauthenticated characters that `speech.js` speaks as story — ~$0.008 a note
+  at Polly's rate, against the ~$0.03 §4 costed on Aura-1. Cheaper, still open.
+
+So the perimeter §5 asks for is one quarter built. The cost of leaving the rest
+is now a quarter of what it was, which is a reason to be less alarmed and not a
+reason to consider it closed.

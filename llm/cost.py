@@ -236,7 +236,7 @@ class Ledger:
     def add_usd(self, role: str, usd: float, **counters: int) -> float:
         """Charge a cost that is not a model call — a priced-elsewhere service.
 
-        Used by the web layer for Polly narration (`role="tts"`,
+        Used by the web layer for Polly narration (`role="narrator"`,
         `chars=<billed characters>`): it is real money the game spent, so it
         belongs against the same `budget_usd` as the model calls rather than
         in a second budget nobody is watching.

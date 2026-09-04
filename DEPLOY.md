@@ -170,6 +170,7 @@ override the process environment pm2 provides.
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` — where synthesized clips live |
 | `DND_TTS_CACHE_MB` | `512` — ceiling; least-recently-played clips are dropped past it |
 | `DND_TTS_MAX_CHARS` | `400` — longest line the endpoint will synthesize (the browser chunks at 220) |
+| `DND_TTS_MAX_USD` | `10.00` — server-owned ceiling on one game's spend before narration stops, regardless of the `budget_usd` its config asked for. `POST /api/games` is unauthenticated, so this is the only cap a stranger cannot raise |
 | `DND_SIM_MOCK` | unset in production; `1` → `MockLLMClient`, zero API calls |
 | `DND_SIM_DB` | `/var/www/dndsim/data/dndsim.sqlite3` — SQLite transcript store |
 | `DND_SIM_EXAMPLES` | `./examples` — where `/api/presets` reads scenarios from |
@@ -219,7 +220,7 @@ curl -N 'https://dndsim.lab980.com/api/games/<id>/stream?after=-1' | head -20
 | wipe history | `pm2 stop dnd-sim`, delete `data/dndsim.sqlite3*`, `dndsim restart` |
 | tests | `.venv/bin/python -m pytest -q` |
 | cost safety | every game carries `budget_usd`; the orchestrator halts at `budget_exceeded`. When in doubt, `DND_SIM_MOCK=1`. |
-| narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.tts` in the ledger). A game's whole narration is a few cents at `standard`; `DND_TTS=0` removes it entirely. |
+| narration spend | Polly is charged to the same `budget_usd` as the model calls (`by_role.narrator` in the ledger). A game's whole narration is a few cents at `standard`; `DND_TTS=0` removes it entirely. |
 | clip cache | `du -sh data/tts` — safe to delete wholesale; the next listen re-synthesizes and re-pays. |
 | voices sound wrong | `curl -s localhost:8071/api/tts` says whether Polly answered and which engine; `available:false` means the page is using each spectator's own browser voices. |
 

@@ -165,7 +165,7 @@ PRICES = {"claude-sonnet-5": (2.0, 10.0), "claude-haiku-4-5-20251001": (1.0, 5.0
 class Ledger:
     def add(self, role: str, resp: LLMResponse) -> float   # returns USD for this call
     def add_usd(self, role: str, usd: float, **counters: int) -> float   # a priced-elsewhere service; see the 2026-09-04 tts amendment
-    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}, "tts": {"calls","chars","usd"}}
+    total_usd: float ; by_role: dict[str, dict]   # {"dm": {"calls","in","out","usd"}, "player:pc_1": {...}, "narrator": {"calls","chars","usd"}}
     def to_dict(self)
 ```
 Model names come from env: `DND_DM_MODEL` (default `claude-sonnet-5`), `DND_PLAYER_MODEL` (default `claude-haiku-4-5-20251001`), `DND_SUMMARY_MODEL` (default = player model). A model id may name any platform in `llm/providers.py`; see the amendment "2026-09-03 — llm/ — multi-provider routing" for `RouterClient`, `OpenAICompatClient` and per-seat `model`.
@@ -961,7 +961,9 @@ with the browser's voices kept as a real fallback rather than deleted.
 
 4. **Narration is charged to `budget_usd`.** `Ledger.add_usd(role, usd,
    **counters)` is new (§2 above) and takes a cost that is not a model call;
-   the web layer calls it as `add_usd("tts", usd, chars=n)`, so `by_role["tts"]`
+   the web layer calls it as `add_usd("narrator", usd, chars=n)`, so
+   `by_role["narrator"]` (the role name TTS-COSTS.md §3 asks for, and the right
+   one: `by_role` holds seats at the table, not technologies)
    sits beside the model rows and the orchestrator's existing budget check stops
    a game whose narration has spent it. Only an actual synthesis is charged — a
    cache hit costs nothing and is charged nothing.
@@ -994,6 +996,15 @@ with the browser's voices kept as a real fallback rather than deleted.
    game_id, usd)` — an atomic `cost_usd = cost_usd + ?`, correct against
    concurrent spectators, and safe only because nothing is writing snapshots
    over that row any more. The budget stop applies to it either way.
+
+   **The cap is server-owned as well as game-owned.** `budget_usd` arrives in
+   the request body on a route that takes no credential (TTS-COSTS.md §1), so
+   narration stops at the lower of it and `DND_TTS_MAX_USD` (default $10.00).
+   That bounds one game and nothing more: how many games a stranger may create
+   is unbounded, and `POST /api/games/<id>/note` still feeds 2,000
+   unauthenticated characters into a `dm_note` that `speech.js` always speaks.
+   Spectator authentication is the missing piece and this amendment does not
+   add it.
 
    **An unknown budget is `GameConfig`'s default, never zero.** Zero is a real
    value — `Game._check_budget` halts at `total_usd >= budget_usd`, so a zero

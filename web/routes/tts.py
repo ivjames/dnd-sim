@@ -15,6 +15,7 @@ just less well.
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import contextmanager
 from typing import Any
@@ -68,6 +69,29 @@ def _gender_for(entry: Any, row: Any, key: str) -> str:
         if isinstance(member, dict) and str(member.get("id") or "") == key:
             return str(member.get("gender") or "")
     return ""
+
+
+#: A ceiling this server owns, which the submitted config cannot raise.
+#:
+#: TTS-COSTS.md §1 makes the point that `budget_usd` arrives in the request body
+#: on a route that takes no credential, so left alone "a stranger picks the
+#: ceiling" — and narration is the change that makes that expensive rather than
+#: merely open. Narration therefore stops at the LOWER of the game's own budget
+#: and this. It bounds one game, which is what a per-game cap can do; it does
+#: not bound how many games a stranger may create. That needs spectator
+#: authentication, which this endpoint cannot invent for itself.
+DEFAULT_MAX_USD = 10.00
+
+
+def _server_cap() -> float:
+    raw = os.environ.get("DND_TTS_MAX_USD", "").strip()
+    if not raw:
+        return DEFAULT_MAX_USD
+    try:
+        return float(raw)
+    except ValueError:
+        current_app.logger.warning("bad DND_TTS_MAX_USD %r; using %.2f", raw, DEFAULT_MAX_USD)
+        return DEFAULT_MAX_USD
 
 
 def _default_budget() -> float:
@@ -192,7 +216,7 @@ def _charge(game_id: str, entry: Any, chars: int, usd: float) -> None:
     """
     ledger = _ledger_of(entry)
     if ledger is not None:
-        ledger.add_usd("tts", usd, chars=chars)
+        ledger.add_usd("narrator", usd, chars=chars)
         # ...and write it down. A `GameEntry` stays in the registry for the
         # life of the process, but its monitor thread returns at the first
         # terminal status — so for a finished game, which is exactly the game
@@ -290,14 +314,16 @@ def speak(game_id: str):
     if hit is not None:
         return _audio(hit, cast.voice_id, etag)
 
-    budget = _budget_of(entry, row)
+    # The lower of what the game asked for and what this server allows.
+    budget = min(_budget_of(entry, row), _server_cap())
     try:
         with _admission(game_id, entry, svc.price_of(len(text)), budget):
             result = svc.synthesize(key, text, gender)
     except _NoBudget as exc:
+        capped = budget < _budget_of(entry, row)
         return _err(
-            f"budget of ${budget:.2f} is spent (${exc.committed:.4f}); "
-            "narration falls back to the browser's voices",
+            f"{'server ceiling' if capped else 'budget'} of ${budget:.2f} is spent "
+            f"(${exc.committed:.4f}); narration falls back to the browser's voices",
             402,
         )
     except TTSError as exc:
