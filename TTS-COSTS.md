@@ -410,3 +410,26 @@ Two consequences worth stating:
 - **A game crosses two rates.** `by_role.narrator` is one row and the ledger
   charges each clip at its own engine's rate, so the per-character figure for a
   game is a blend and not a constant.
+
+### Attribution, after listening to it
+
+The first thing a listener disliked was not a voice but a wording: the
+speaker's name was inside the spoken line, so a monster announced itself
+through its own `vocal-tract-length` distortion and Polly read the colon
+between the two as a label. The name is now spoken by the narrator as its own
+clip, ahead of the line (`speech.js: attributionFor`, `segmentsFor`; the
+reasoning is in `CONTRACTS.md`'s 2026-09-04 web/static amendment). A PC still
+gets no announcement — their voice is the attribution.
+
+It costs a request per attributed line and almost no money. The billed
+characters are the same to within one per line, and the announcement of a given
+name is byte-identical every time, so §4's cache — keyed on
+`(engine, voice id, SSML)`, with no game in it — pays for one clip per distinct
+speaker name and then never again, in this game or any later one.
+
+The one-off is the other direction: changed wording is a changed key, so the
+dialogue clips already on disk are orphaned and each of those lines is paid for
+once more. It is bounded by dialogue, which is a small share of a game's
+characters — every mechanics and narration clip keeps its key. The orphans are
+not deleted; `AudioCache.prune` is size-triggered LRU, so they wait until the
+directory passes its ceiling and are then the first to go.
