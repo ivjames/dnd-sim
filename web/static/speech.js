@@ -252,14 +252,16 @@
       var an = String(a.name || ''), bn = String(b.name || '');
       return an < bn ? -1 : an > bn ? 1 : 0;
     });
-    var pool = all.filter(function (v) { return langPrefix(v.lang) === pref; });
-    if (!pool.length) pool = all;
-    // Drop the novelty voices before anyone is cast — including the DM, who
+    // Drop the novelty voices before anyone is cast — including the DM, which
     // takes pool[0] when no voice is flagged default, and alphabetically that
-    // is "Albert" on a Mac. A device with nothing but novelty voices keeps
-    // them rather than going silent.
-    var speakable = pool.filter(function (v) { return !isNoveltyVoice(v); });
-    if (speakable.length) pool = speakable;
+    // is "Albert" on a Mac. Discard them across the WHOLE list first, then
+    // narrow by language: a real voice in the wrong language still reads the
+    // line, where Bubbles in the right one does not. Only a device with no
+    // real voice anywhere falls back to them, rather than going silent.
+    var real = all.filter(function (v) { return !isNoveltyVoice(v); });
+    var base = real.length ? real : all;
+    var pool = base.filter(function (v) { return langPrefix(v.lang) === pref; });
+    if (!pool.length) pool = base;
     if (!pool.length) return { voice: null, pitch: 1, rate: 1, key: key };
 
     var dmIdx = 0;
