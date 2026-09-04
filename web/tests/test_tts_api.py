@@ -488,3 +488,75 @@ def test_a_nonstandard_engine_with_no_roster_says_so(tts_app, tts_client, tts):
     tts.voices = lambda: ()
     body = tts_client.get("/api/tts").get_json()
     assert body["available"] is False and "could be listed" in body["reason"]
+
+
+def test_a_budget_that_cannot_be_compared_is_not_a_budget(tts_client, tts, sample_config):
+    """`float("NaN")` passes coercion, and NaN compares False against
+    everything — so a NaN budget is not a large budget, it is no budget check
+    at all. It defeats `Game._check_budget` too, not just this endpoint."""
+    for bad in ("NaN", "nan", "inf", "-inf", "Infinity"):
+        rv = tts_client.post("/api/games", json={"config": dict(sample_config, budget_usd=bad)})
+        assert rv.status_code == 400, bad
+        assert "finite" in rv.get_json()["error"], bad
+    assert tts.calls == []
+
+
+def test_a_nan_budget_already_in_the_row_is_not_a_blank_cheque(tts_app, tts_client, tts,
+                                                               sample_config):
+    """Rows written before that check exists, or by hand."""
+    game = create(tts_client, sample_config)["id"]
+    db = tts_app.config["DND_DB"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.config = dict(entry.config, budget_usd=float("nan"))
+    entry.game.ledger = Ledger()
+    entry.game.ledger.add_usd("dm", 50.0)          # far past any sane ceiling
+
+    rv = tts_client.get(speak_url(game, text="Anything at all."))
+    assert rv.status_code == 402
+    assert tts.calls == []
+    assert db.get_game(game) is not None
+
+
+def test_concurrent_charges_do_not_lose_each_other(tts_app, tts_client, tts, sample_config):
+    """`persist_snapshot()` reads the ledger total and writes it ABSOLUTELY.
+
+    The window is between that read and that write: a charge whose write stalls
+    there resumes and lands its now-stale total on top of a newer one. The
+    in-memory ledger stays right and the row gives the difference back at the
+    next restart, so the delay has to go inside the write, not before it.
+    """
+    game = create(tts_client, dict(sample_config, budget_usd=10.0))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+    db = tts_app.config["DND_DB"]
+
+    real_save = db.save_snapshot
+    seen = []
+    newer_landed = threading.Event()
+
+    def racing_save(game_id, snapshot, status=None, cost_usd=None):
+        mine = len(seen)
+        seen.append(cost_usd)
+        if mine == 0:
+            newer_landed.wait(timeout=0.5)      # let a newer write land first
+        real_save(game_id, snapshot, status=status, cost_usd=cost_usd)
+        if mine == 1:
+            newer_landed.set()
+
+    db.save_snapshot = racing_save
+    try:
+        lines = ["Line number 0.", "Line number 1."]
+        threads = [threading.Thread(
+            target=lambda t=t: tts_app.test_client().get(speak_url(game, text=t)))
+            for t in lines]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+    finally:
+        db.save_snapshot = real_save
+
+    expected = sum(len(t) for t in lines) * 4.0 / 1_000_000
+    assert entry.game.ledger.total_usd == pytest.approx(expected, rel=1e-6)
+    # The row must agree with the ledger, not with whichever write landed last.
+    assert db.get_game(game)["cost_usd"] == pytest.approx(expected, rel=1e-6)

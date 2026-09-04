@@ -15,6 +15,7 @@ just less well.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from contextlib import contextmanager
@@ -88,10 +89,13 @@ def _server_cap() -> float:
     if not raw:
         return DEFAULT_MAX_USD
     try:
-        return float(raw)
+        cap = float(raw)
     except ValueError:
+        cap = float("nan")
+    if not math.isfinite(cap):
         current_app.logger.warning("bad DND_TTS_MAX_USD %r; using %.2f", raw, DEFAULT_MAX_USD)
         return DEFAULT_MAX_USD
+    return cap
 
 
 def _default_budget() -> float:
@@ -130,9 +134,15 @@ def _budget_of(entry: Any, row: Any) -> float:
     ):
         if candidate is not None:
             try:
-                return float(candidate)
+                stated = float(candidate)
             except (TypeError, ValueError):
                 continue
+            # NaN compares False against everything, so a NaN budget is not a
+            # large budget — it is no budget check at all. `create_game` now
+            # refuses one, but a row written before it did, or by hand, must
+            # not be read as a blank cheque.
+            if math.isfinite(stated):
+                return stated
     return _default_budget()
 
 
@@ -170,6 +180,18 @@ def _spent(entry: Any, game_id: str) -> float:
 # there is no second process to race with.
 _ADMIT = threading.Lock()
 _RESERVED: dict[str, float] = {}
+#: One charge at a time per game. `persist_snapshot()` reads the ledger total
+#: and writes it ABSOLUTELY, so two charges finishing at once can commit out of
+#: order and the older total lands last — the in-memory ledger stays right and
+#: the row gives the difference back at the next restart. Recording the charge
+#: and writing it down have to be one step. Per game, so two games do not wait
+#: on each other's SQLite write.
+_CHARGE_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _charge_lock(game_id: str) -> threading.Lock:
+    with _ADMIT:
+        return _CHARGE_LOCKS.setdefault(game_id, threading.Lock())
 
 
 class _NoBudget(Exception):
@@ -216,16 +238,20 @@ def _charge(game_id: str, entry: Any, chars: int, usd: float) -> None:
     """
     ledger = _ledger_of(entry)
     if ledger is not None:
-        ledger.add_usd("narrator", usd, chars=chars)
-        # ...and write it down. A `GameEntry` stays in the registry for the
-        # life of the process, but its monitor thread returns at the first
-        # terminal status — so for a finished game, which is exactly the game
-        # people replay, nothing else would ever persist this. The charge would
-        # live in memory until a restart handed the budget back.
-        try:
-            entry.persist_snapshot()
-        except Exception:  # pragma: no cover - accounting must not kill playback
-            current_app.logger.exception("could not persist tts cost")
+        # Recording and persisting are one step, under one lock per game: see
+        # `_CHARGE_LOCKS`. `persist_snapshot` writes an absolute total, so
+        # unordered writes lose spend rather than merely reorder it.
+        with _charge_lock(game_id):
+            ledger.add_usd("narrator", usd, chars=chars)
+            # ...and write it down. A `GameEntry` stays in the registry for the
+            # life of the process, but its monitor thread returns at the first
+            # terminal status — so for a finished game, which is exactly the
+            # game people replay, nothing else would ever persist this. The
+            # charge would live in memory until a restart handed the budget back.
+            try:
+                entry.persist_snapshot()
+            except Exception:  # pragma: no cover - accounting must not kill playback
+                current_app.logger.exception("could not persist tts cost")
         return
     try:
         _db().add_cost(game_id, usd)

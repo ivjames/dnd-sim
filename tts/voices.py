@@ -25,6 +25,7 @@ device voice list:
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 __all__ = [
@@ -39,7 +40,35 @@ __all__ = [
     "normalize_gender",
     "GENDERS",
     "ENGINE_SSML",
+    "source_fingerprint",
 ]
+
+_SOURCE_FP: str | None = None
+
+
+def source_fingerprint() -> str:
+    """A digest of this module's own source.
+
+    Everything that turns a voice key and a line into audio lives here — the
+    roster, the hash, the pitch and timbre spreads, the SSML. A deployment that
+    changes any of it changes the audio while the engine, the language, the DM
+    voice and the voice ids all stay put, so a fingerprint built only from
+    those would not move and every browser would go on replaying its
+    year-long-immutable copies of the old casting.
+
+    Hashed rather than a hand-bumped constant because a constant is only
+    correct for as long as someone remembers it. Reading the source can fail
+    (a frozen or zipped deploy), and "unknown" is then stable, which is the
+    same behaviour as having no version at all rather than a worse one.
+    """
+    global _SOURCE_FP
+    if _SOURCE_FP is None:
+        try:
+            with open(__file__, "rb") as fh:
+                _SOURCE_FP = hashlib.sha256(fh.read()).hexdigest()[:8]
+        except OSError:  # pragma: no cover - unreadable source
+            _SOURCE_FP = "unknown"
+    return _SOURCE_FP
 
 
 @dataclass(frozen=True)

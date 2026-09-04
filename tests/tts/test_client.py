@@ -265,3 +265,23 @@ def test_only_what_the_engine_accepts_goes_on_the_wire(tmp_path):
     sent = fake.calls[0]["Text"]
     assert "vocal-tract-length" not in sent and "pitch=" not in sent
     assert sent.startswith("<speak>")
+
+
+def test_the_fingerprint_moves_when_the_casting_code_does(tmp_path, monkeypatch):
+    """Engine, language, DM voice and roster do not describe a clip on their
+    own: `cast_for` and `ssml_for` decide the audio too, and a deployment that
+    changes them leaves every browser replaying year-long-immutable copies of
+    the old casting."""
+    from tts import voices
+
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly())
+    before = svc.config_id()
+
+    monkeypatch.setattr(voices, "_SOURCE_FP", "deadbeef")
+    after = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly()).config_id()
+    assert after != before
+
+    # It is a digest of the module, so it is stable across processes rather
+    # than random per run.
+    monkeypatch.setattr(voices, "_SOURCE_FP", None)
+    assert PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly()).config_id() == before

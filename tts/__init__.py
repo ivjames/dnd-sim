@@ -14,7 +14,15 @@ from tts.client import (
     TTSResult,
     from_env,
 )
-from tts.voices import Cast, Voice, billable_chars, cast_for, hash_key, ssml_for
+from tts.voices import (
+    Cast,
+    Voice,
+    billable_chars,
+    cast_for,
+    hash_key,
+    source_fingerprint,
+    ssml_for,
+)
 
 __all__ = [
     "AudioCache",
@@ -29,5 +37,6 @@ __all__ = [
     "cast_for",
     "from_env",
     "hash_key",
+    "source_fingerprint",
     "ssml_for",
 ]

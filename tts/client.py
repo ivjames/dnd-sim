@@ -22,7 +22,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from tts.cache import AudioCache, cache_key
-from tts.voices import STANDARD_ENGLISH, Cast, Voice, billable_chars, cast_for, ssml_for
+from tts.voices import (
+    STANDARD_ENGLISH,
+    Cast,
+    Voice,
+    billable_chars,
+    cast_for,
+    source_fingerprint,
+    ssml_for,
+)
 
 __all__ = [
     "PRICE_USD_PER_MILLION_CHARS",
@@ -225,7 +233,9 @@ class PollyTTS:
         rather than leaving them to be replayed for a year.
         """
         ids = ",".join(v.id for v in self.voices())
-        return cache_key(self.engine, self.language, self.dm_voice, ids)[:12]
+        return cache_key(
+            self.engine, self.language, self.dm_voice, ids, source_fingerprint()
+        )[:12]
 
     def cached(self, ckey: str) -> bytes | None:
         """A clip already paid for, or None. The caller checks this before the

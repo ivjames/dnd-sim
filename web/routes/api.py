@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Any
 
@@ -72,7 +73,15 @@ def create_game():
         if "seed" in config:
             config["seed"] = int(config["seed"])
         if "budget_usd" in config:
-            config["budget_usd"] = float(config["budget_usd"])
+            # `float()` accepts "NaN" and "inf", and NaN defeats every budget
+            # check in the app rather than raising one: `total_usd >= nan` is
+            # False, so `Game._check_budget` never halts, and so is every
+            # comparison the narration endpoint makes. A budget that cannot be
+            # compared is not a budget.
+            budget = float(config["budget_usd"])
+            if not math.isfinite(budget):
+                return _err("budget_usd must be a finite number")
+            config["budget_usd"] = budget
         if "tempo_ms" in config:
             config["tempo_ms"] = int(config["tempo_ms"])
     except (TypeError, ValueError) as exc:
