@@ -876,7 +876,15 @@ class Game:
             return
         self._gate()
         self._check_budget()
-        view = dm_view(self.state, events, self.summary)
+        # No `recent` for this one view: the turn's events are the next thing in
+        # the prompt, under a header saying they are authoritative, so passing
+        # them here as well printed every line twice — measured over a full
+        # tollhouse game, all 62 narrations, every line of the view's RECENT
+        # block was already in the events block below it and the duplicate cost
+        # ~3.7k tokens a game. What the DM was missing was never a second copy
+        # of this turn; it was being told whose turn it is, which the view now
+        # says outright.
+        view = dm_view(self.state, [], self.summary)
         text = self._dm_call(self.dm.narrate, view, events)
         if text:
             self._emit_new("narration", text, actor="dm")
