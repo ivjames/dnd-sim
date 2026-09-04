@@ -5,7 +5,8 @@
     picker    rebuild the page from an existing candidates.json
     fetch     download a picked config into assets/ + manifest.json + CREDITS.md,
               and normalise what it downloaded where ffmpeg is installed
-    normalize re-run that levelling over an already-fetched directory
+    normalize re-run that levelling over an already-fetched directory, cutting
+              anything longer than its cue's window down to it
     verify    re-hash a fetched directory against its manifest
     cues      print the cue table (--json for the machine-readable form)
 
@@ -64,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_common(n)
     n.add_argument("--force", action="store_true",
                    help="redo files already carrying the current profile")
+    n.add_argument("--no-trim", action="store_true",
+                   help="keep a file longer than its cue's window, and warn instead")
 
     v = sub.add_parser("verify", help="check a fetched directory against its manifest")
     _add_common(v)
@@ -178,7 +181,7 @@ def _cmd_normalize(args) -> int:
     if not N.have_ffmpeg():
         print("ffmpeg and ffprobe are not on PATH; nothing to do", file=sys.stderr)
         return 2
-    N.normalize_manifest(args.out, force=args.force)
+    N.normalize_manifest(args.out, force=args.force, trim=not args.no_trim)
     return 0
 
 

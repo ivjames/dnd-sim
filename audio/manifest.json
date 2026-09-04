@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generated": "2026-09-04T15:44:42+00:00",
+ "generated": "2026-09-04T16:13:28+00:00",
  "cues": {
   "music_explore": {
    "file": "assets/music/music_explore.mp3",
@@ -373,8 +373,8 @@
   },
   "sting_fumble": {
    "file": "assets/sting/sting_fumble.mp3",
-   "bytes": 436108,
-   "sha256": "ab4e9ec51b7994a24e09b7b7b7a5f55502ea84c28631433d3c84dd353e9f3ab1",
+   "bytes": 64751,
+   "sha256": "f1a5403b523848925e5075f97ec5a361b07cb1e93558087eec89bef15ec93bab",
    "source_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cowboy%20Sting.mp3",
    "group": "sting",
    "when": "An attack misses on a natural 1.",
@@ -406,18 +406,18 @@
     "bytes_before": 2344861,
     "peak_before_db": -0.0,
     "gain_db_applied": -0.7,
-    "trimmed_to_s": 54.434,
+    "trimmed_to_s": 8.0,
     "fade_ms": 8,
-    "bytes_after": 436108,
-    "file": "sting_fumble.mp3"
+    "bytes_after": 64751,
+    "file": "sting_fumble.mp3",
+    "trimmed_from_s": 58.57
    },
-   "duration_s": 54.47,
-   "duration_warning": "54.5s, but a sting cue takes 0.4-8s \u2014 it will play for 7x its slot"
+   "duration_s": 8.05
   },
   "sting_death_save_fail": {
    "file": "assets/sting/sting_death_save_fail.mp3",
-   "bytes": 1196181,
-   "sha256": "cfc7dabaeb0b93fd3f9a856ec585d92acf67785e33dccc04fad1240d21693f5d",
+   "bytes": 64765,
+   "sha256": "b617968edd2825e230293b9b2220c94892dea015fd8fc8dbdc8b6d8e8c5a1ad1",
    "source_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deep%20Noise.mp3",
    "group": "sting",
    "when": "A death saving throw fails.",
@@ -448,13 +448,13 @@
     "bytes_before": 6200420,
     "peak_before_db": -0.4,
     "gain_db_applied": -0.3,
-    "trimmed_to_s": 149.439,
+    "trimmed_to_s": 8.0,
     "fade_ms": 8,
-    "bytes_after": 1196181,
-    "file": "sting_death_save_fail.mp3"
+    "bytes_after": 64765,
+    "file": "sting_death_save_fail.mp3",
+    "trimmed_from_s": 152.06
    },
-   "duration_s": 149.47,
-   "duration_warning": "149.5s, but a sting cue takes 0.4-8s \u2014 it will play for 19x its slot"
+   "duration_s": 8.05
   },
   "swell_dread": {
    "file": "assets/swell/swell_dread.mp3",
@@ -488,7 +488,8 @@
     "trimmed_to_s": 12.794,
     "fade_ms": 8,
     "bytes_after": 102963,
-    "file": "swell_dread.mp3"
+    "file": "swell_dread.mp3",
+    "trimmed_from_s": 18.26
    },
    "duration_s": 12.83
   },
@@ -524,7 +525,8 @@
     "trimmed_to_s": 14.537,
     "fade_ms": 8,
     "bytes_after": 116964,
-    "file": "swell_heroic.mp3"
+    "file": "swell_heroic.mp3",
+    "trimmed_from_s": 18.26
    },
    "duration_s": 14.58
   },
@@ -560,7 +562,8 @@
     "trimmed_to_s": 12.119,
     "fade_ms": 8,
     "bytes_after": 97565,
-    "file": "swell_reveal.mp3"
+    "file": "swell_reveal.mp3",
+    "trimmed_from_s": 15.33
    },
    "duration_s": 12.15
   }

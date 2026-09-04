@@ -325,3 +325,108 @@ def test_a_good_length_leaves_no_warning_behind(tmp_path):
     entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_crit"]
     assert entry["duration_s"] == 5.3
     assert "duration_warning" not in entry
+
+
+# ------------------------------------------------------ cutting to the window
+
+def test_a_one_shot_is_capped_after_its_silence_is_trimmed(tmp_path):
+    run = FakeRun(duration=8.0)
+    N.normalize_file(make_file(tmp_path), N.ONESHOT, run=run, max_seconds=8)
+    trim = run.filters()[0]
+    assert trim.index("silenceremove") < trim.index("atrim=0:8"), \
+        "the cap counts from the first sound, not from the silence in front of it"
+    assert "asetpts=N/SR/TB" in trim
+
+
+def test_a_bed_is_capped_before_it_is_levelled(tmp_path):
+    run = FakeRun()
+    N.normalize_file(make_file(tmp_path, "music_combat.mp3"), N.BED, run=run, max_seconds=420)
+    apply = run.filters()[-1]
+    assert apply.startswith("atrim=0:420,asetpts=N/SR/TB,loudnorm=")
+
+
+def test_no_cap_leaves_the_command_as_it_was(tmp_path):
+    run = FakeRun()
+    N.normalize_file(make_file(tmp_path), N.ONESHOT, run=run)
+    assert "atrim" not in run.filters()[0]
+
+
+def test_an_overrunning_file_is_cut_and_the_manifest_says_from_what(tmp_path):
+    out = manifest_dir(tmp_path)
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_death_save_fail": {"file": "assets/sfx/sfx_dice.mp3", "group": "sting",
+                                  "credit": {}, "duration": 2}}}))
+    run = FakeRun(duration=149.5)
+    said = []
+    N.normalize_manifest(out, run=run, log=said.append)
+
+    entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_death_save_fail"]
+    assert entry["normalized"]["trimmed_from_s"] == 149.5
+    assert any("atrim=0:8" in f for f in run.filters())
+    # FakeRun keeps answering 149.5, so the warning stands here; against real
+    # ffmpeg the cut file measures 8s and it clears. The round trip below is
+    # what proves that.
+
+
+def test_a_file_inside_its_window_is_not_cut(tmp_path):
+    out = manifest_dir(tmp_path)
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_crit": {"file": "assets/sfx/sfx_dice.mp3", "group": "sting", "credit": {}}}}))
+    run = FakeRun(duration=5.3)
+    N.normalize_manifest(out, run=run, log=lambda *_: None)
+    assert not any("atrim" in f for f in run.filters())
+    entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_crit"]
+    assert "trimmed_from_s" not in entry["normalized"]
+
+
+def test_trim_can_be_declined(tmp_path):
+    out = manifest_dir(tmp_path)
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_death_save_fail": {"file": "assets/sfx/sfx_dice.mp3", "group": "sting",
+                                  "credit": {}}}}))
+    run = FakeRun(duration=149.5)
+    said = []
+    N.normalize_manifest(out, trim=False, run=run, log=said.append)
+    assert not any("atrim" in f for f in run.filters())
+    assert any("WRONG LENGTH" in s for s in said), "declining the cut keeps the warning"
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not installed")
+def test_a_two_minute_sting_really_comes_back_eight_seconds_long(tmp_path):
+    src = tmp_path / "assets" / "sting" / "sting_death_save_fail.mp3"
+    src.parent.mkdir(parents=True)
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+         "-i", "sine=frequency=110:duration=120", "-af", "volume=-14dB",
+         "-codec:a", "libmp3lame", "-q:a", "4", str(src)],
+        check=True, timeout=300)
+    assert N.probe_duration(src) > 100
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_death_save_fail": {"file": "assets/sting/sting_death_save_fail.mp3",
+                                  "group": "sting", "credit": {}, "duration": 2}}}))
+    N.normalize_manifest(tmp_path, log=lambda *_: None)
+
+    entry = json.loads((tmp_path / "manifest.json").read_text())["cues"]["sting_death_save_fail"]
+    assert entry["normalized"]["trimmed_from_s"] > 100
+    assert entry["duration_s"] <= 8.1, f"still {entry['duration_s']}s"
+    assert "duration_warning" not in entry, "cut to fit, so nothing left to warn about"
+    assert N.probe_duration(tmp_path / entry["file"]) <= 8.1
+
+
+def test_a_few_hundredths_over_the_window_is_not_a_problem():
+    """Cutting to exactly 8s yields an 8.05s MP3: whole frames, not a fault."""
+    assert N.duration_problem("sting_crit", 8.05) == ""
+    assert N.duration_problem("sting_crit", 8.9) != "", "but a second over still is"
+
+
+def test_a_file_a_frame_over_its_window_is_left_alone(tmp_path):
+    """8.07s in an 8s slot is frame quantisation, not a track in a sting's place."""
+    out = manifest_dir(tmp_path)
+    (out / "manifest.json").write_text(json.dumps({"version": 1, "cues": {
+        "sting_crit": {"file": "assets/sfx/sfx_dice.mp3", "group": "sting", "credit": {}}}}))
+    run = FakeRun(duration=8.07)
+    N.normalize_manifest(out, run=run, log=lambda *_: None)
+    assert not any("atrim" in f for f in run.filters())
+    entry = json.loads((out / "manifest.json").read_text())["cues"]["sting_crit"]
+    assert "trimmed_from_s" not in entry["normalized"]

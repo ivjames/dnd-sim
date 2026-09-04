@@ -167,8 +167,16 @@ def _encode_args(profile: Profile) -> list[str]:
     return ["-ar", str(profile.rate), "-ac", str(profile.channels), *profile.encode]
 
 
-def normalize_file(path: Path, profile: Profile, *, run=_run) -> dict:
-    """Rewrite `path` in place to the profile. Returns what was done."""
+def normalize_file(path: Path, profile: Profile, *, run=_run,
+                   max_seconds: float | None = None) -> dict:
+    """Rewrite `path` in place to the profile. Returns what was done.
+
+    `max_seconds` caps the length, for a file that is not what its source
+    claimed: a 149-second "sting" is cut to the seconds its cue can use rather
+    than played over the table for two and a half minutes. The cut is at the
+    front of the audio (after the silence trim, so it starts on the first
+    sound) and the profile's fade-out lands on the new end.
+    """
     # An injected runner is the caller's business — only the real one needs
     # the binaries to be there.
     if run is _run and not have_ffmpeg():
@@ -194,8 +202,11 @@ def normalize_file(path: Path, profile: Profile, *, run=_run) -> dict:
             "linear=true",
             "print_format=summary",
         ])
+        chain = f"loudnorm={params}"
+        if max_seconds:
+            chain = f"atrim=0:{max_seconds:g},asetpts=N/SR/TB,{chain}"
         cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(path),
-               "-af", f"loudnorm={params}", *_encode_args(profile), str(out)]
+               "-af", chain, *_encode_args(profile), str(out)]
         _check(run(cmd), cmd)
         report.update({"loudnorm": profile.loudnorm,
                        "measured_i_lufs": measured["input_i"],
@@ -204,9 +215,15 @@ def normalize_file(path: Path, profile: Profile, *, run=_run) -> dict:
         # Trim first: the fade-out has to land on the trimmed end, and the
         # peak has to be measured on what will actually be encoded.
         trimmed = path.with_suffix(".trim.wav")
-        cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(path)]
+        chain = []
         if profile.trim_silence:
-            cmd += ["-af", _silence_filter(profile)]
+            chain.append(_silence_filter(profile))
+        if max_seconds:
+            # After the silence trim, so the cap counts from the first sound.
+            chain.append(f"atrim=0:{max_seconds:g},asetpts=N/SR/TB")
+        cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(path)]
+        if chain:
+            cmd += ["-af", ",".join(chain)]
         cmd += ["-f", "wav", str(trimmed)]
         _check(run(cmd), cmd)
 
@@ -236,6 +253,12 @@ def normalize_file(path: Path, profile: Profile, *, run=_run) -> dict:
     return report
 
 
+# An MP3 frame is about 26 ms and the encoder emits whole frames, so a file
+# cut to exactly the window's maximum comes back a few hundredths over it.
+# Six frames of grace keeps that from reporting itself as too long.
+LENGTH_GRACE_S = 0.15
+
+
 def duration_problem(cue_id: str, seconds: float) -> str:
     """A sentence when a file is not the length its cue can use, else "".
 
@@ -249,7 +272,7 @@ def duration_problem(cue_id: str, seconds: float) -> str:
     if cue is None:
         return ""
     lo, hi = cue.dur
-    if seconds > hi:
+    if seconds > hi + LENGTH_GRACE_S:
         return (f"{seconds:.1f}s, but a {cue.group} cue takes {lo:g}-{hi:g}s "
                 f"— it will play for {seconds / hi:.0f}x its slot")
     if seconds < lo:
@@ -257,11 +280,17 @@ def duration_problem(cue_id: str, seconds: float) -> str:
     return ""
 
 
-def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -> dict:
+def normalize_manifest(out: Path, *, force: bool = False, trim: bool = True,
+                       run=_run, log=print) -> dict:
     """Normalise every file a manifest names, and record it there.
 
     Entries already carrying the current profile are left alone unless
     `force`, so running this twice does not re-encode a lossy file twice.
+
+    A file longer than its cue can use is cut to the cue's maximum, because a
+    source's claimed length is not to be trusted and a sting that runs for two
+    minutes is unusable rather than merely surprising. `trim=False` keeps the
+    whole file and leaves the warning standing instead.
     """
     import hashlib
 
@@ -283,8 +312,25 @@ def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -
         if not target.exists():
             log(f"  {cue_id:<28} MISSING {entry['file']}")
             continue
+        # Cut to the cue's own window where the file overruns it. Measure the
+        # file rather than believing the `duration` the source claimed — that
+        # claim is what was wrong in the first place — so one run is enough.
+        cue = C.CUES_BY_ID.get(cue_id)
+        cap = was = None
+        if trim and cue is not None:
+            try:
+                was = round(probe_duration(target, run=run), 2)
+            except (RuntimeError, OSError):
+                was = None
+            # The same grace that decides a file is too long decides whether
+            # to cut it, or a file two frames over its window is recorded as
+            # having been cut when nothing meaningful happened to it.
+            if was and was > cue.dur[1] + LENGTH_GRACE_S:
+                cap = cue.dur[1]
         try:
-            report = normalize_file(target, profile, run=run)
+            report = normalize_file(target, profile, run=run, max_seconds=cap)
+            if cap:
+                report["trimmed_from_s"] = was
         except (RuntimeError, OSError) as exc:
             log(f"  {cue_id:<28} FAILED {exc}")
             continue
