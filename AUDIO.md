@@ -137,7 +137,13 @@ nothing notices until it plays over the table for two and a half minutes.
 Normalising is the first point where the real length is known, so each entry
 gains a measured `duration_s`, and one that does not fit its cue's window gets
 a `duration_warning` in the manifest and a `WRONG LENGTH` line on the console.
-Nothing is truncated — a pick is yours to change.
+A file that overruns its window is **cut to it**, at the front of the audio and
+after the silence trim so it starts on the first sound, with the profile's
+fade-out landing on the new end; the manifest records `trimmed_from_s` so the
+cut is visible. `normalize --no-trim` keeps the whole file and leaves the
+warning standing instead. Six MP3 frames of grace (0.15 s) decide both
+questions, because a file cut to exactly its maximum re-encodes a few
+hundredths over it and should not report itself as too long.
 
 Processing is destructive, and the manifest records it — each entry gains a
 `normalized` block naming the profile, so a second run is a no-op rather than a
