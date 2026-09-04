@@ -142,6 +142,15 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   document the app can emit against Amazon's published matrix, and
   `python -m tools.polly_check` sends two real lines from the droplet, with
   `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
+  **Every seat is cast as an adult unless its party spec says otherwise.**
+  Polly's roster carries three children's voices (`Ivy`, `Justin`, `Kevin`) and
+  they used to be dealt to anyone, which is how a cleric called Father Bexley
+  ended up sounding nine; `CHILD_VOICE_IDS` in `tts/voices.py` keeps them for
+  characters whose spec states a child `age`, and the New game panel has a row
+  per seat to say so. `DescribeVoices` reports no age, so that list is
+  transcribed from Amazon's voice list and held to it by
+  `tests/tts/test_polly_contract.py` — the only thing that can catch it going
+  stale.
 - **Writes take a token; reads never do.** `POST /api/games`, `/note`,
   `/pause`, `/resume` and `/stop` require `X-Dnd-Token` to match
   `DND_WRITE_TOKEN` (`web/auth.py`). Everything a spectator does stays

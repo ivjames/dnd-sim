@@ -16,6 +16,7 @@ import subprocess
 import pytest
 
 from tts.voices import (
+    CHILD_VOICE_IDS,
     MONSTER_VTL,
     STANDARD_ENGLISH,
     Cast,
@@ -23,9 +24,13 @@ from tts.voices import (
     billable_chars,
     cast_for,
     hash_key,
+    is_child_voice,
+    normalize_age,
     normalize_gender,
     ssml_for,
 )
+
+CHILDREN = {v.id for v in STANDARD_ENGLISH if is_child_voice(v)}
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEECH_JS = os.path.join(ROOT, "web", "static", "speech.js")
@@ -151,6 +156,71 @@ def test_a_gender_the_roster_cannot_answer_is_a_worse_match_not_a_silence():
     only_women = [Voice("Astrid", "sv-SE", "Female"), Voice("Elin", "sv-SE", "Female")]
     cast = cast_for("pc_1", only_women, "Astrid", "male")
     assert cast.voice_id == "Elin"          # dealt anyway, rather than raising
+
+
+# -- age ---------------------------------------------------------------------
+
+def test_the_fallback_roster_knows_which_of_its_voices_are_children():
+    """Ivy and Kevin, and nothing else on it.
+
+    `DescribeVoices` reports Gender and nothing about age, so this is the one
+    part of the roster that cannot be read live — if the table in `voices.py`
+    is wrong, the casting is wrong and nothing else notices.
+    """
+    assert CHILDREN == {"Ivy", "Kevin"}
+    assert is_child_voice("justin") and is_child_voice(Voice("Ivy", "en-US", "Female"))
+    assert not is_child_voice("Joey") and not is_child_voice("")
+
+
+def test_a_child_voice_is_dealt_only_to_a_character_who_asks_for_one():
+    """The bug this exists for: a cleric called Father Bexley read by a
+    nine-year-old, because a child's voice sat in the pool every seat is dealt
+    from and one seat in eight hashed onto it."""
+    for key in ("dm", "npc", "pc_1", "pc_2", "pc_3", "pc_4", "monster:goblin_1"):
+        for gender in ("", "female", "male"):
+            for age in ("", None, "adult", "elder", 40, "31"):
+                cast = cast_for(key, STANDARD_ENGLISH, "Brian", gender, "standard", age)
+                assert cast.voice_id not in CHILDREN, (key, gender, age)
+
+
+def test_a_character_who_is_a_child_gets_a_childs_voice():
+    for age in ("child", "kid", "Child", 9, "11", 12):
+        assert cast_for("pc_1", STANDARD_ENGLISH, "Brian", "", "standard", age).voice_id in CHILDREN
+    # And gender still narrows within that: Ivy is the roster's only girl,
+    # Kevin its only boy.
+    assert cast_for("pc_1", STANDARD_ENGLISH, "Brian", "female", "standard", "child").voice_id == "Ivy"
+    assert cast_for("pc_1", STANDARD_ENGLISH, "Brian", "male", "standard", "child").voice_id == "Kevin"
+
+
+def test_an_age_is_read_for_intent_not_guessed_at():
+    assert normalize_age("child") == "child" and normalize_age(" KID ") == "child"
+    assert normalize_age(9) == "child" and normalize_age("12") == "child"
+    assert normalize_age(13) == "adult" and normalize_age("40.5") == "adult"
+    # Polly has no elderly voice, so "elder" is recorded and cast as an adult.
+    assert normalize_age("elder") == "adult" and normalize_age("elderly") == "adult"
+    # Nothing said, and nothing that can be read as an age, are the same thing:
+    # no constraint. Both cast as an adult, because that is what the pool does.
+    for said in ("", None, "  ", "ancient-ish", "old enough", True, False, 0, -3, 4000, float("nan")):
+        assert normalize_age(said) == "", said
+
+
+def test_a_roster_with_no_children_still_casts_a_child():
+    """Only en-US has children's voices; every other language ships none.
+
+    A worse match, not a silence — the same trade as an unanswerable gender.
+    """
+    british = [v for v in STANDARD_ENGLISH if v.language == "en-GB"]
+    cast = cast_for("pc_1", british, "Brian", "", "standard", "child")
+    assert cast.voice_id in {"Amy", "Emma"}
+
+
+def test_the_narrator_nobody_named_is_not_a_nine_year_old():
+    """`voices[0]` is the DM's fallback, and on the en-US roster alone that is
+    Ivy. A chosen name is still honoured, whatever age it is."""
+    american = [v for v in STANDARD_ENGLISH if v.language == "en-US"]
+    assert sorted(v.id for v in american)[0] == "Ivy"          # what it used to take
+    assert cast_for("dm", american, "").voice_id == "Joanna"
+    assert cast_for("dm", american, "Ivy").voice_id == "Ivy"   # asking for Ivy is asking for Ivy
 
 
 def test_each_engine_is_only_sent_what_it_accepts():
