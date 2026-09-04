@@ -486,26 +486,37 @@
 
   function hpClass(frac) { return frac > 0.5 ? '' : (frac > 0.25 ? 'hurt' : 'bad'); }
 
+  // Two shapes, one card. The party card is two lines (name + AC over bar +
+  // hit points); an enemy is one, because five bandits stacked four lines deep
+  // pushed everything under them off the screen. Same nodes either way, so the
+  // stylesheet — not this function — decides how tight it sits.
   function card(c, id, compact) {
     var st = gameState();
-    var node = el('div', 'card');
+    var node = el('div', 'card' + (compact ? ' card-tight' : ''));
     if (id === (st.active_id || S.activeId)) node.className += ' is-active';
     var hp = num(c.hp), max = Math.max(1, num(c.max_hp, 1));
     if (c.dead || hp <= 0) node.className += ' is-down';
 
-    var top = el('div', 'card-top');
-    top.appendChild(el('span', 'card-name', c.name || id));
     var sub = [];
     if (c.ac !== undefined) sub.push('AC ' + num(c.ac));
     if (c.sheet && c.sheet.klass) sub.push(c.sheet.klass + ' ' + num(c.sheet.level));
-    top.appendChild(el('span', 'card-sub', sub.join(' · ')));
-    node.appendChild(top);
+    var name = el('span', 'card-name', c.name || id);
+    var subEl = el('span', 'card-sub', sub.join(' · '));
+    if (compact) {
+      node.appendChild(name);
+    } else {
+      var top = el('div', 'card-top');
+      top.appendChild(name);
+      top.appendChild(subEl);
+      node.appendChild(top);
+    }
 
     var frac = Math.max(0, Math.min(1, hp / max));
+    var vitals = el('div', 'card-vitals');
     var bar = el('div', 'hpbar ' + hpClass(frac));
     var fill = el('i'); fill.style.width = (frac * 100).toFixed(0) + '%';
     bar.appendChild(fill);
-    node.appendChild(bar);
+    vitals.appendChild(bar);
 
     var hpText = hp + '/' + num(c.max_hp);
     if (num(c.temp_hp) > 0) hpText += ' (+' + num(c.temp_hp) + ' temp)';
@@ -514,7 +525,9 @@
       hpText += ' — down ' + num(ds.success) + '✓/' + num(ds.failure) + '✗';
     }
     if (c.dead) hpText += ' — dead';
-    node.appendChild(el('div', 'hpnum', hpText));
+    vitals.appendChild(el('span', 'hpnum', hpText));
+    node.appendChild(vitals);
+    if (compact) node.appendChild(subEl);
 
     var tags = el('div', 'tags');
     (c.conditions || []).forEach(function (cond) {
@@ -571,8 +584,35 @@
     return set;
   }
 
+  // The map is the one thing on the page the stylesheet cannot paint, so it
+  // reads the same custom properties everything else does. One lookup per
+  // draw, and drawGrid() runs again on a theme change.
+  function themePalette() {
+    var cs = window.getComputedStyle(document.documentElement);
+    function tok(name, fallback) {
+      var v = cs.getPropertyValue(name);
+      v = v ? v.trim() : '';
+      return v || fallback;
+    }
+    return {
+      ground: tok('--bg-sunken', '#241c15'),
+      grid: tok('--canvas-grid', '#3d2f24'),
+      wall: tok('--wall', '#6b5b4b'),
+      difficult: tok('--difficult', '#4e3e24'),
+      accent: tok('--accent', '#f0b75e'),
+      party: tok('--party', '#8fc9ea'),
+      enemy: tok('--enemy', '#f2a794'),
+      neutral: tok('--neutral', '#dfc189'),
+      danger: tok('--danger', '#f3a392'),
+      // Token fills are light on dark and dark on light, so the ground colour
+      // is the label ink that stays legible in both.
+      onToken: tok('--bg-sunken', '#241c15')
+    };
+  }
+
   function drawGrid() {
     var canvas = $('grid');
+    var pal = themePalette();
     var st = gameState();
     var grid = st.grid || {};
     var w = Math.max(1, num(grid.width, 12)), h = Math.max(1, num(grid.height, 10));
@@ -588,7 +628,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cell * w, cssH);
 
-    ctx.fillStyle = '#100e0c';
+    ctx.fillStyle = pal.ground;
     ctx.fillRect(0, 0, cell * w, cssH);
 
     var difficult = coordSet(grid.difficult);
@@ -599,8 +639,8 @@
     for (y = 0; y < h; y++) {
       for (x = 0; x < w; x++) {
         key = x + ',' + y;
-        if (walls[key]) ctx.fillStyle = '#4a4038';
-        else if (difficult[key]) ctx.fillStyle = '#3d3323';
+        if (walls[key]) ctx.fillStyle = pal.wall;
+        else if (difficult[key]) ctx.fillStyle = pal.difficult;
         else continue;
         ctx.fillRect(x * cell, y * cell, cell, cell);
       }
@@ -608,12 +648,14 @@
     Object.keys(cover).forEach(function (k) {
       var parts = k.replace(/[()\s]/g, '').split(',');
       var cx = num(parts[0]), cy = num(parts[1]);
-      ctx.strokeStyle = 'rgba(226,163,63,.5)';
+      ctx.strokeStyle = pal.accent;
+      ctx.globalAlpha = 0.55;
       ctx.lineWidth = 2;
       ctx.strokeRect(cx * cell + 2, cy * cell + 2, cell - 4, cell - 4);
+      ctx.globalAlpha = 1;
     });
 
-    ctx.strokeStyle = '#262019';
+    ctx.strokeStyle = pal.grid;
     ctx.lineWidth = 1;
     for (x = 0; x <= w; x++) {
       ctx.beginPath(); ctx.moveTo(x * cell + .5, 0); ctx.lineTo(x * cell + .5, cssH); ctx.stroke();
@@ -631,21 +673,21 @@
       var px = num(pos[0]) * cell + cell / 2, py = num(pos[1]) * cell + cell / 2;
       var r = Math.max(5, cell * 0.36);
       var dead = c.dead || num(c.hp) <= 0;
-      var color = c.side === 'party' ? '#6fa8c9' : (c.side === 'enemy' ? '#c9705f' : '#b39a6a');
+      var color = c.side === 'party' ? pal.party : (c.side === 'enemy' ? pal.enemy : pal.neutral);
       ctx.globalAlpha = dead ? 0.35 : 1;
       ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fillStyle = color; ctx.fill();
       if (id === activeId) {
-        ctx.strokeStyle = '#e2a33f'; ctx.lineWidth = 2.5; ctx.stroke();
+        ctx.strokeStyle = pal.accent; ctx.lineWidth = 2.5; ctx.stroke();
       }
       ctx.globalAlpha = 1;
       var label = (c.name || id).replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase();
-      ctx.fillStyle = '#14110e';
+      ctx.fillStyle = pal.onToken;
       ctx.font = 'bold ' + Math.max(8, Math.floor(r)) + 'px ui-monospace, Menlo, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(label, px, py + 0.5);
       if (dead) {
-        ctx.strokeStyle = '#b4412f'; ctx.lineWidth = 2;
+        ctx.strokeStyle = pal.danger; ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(px - r, py - r); ctx.lineTo(px + r, py + r);
         ctx.moveTo(px + r, py - r); ctx.lineTo(px - r, py + r);
@@ -1943,12 +1985,58 @@
       .then(function () { btn.disabled = false; });
   }
 
+  // ---------- theme ----------
+  // Three states, not two: "auto" is the default and follows the system, and a
+  // visitor who wants the other one gets to keep it. The choice is stored, so
+  // it is a per-browser preference and never a server setting. index.html has
+  // already applied it before first paint; this is the button and the label.
+  var THEMES = ['auto', 'light', 'dark'];
+  var THEME_KEY = 'dndsim.theme';
+
+  function themeLoad() {
+    try {
+      var t = localStorage.getItem(THEME_KEY);
+      return (t === 'light' || t === 'dark') ? t : 'auto';
+    } catch (e) { return 'auto'; }
+  }
+
+  function themeApply(t) {
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    else document.documentElement.removeAttribute('data-theme');
+    try {
+      if (t === 'auto') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, t);
+    } catch (e) { /* private mode: the theme still applies, it just won't stick */ }
+    var label = $('theme-label');
+    if (label) label.textContent = t;
+    var btn = $('btn-theme');
+    if (btn) {
+      btn.title = t === 'auto' ? 'Colour theme: following the system'
+                               : 'Colour theme: ' + t;
+      btn.setAttribute('aria-label', btn.title + ' — click to change');
+    }
+    drawGrid();   // the map paints from the theme tokens
+  }
+
+  function themeInit() {
+    themeApply(themeLoad());
+    $('btn-theme').addEventListener('click', function () {
+      themeApply(THEMES[(THEMES.indexOf(themeLoad()) + 1) % THEMES.length]);
+    });
+    // On "auto", the system flipping is a repaint the canvas has to follow.
+    var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq && typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', function () { if (themeLoad() === 'auto') drawGrid(); });
+    }
+  }
+
   // ---------- wiring ----------
   function init() {
     S.token = tokenLoad();
     // With a token in hand the probe is about to answer; rendering the locked
     // state first would flash "Unlock" at a browser that is already unlocked.
     if (!S.token) renderWriteAccess();
+    themeInit();
     $('btn-new').addEventListener('click', openNewGame);
     $('btn-unlock').addEventListener('click', openUnlock);
     $('unlock-form').addEventListener('submit', submitUnlock);

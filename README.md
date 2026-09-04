@@ -351,6 +351,30 @@ budget live. Prompts are built for frugality: players see a compact state view
 plus enumerated legal actions (not full state), the static rules digest is
 prompt-cached, and summaries are written by the cheap model.
 
+## The spectator page
+
+One rail and one column. Initiative, the party and the enemies sit down the
+left in tight rows — one line per enemy, two per party member — so a full
+combat is a glance rather than a scroll. The battle map, the narration
+transport and the controls sit in a strip **above** the transcript, and the
+transcript takes whatever height the viewport has left, with its own
+`mechanics` and `follow` toggles under the text rather than between you and it.
+Below a phone's width the whole thing becomes one column and the transcript
+moves back above the strip, because six panels of preamble is not a way to read
+a story.
+
+**Dark or light, and the page will follow the system unless told otherwise.**
+The button in the top bar cycles `auto → light → dark`; the choice is kept in
+that browser's `localStorage` and nowhere else, so it is a reader's preference
+and never a server setting. Dark is a rich brown rather than near-black, light
+is pale wood, and both were measured rather than eyeballed: story text, names,
+mechanics and every control label clear WCAG AAA (7:1) against the surface they
+actually sit on, the quiet metadata tier (initiative scores, the AC/class line,
+sequence numbers) clears 6:1, and non-text carriers of meaning — borders, focus
+rings, the HP and budget bars — clear 3:1. The battle map paints from the same
+custom properties as everything else, so it changes with the theme instead of
+staying dark on a light page.
+
 ## Spoken narration
 
 The spectator page can read the game aloud. Tick **voice** in the top bar (the

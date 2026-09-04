@@ -1,26 +1,162 @@
-/* dnd-sim spectator UI — "candlelit table": warm parchment ink on near-black,
-   restrained. Readability first. Works down to iPad portrait. */
+/* dnd-sim spectator UI — "candlelit table".
+ *
+ * Two themes, one set of tokens. Dark is rich brown rather than near-black;
+ * light is pale wood. Every pairing below was measured against the surface it
+ * actually sits on rather than eyeballed: story text, names, mechanics and
+ * every control label clear WCAG AAA (7:1); the deliberately quiet metadata
+ * tier — initiative scores, the AC/class line, sequence numbers, the "mock"
+ * and "round" pills — sits at 6.1:1 or better, well past AA and one step down
+ * in emphasis rather than one step down in legibility; borders, focus rings
+ * and bar fills, which carry meaning without being text, clear 3:1. A colour
+ * that fails on one surface fails everywhere, so each was checked against the
+ * worst of the five (page, panel, sunken, raised, active row).
+ *
+ * Which theme: a stored choice on <html data-theme>, else the system's. The
+ * inline script in index.html sets the attribute before first paint.
+ */
 
+/* ---------- dark: rich brown ---------- */
 :root {
-  --bg:        #14110e;
-  --bg-panel:  #1c1815;
-  --bg-sunken: #100e0c;
-  --line:      #332c25;
-  --line-soft: #262019;
-  --ink:       #e8dfd2;
-  --ink-dim:   #a2968a;
-  --ink-faint: #6f665d;
-  --amber:     #e2a33f;
-  --amber-dim: #8a6524;
-  --blood:     #b4412f;
-  --party:     #6fa8c9;
-  --enemy:     #c9705f;
-  --neutral:   #b39a6a;
-  --green:     #79a35c;
-  --radius: 8px;
+  color-scheme: dark;
+
+  --bg:         #2b211a;
+  --bg-panel:   #33271f;
+  --bg-sunken:  #241c15;
+  --bg-raise:   #3a2c22;
+  --bg-active:  #3d2d19;
+  --bg-scene:   #3a2b1b;
+  --glow:       #3b2e22;
+
+  --line:       #4e3d2f;
+  --line-soft:  #403126;
+  --line-strong:#8f775c;
+
+  --ink:        #f5eadc;
+  --ink-dim:    #d6c6b2;
+  --ink-faint:  #c0ae99;
+
+  --accent:     #f0b75e;
+  --accent-line:#a8813c;
+  --accent-fill:#d79a3c;
+  --on-accent:  #1e1409;
+
+  --party:      #9cd0ee;
+  --enemy:      #f5b2a1;
+  --neutral:    #dfc189;
+  --good:       #9dd47c;
+  --good-fill:  #8fc96c;
+  --on-good:    #12210b;
+  --danger:     #f5b2a1;
+  --danger-fill:#f5b2a1;
+  --on-danger:  #2a0d06;
+
+  --hp-good:    #9dd47c;
+  --hp-hurt:    #f0b75e;
+  --hp-bad:     #f5b2a1;
+
+  --shade:      rgba(240, 183, 94, .16);
+  --scrim:      rgba(12, 8, 5, .84);
+  --canvas-grid:#3d2f24;
+  --wall:       #6b5b4b;
+  --difficult:  #4e3e24;
+
+  --radius: 9px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ---------- light: pale wood ---------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg:         #efe2ce;
+    --bg-panel:   #faf4e9;
+    --bg-sunken:  #e9dcc6;
+    --bg-raise:   #f2e7d4;
+    --bg-active:  #f4e6ca;
+    --bg-scene:   #f3e4c9;
+    --glow:       #f7edda;
+
+    --line:       #c9b491;
+    --line-soft:  #d8c7a8;
+    --line-strong:#8b7351;
+
+    --ink:        #2a1c10;
+    --ink-dim:    #4b3927;
+    --ink-faint:  #5c4a34;
+
+    --accent:     #6e3703;
+    --accent-line:#9a7130;
+    --accent-fill:#7a3f05;
+    --on-accent:  #fff7ea;
+
+    --party:      #0d465e;
+    --enemy:      #821d0d;
+    --neutral:    #57400f;
+    --good:       #244c0d;
+    --good-fill:  #2b5b0e;
+    --on-good:    #fff7ea;
+    --danger:     #86190c;
+    --danger-fill:#8e1f10;
+    --on-danger:  #fff6ee;
+
+    --hp-good:    #3c7a18;
+    --hp-hurt:    #a8690a;
+    --hp-bad:     #a83521;
+
+    --shade:      rgba(122, 63, 5, .15);
+    --scrim:      rgba(46, 32, 18, .58);
+    --canvas-grid:#d2be9c;
+    --wall:       #a08d72;
+    --difficult:  #d9c48f;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:         #efe2ce;
+  --bg-panel:   #faf4e9;
+  --bg-sunken:  #e9dcc6;
+  --bg-raise:   #f2e7d4;
+  --bg-active:  #f4e6ca;
+  --bg-scene:   #f3e4c9;
+  --glow:       #f7edda;
+
+  --line:       #c9b491;
+  --line-soft:  #d8c7a8;
+  --line-strong:#8b7351;
+
+  --ink:        #2a1c10;
+  --ink-dim:    #4b3927;
+  --ink-faint:  #5c4a34;
+
+  --accent:     #6e3703;
+  --accent-line:#9a7130;
+  --accent-fill:#7a3f05;
+  --on-accent:  #fff7ea;
+
+  --party:      #0d465e;
+  --enemy:      #821d0d;
+  --neutral:    #57400f;
+  --good:       #244c0d;
+  --good-fill:  #2b5b0e;
+  --on-good:    #fff7ea;
+  --danger:     #86190c;
+  --danger-fill:#8e1f10;
+  --on-danger:  #fff6ee;
+
+  --hp-good:    #3c7a18;
+  --hp-hurt:    #a8690a;
+  --hp-bad:     #a83521;
+
+  --shade:      rgba(122, 63, 5, .15);
+  --scrim:      rgba(46, 32, 18, .58);
+  --canvas-grid:#d2be9c;
+  --wall:       #a08d72;
+  --difficult:  #d9c48f;
 }
 
 * { box-sizing: border-box; }
@@ -38,8 +174,8 @@ html, body {
 
 body {
   display: flex; flex-direction: column;
-  /* subtle candle pool, no distraction */
-  background-image: radial-gradient(120% 80% at 50% -10%, #241d16 0%, var(--bg) 60%);
+  /* a candle pool over the wood, no distraction */
+  background-image: radial-gradient(130% 80% at 50% -12%, var(--glow) 0%, var(--bg) 62%);
   background-attachment: fixed;
 }
 
@@ -50,152 +186,195 @@ body {
 
 /* ---------- top bar ---------- */
 .topbar {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 14px;
-  padding-top: calc(10px + env(safe-area-inset-top));
+  padding: 8px 14px;
+  padding-top: calc(8px + env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
-  background: rgba(20, 17, 14, 0.96);
+  background: var(--bg-panel);
   position: sticky; top: 0; z-index: 20;
 }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--serif); letter-spacing: .02em; }
 .brand-name { font-size: 17px; color: var(--ink); }
-.flame { color: var(--amber); text-shadow: 0 0 10px rgba(226,163,63,.7); }
-.topbar-mid { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0; }
-.topbar-mid select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
-.topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.flame { color: var(--accent); }
+.topbar-mid { display: flex; align-items: center; gap: 8px; flex: 1 1 240px; min-width: 0; }
+.topbar-mid select { flex: 1 1 auto; min-width: 0; max-width: 380px; }
+.topbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 
 .pill {
   font-family: var(--mono); font-size: 11px; text-transform: uppercase;
   letter-spacing: .06em; padding: 3px 9px; border-radius: 999px;
-  border: 1px solid var(--line); color: var(--ink-dim); white-space: nowrap;
+  border: 1px solid var(--line-strong); color: var(--ink-dim); white-space: nowrap;
 }
-.pill-quiet { color: var(--ink-faint); }
-.pill-running { color: #101; background: var(--green); border-color: var(--green); }
-.pill-paused  { color: #201; background: var(--amber); border-color: var(--amber); }
-.pill-finished{ color: var(--green); border-color: var(--amber-dim); }
-.pill-error, .pill-budget_exceeded { color: #fff; background: var(--blood); border-color: var(--blood); }
+.pill-quiet { color: var(--ink-faint); border-color: var(--line); }
+.pill-running { color: var(--on-good); background: var(--good-fill); border-color: var(--good-fill); }
+.pill-paused  { color: var(--on-accent); background: var(--accent-fill); border-color: var(--accent-fill); }
+.pill-finished{ color: var(--good); border-color: var(--good); }
+.pill-error, .pill-budget_exceeded { color: var(--on-danger); background: var(--danger-fill); border-color: var(--danger-fill); }
 .pill-stopped { color: var(--ink-faint); }
 
 .cost { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
-.cost-bar { display: inline-block; width: 70px; height: 6px; background: var(--bg-sunken); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-.cost-bar i { display: block; height: 100%; background: var(--amber); }
-.cost-bar.over i { background: var(--blood); }
+.cost-bar {
+  display: inline-block; width: 66px; height: 7px; background: var(--bg-sunken);
+  border: 1px solid var(--line-strong); border-radius: 999px; overflow: hidden;
+}
+.cost-bar i { display: block; height: 100%; background: var(--accent-fill); }
+.cost-bar.over i { background: var(--danger-fill); }
 
-/* ---------- layout ---------- */
+/* ---------- layout ----------
+   Rail down the side; map, narration and controls in a deck ABOVE the
+   transcript, so the things you glance at are not below the fold of a
+   text-heavy column. Flex and not grid on purpose: a rail spanning two grid
+   rows hands its extra height to the row above the transcript, which opened a
+   band of empty page between the deck and the first line of the story. */
 .layout {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(320px, 1fr) minmax(260px, 360px);
-  gap: 12px;
+  display: flex; align-items: stretch; gap: 12px;
   padding: 12px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  align-items: start;
   min-height: 0;
 }
-.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.col-center { min-height: 0; }
+.rail {
+  flex: 0 0 clamp(252px, 25%, 312px); align-self: flex-start;
+  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.stack { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.deck {
+  display: grid; gap: 12px; align-items: start; min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(226px, 1fr));
+}
+.feed { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 9px 11px 11px;
   min-width: 0;
 }
-.panel-fill { display: flex; flex-direction: column; min-height: 0; }
-.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.panel-fill { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .panel-title {
-  margin: 0 0 8px; font-family: var(--serif); font-size: 13px; font-weight: 600;
-  letter-spacing: .09em; text-transform: uppercase; color: var(--amber);
+  margin: 0 0 7px; font-family: var(--serif); font-size: 13px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--accent);
 }
 .empty { color: var(--ink-faint); font-style: italic; margin: 4px 0; }
 .hint { color: var(--ink-dim); font-size: 12px; margin: 4px 0 10px; }
-.err { color: var(--blood); font-size: 13px; }
+.err { color: var(--danger); font-size: 13px; }
 
-/* ---------- initiative ---------- */
-.initiative { list-style: none; margin: 0; padding: 0; }
+/* ---------- initiative ----------
+   One tight monospace line each, so a ten-combatant order is a glance and not
+   a scroll. It caps rather than grows: past that it scrolls inside itself and
+   leaves the party below it on screen. */
+.initiative { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow-y: auto; }
 .initiative li {
   display: flex; align-items: center; gap: 8px;
-  padding: 4px 6px; border-radius: 5px;
-  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  padding: 1px 6px; border-radius: 4px;
+  font-family: var(--mono); font-size: 12px; line-height: 1.65;
+  color: var(--ink-dim);
   border-left: 3px solid transparent;
 }
-.initiative li.active { background: #241d14; color: var(--ink); border-left-color: var(--amber); }
-.initiative li.down { opacity: .45; text-decoration: line-through; }
+.initiative li.active { background: var(--bg-active); color: var(--ink); border-left-color: var(--accent); }
+.initiative li.down { text-decoration: line-through; color: var(--ink-faint); }
 .initiative .score { margin-left: auto; color: var(--ink-faint); }
 .initiative .side-party { color: var(--party); }
 .initiative .side-enemy { color: var(--enemy); }
+.initiative .side-neutral { color: var(--neutral); }
 
-/* ---------- party cards ---------- */
-.party { display: flex; flex-direction: column; gap: 8px; }
+/* ---------- party cards ----------
+   Name and AC on one line, bar and hit points on the next; enemies get all of
+   it on a single line. Four party members and five bandits fit the rail
+   without pushing the map off the screen. */
+.party { display: flex; flex-direction: column; gap: 6px; }
 .card {
   border: 1px solid var(--line-soft); border-radius: 6px;
-  padding: 7px 9px; background: var(--bg-sunken);
+  padding: 5px 8px 6px; background: var(--bg-sunken);
 }
-.card.is-active { border-color: var(--amber-dim); box-shadow: 0 0 0 1px rgba(226,163,63,.25); }
-.card.is-down { opacity: .55; }
-.card-top { display: flex; align-items: baseline; gap: 6px; }
-.card-name { font-weight: 600; font-size: 14px; }
-.card-sub { font-size: 11px; color: var(--ink-faint); margin-left: auto; font-family: var(--mono); }
-.hpbar { height: 7px; border-radius: 999px; background: #2a211b; overflow: hidden; margin: 5px 0 4px; }
-.hpbar i { display: block; height: 100%; background: var(--green); transition: width .3s ease; }
-.hpbar.hurt i { background: var(--amber); }
-.hpbar.bad  i { background: var(--blood); }
-.hpnum { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
-.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.card.is-active { border-color: var(--accent-line); box-shadow: inset 3px 0 0 var(--accent); }
+.card.is-down .card-name { color: var(--ink-dim); }
+/* Wrapping between the name and the stat line, never inside the name: a
+   three-word name broken over three lines is what a card is trying not to be. */
+.card-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.card-name { font-weight: 600; font-size: 13.5px; }
+.card-sub { font-size: 11px; color: var(--ink-faint); margin-left: auto; font-family: var(--mono); white-space: nowrap; }
+.card-vitals { display: flex; align-items: center; gap: 7px; margin-top: 3px; }
+.hpbar {
+  flex: 1 1 auto; height: 6px; border-radius: 999px;
+  background: var(--bg-raise); overflow: hidden; min-width: 40px;
+}
+.hpbar i { display: block; height: 100%; background: var(--hp-good); transition: width .3s ease; }
+.hpbar.hurt i { background: var(--hp-hurt); }
+.hpbar.bad  i { background: var(--hp-bad); }
+.hpnum { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); white-space: nowrap; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .tag {
   font-family: var(--mono); font-size: 10px; text-transform: lowercase;
-  padding: 1px 6px; border-radius: 999px;
-  border: 1px solid var(--amber-dim); color: var(--amber);
+  padding: 0 6px; border-radius: 999px; line-height: 1.6;
+  border: 1px solid var(--accent-line); color: var(--accent);
 }
-.tag.slot { border-color: var(--line); color: var(--ink-dim); }
+.tag.slot { border-color: var(--line-strong); color: var(--ink-dim); }
 .tag.conc { border-color: var(--party); color: var(--party); }
-.party-compact .card { padding: 5px 8px; }
-.party-compact .card-name { font-size: 13px; font-weight: 500; }
 
-/* ---------- transcript ---------- */
+/* one row per enemy */
+.card-tight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-tight .card-name { flex: 0 1 auto; min-width: 0; font-size: 13px; font-weight: 500; }
+.card-tight .card-vitals { flex: 1 1 70px; max-width: 190px; margin-top: 0; }
+.card-tight .card-sub { flex: 0 0 auto; margin-left: auto; }
+.card-tight .tags { flex: 1 0 100%; margin-top: 2px; }
+
+/* ---------- transcript ----------
+   Shorter than it was: it is a scroll region, not the page. Its toggles sit
+   under the text — they are read once and then never again, and above the
+   text they were the first thing between the reader and the story. */
+/* It takes the height the viewport has left over once the deck is placed, so
+   the page itself does not scroll and the story is never a strip at the bottom
+   of a tall column. Below that floor it goes back to being a scroll region on
+   a scrolling page. */
 .transcript {
+  flex: 1 1 auto;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
-  height: calc(100vh - 190px); min-height: 260px;
-  padding-right: 4px;
+  min-height: 300px;
+  padding-right: 6px;
 }
-.turn-group { border-left: 2px solid var(--line-soft); margin: 10px 0 4px; padding-left: 10px; }
+.transcript-tools {
+  display: flex; gap: 14px; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+}
+.turn-group { border-left: 2px solid var(--line); margin: 10px 0 4px; padding-left: 10px; }
 .turn-head {
   font-family: var(--mono); font-size: 11px; letter-spacing: .05em;
-  color: var(--ink-faint); text-transform: uppercase; margin-bottom: 2px;
+  color: var(--ink-dim); text-transform: uppercase; margin-bottom: 2px;
 }
-.turn-head .who { color: var(--amber); }
+.turn-head .who { color: var(--accent); }
 
 .narration {
-  font-family: var(--serif); font-size: 16.5px; line-height: 1.62;
+  font-family: var(--serif); font-size: 17px; line-height: 1.62;
   margin: 12px 0; color: var(--ink);
 }
 .dialogue {
   font-family: var(--serif); font-size: 16px; margin: 8px 0 8px 6px;
-  border-left: 2px solid var(--amber-dim); padding-left: 10px;
+  border-left: 2px solid var(--accent-line); padding-left: 10px; color: var(--ink);
 }
-.dialogue .speaker { color: var(--amber); font-style: italic; margin-right: 6px; }
+.dialogue .speaker { color: var(--accent); font-style: italic; margin-right: 6px; }
 .scene {
-  font-family: var(--serif); font-size: 15px; margin: 14px 0;
-  padding: 10px 12px; border: 1px solid var(--amber-dim); border-radius: 6px;
-  background: #1f1912;
+  font-family: var(--serif); font-size: 15.5px; margin: 14px 0;
+  padding: 10px 12px; border: 1px solid var(--accent-line); border-radius: 6px;
+  background: var(--bg-scene); color: var(--ink);
 }
-.scene .scene-title { display: block; color: var(--amber); letter-spacing: .06em; text-transform: uppercase; font-size: 12px; margin-bottom: 4px; }
+.scene .scene-title { display: block; color: var(--accent); letter-spacing: .06em; text-transform: uppercase; font-size: 12px; margin-bottom: 4px; }
 .dmnote {
   font-family: var(--sans); font-size: 13px; margin: 10px 0; padding: 8px 10px;
-  border: 1px dashed var(--amber-dim); border-radius: 6px; color: var(--amber);
+  border: 1px dashed var(--accent-line); border-radius: 6px; color: var(--accent);
 }
 .mech {
   font-family: var(--mono); font-size: 12.5px; line-height: 1.45;
   color: var(--ink-dim); margin: 1px 0; white-space: pre-wrap; word-break: break-word;
 }
-.mech.k-attack, .mech.k-damage { color: #d8cbb8; }
-.mech.k-dead, .mech.k-down { color: var(--blood); }
-.mech.k-heal, .mech.k-stable { color: var(--green); }
-.mech.k-error { color: var(--blood); }
-.mech.k-cost { color: var(--amber-dim); }
-.mech .seq { color: #4c443b; margin-right: 6px; }
+.mech.k-attack, .mech.k-damage { color: var(--ink); }
+.mech.k-dead, .mech.k-down { color: var(--danger); }
+.mech.k-heal, .mech.k-stable { color: var(--good); }
+.mech.k-error { color: var(--danger); }
+.mech.k-cost { color: var(--ink-faint); }
+.mech .seq { color: var(--ink-faint); margin-right: 6px; }
 .hide-mech .mech, .hide-mech .turn-details { display: none; }
 
 .turn-details > summary {
@@ -203,60 +382,69 @@ body {
   list-style: none; padding: 2px 0;
 }
 .turn-details > summary::-webkit-details-marker { display: none; }
-.turn-details > summary::before { content: "\25B8 "; color: var(--amber-dim); }
+.turn-details > summary::before { content: "\25B8 "; color: var(--accent); }
 .turn-details[open] > summary::before { content: "\25BE "; }
 .end-banner {
   margin: 16px 0; padding: 8px 10px; text-align: center;
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  font-family: var(--mono); font-size: 12px; color: var(--amber);
+  font-family: var(--mono); font-size: 12px; color: var(--accent);
   text-transform: uppercase; letter-spacing: .1em;
 }
 
 /* ---------- map ---------- */
 .canvas-wrap { width: 100%; overflow-x: auto; }
-#grid { width: 100%; height: auto; display: block; background: var(--bg-sunken); border-radius: 6px; touch-action: manipulation; }
-.legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--ink-faint); font-family: var(--mono); }
+/* Capped: given a whole phone's width the squares grow to an inch each and
+   the map stops being a map. */
+#grid {
+  width: 100%; max-width: 480px; height: auto; display: block; margin: 0 auto;
+  background: var(--bg-sunken); border-radius: 6px; touch-action: manipulation;
+}
+.legend {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px;
+  font-size: 11px; color: var(--ink-dim); font-family: var(--mono);
+}
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .sw.party { background: var(--party); } .sw.enemy { background: var(--enemy); }
-.sw.neutral { background: var(--neutral); } .sw.diff { background: #3d3323; }
-.sw.wall { background: #4a4038; }
+.sw.neutral { background: var(--neutral); } .sw.diff { background: var(--difficult); }
+.sw.wall { background: var(--wall); }
 
 /* ---------- controls ---------- */
 .controls { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn {
   font: inherit; font-size: 14px;
-  min-height: 40px; padding: 8px 14px;
-  color: var(--ink); background: #241e19;
-  border: 1px solid var(--line); border-radius: 6px;
+  min-height: 38px; padding: 7px 13px;
+  color: var(--ink); background: var(--bg-raise);
+  border: 1px solid var(--line-strong); border-radius: 6px;
   cursor: pointer; -webkit-appearance: none; appearance: none;
   touch-action: manipulation;
 }
-.btn:hover:not(:disabled) { border-color: var(--amber-dim); }
-.btn:active:not(:disabled) { background: #2e261f; }
-.btn:disabled { opacity: .4; cursor: default; }
-.btn-primary { background: var(--amber-dim); border-color: var(--amber); color: #1a1409; font-weight: 600; }
-.btn-danger { border-color: #5d2a20; color: #e0a294; }
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:active:not(:disabled) { background: var(--bg-active); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn-primary {
+  background: var(--accent-fill); border-color: var(--accent-fill);
+  color: var(--on-accent); font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { color: var(--on-accent); border-color: var(--accent); }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.btn-theme { font-family: var(--mono); text-transform: lowercase; min-width: 62px; }
 .note-form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint); }
+.lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-dim); }
 .chk { font-size: 12px; color: var(--ink-dim); font-family: var(--mono); cursor: pointer; }
-.transcript-tools { display: flex; gap: 10px; }
 
-/* ---------- voice (Web Speech) ---------- */
+/* ---------- voice (top bar) ---------- */
 .voice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .voice[hidden] { display: none; }
 .voice select {
   width: auto; font-size: 12px; font-family: var(--mono);
   padding: 3px 22px 3px 8px; min-height: 28px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
-                    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
-  background-position: calc(100% - 12px) 11px, calc(100% - 8px) 11px;
-  background-size: 4px 4px; background-repeat: no-repeat;
 }
 .btn-small { min-height: 28px; padding: 2px 10px; font-size: 12px; font-family: var(--mono); }
-.voice.locked .chk { color: var(--amber); }
+.voice.locked .chk { color: var(--accent); }
 .speaking {
-  background: rgba(226,163,63,.10);
-  box-shadow: -6px 0 0 rgba(226,163,63,.10), 6px 0 0 rgba(226,163,63,.10);
+  background: var(--shade);
+  box-shadow: -6px 0 0 var(--shade), 6px 0 0 var(--shade);
   border-radius: 3px;
 }
 .mech.speaking { color: var(--ink); }
@@ -264,12 +452,14 @@ body {
 /* What the narrator has already read is dimmed, so a spectator coming back to
    the tab can see where they were. Only while it is actually behind: caught up,
    every line is read and dimming them all would say nothing. app.js marks the
-   nodes (`read`) as the playhead passes them. */
+   nodes (`read`) as the playhead passes them. Dimmed text is still read text,
+   so it goes to --ink-dim rather than to an opacity that would drop it under
+   the contrast floor. */
 .transcript.has-playhead .read.narration,
 .transcript.has-playhead .read.dialogue,
 .transcript.has-playhead .read.scene,
 .transcript.has-playhead .read.dmnote,
-.transcript.has-playhead .read.turn-head { opacity: .5; }
+.transcript.has-playhead .read.turn-head { color: var(--ink-dim); }
 .transcript.voice-clickable .narration,
 .transcript.voice-clickable .dialogue,
 .transcript.voice-clickable .scene,
@@ -278,11 +468,11 @@ body {
 /* ---------- narration transport ---------- */
 .transport { display: flex; gap: 6px; flex-wrap: wrap; }
 .btn-transport {
-  min-width: 44px; padding: 8px 10px; font-size: 15px; line-height: 1;
+  min-width: 44px; padding: 7px 10px; font-size: 15px; line-height: 1;
   font-variant-emoji: text;
 }
 .btn-live { font-size: 12px; font-family: var(--mono); }
-.btn-transport.on { border-color: var(--amber); color: var(--amber); }
+.btn-transport.on { border-color: var(--accent); color: var(--accent); }
 .vt-now {
   margin: 8px 0 0; min-height: 2.4em;
   font-size: 12px; font-family: var(--mono); color: var(--ink-dim);
@@ -298,20 +488,22 @@ body {
 .vt-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 /* A setting that is not doing anything says so, rather than sitting there
    ticked as though it were. `disabled` is "cannot apply to this game at all";
-   `idle` is "on, but nothing to do just now" — still changeable. Titles differ. */
-.chk.disabled { opacity: .45; cursor: default; }
-.chk.idle { opacity: .7; }
+   `idle` is "on, but nothing to do just now" — still changeable. Titles differ.
+   Both stay above the contrast floor: the cue is the italic label, not a fade
+   into the background. */
+.chk.disabled { color: var(--ink-faint); font-style: italic; cursor: default; }
+.chk.idle { color: var(--ink-faint); }
 .vt-settings select { width: auto; }
 .pill-behind {
   font: inherit; font-size: 11px; font-family: var(--mono);
-  cursor: pointer; border: 1px solid var(--amber-dim); color: var(--amber);
+  cursor: pointer; border: 1px solid var(--accent); color: var(--accent);
   background: transparent; padding: 2px 8px; border-radius: 999px;
   min-height: 24px; -webkit-appearance: none; appearance: none;
   touch-action: manipulation;
 }
 .pill-behind[hidden] { display: none; }
-.ctl-note { margin: 8px 0 0; font-size: 12px; font-family: var(--mono); color: var(--ink-dim); }
-.ctl-note.bad { color: #e0a294; }
+.ctl-note { margin: 4px 0 8px; font-size: 12px; font-family: var(--mono); color: var(--ink-dim); }
+.ctl-note.bad { color: var(--danger); }
 .ctl-note[hidden] { display: none; }
 /* The write half of the Controls panel. `.controls` and `.note-form` set
    `display: flex`, which beats the UA stylesheet's `[hidden]`, so the wrapper
@@ -324,28 +516,35 @@ input, select, textarea {
   font: inherit; font-size: 16px; /* 16px avoids iOS zoom-on-focus */
   width: 100%;
   color: var(--ink); background: var(--bg-sunken);
-  border: 1px solid var(--line); border-radius: 6px;
+  border: 1px solid var(--line-strong); border-radius: 6px;
   padding: 8px 9px; -webkit-appearance: none; appearance: none;
 }
-select { background-image: none; }
+select {
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) calc(50% + 2px), calc(100% - 11px) calc(50% + 2px);
+  background-size: 4px 4px; background-repeat: no-repeat;
+  padding-right: 26px;
+}
 input[type="checkbox"] {
   width: auto; min-height: 0; padding: 0; margin: 0 5px 0 0;
-  -webkit-appearance: checkbox; appearance: auto; accent-color: var(--amber);
+  -webkit-appearance: checkbox; appearance: auto; accent-color: var(--accent-fill);
   vertical-align: -1px;
 }
 textarea { resize: vertical; }
-input:focus, select:focus, textarea:focus, .btn:focus-visible {
-  outline: 2px solid var(--amber); outline-offset: 1px;
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+.btn:focus-visible, .transcript:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .conn { font-family: var(--mono); font-size: 11px; margin: 10px 0 0; }
-.conn-on  { color: var(--green); }
+.conn-on  { color: var(--good); }
 .conn-off { color: var(--ink-faint); }
-.conn-warn { color: var(--amber); }
+.conn-warn { color: var(--accent); }
 
 /* ---------- modal ---------- */
 .modal {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(8, 6, 5, .82);
+  background: var(--scrim);
   display: flex; align-items: flex-start; justify-content: center;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
   padding: 24px 14px calc(24px + env(safe-area-inset-bottom));
@@ -353,27 +552,41 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
 .modal[hidden] { display: none; }
 .modal-card {
   width: 100%; max-width: 560px;
-  background: var(--bg-panel); border: 1px solid var(--line);
+  background: var(--bg-panel); border: 1px solid var(--line-strong);
   border-radius: 10px; padding: 18px;
 }
-.modal-card h2 { margin: 0 0 14px; font-family: var(--serif); font-size: 20px; color: var(--amber); }
+.modal-card h2 { margin: 0 0 14px; font-family: var(--serif); font-size: 20px; color: var(--accent); }
 .modal-card .lbl { display: block; margin: 12px 0 4px; }
+.modal-card code { font-family: var(--mono); color: var(--ink); }
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .row-4 { grid-template-columns: repeat(4, 1fr); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
-/* ---------- responsive: iPad portrait & phones ---------- */
-@media (max-width: 1100px) {
-  .layout { grid-template-columns: minmax(220px, 1fr) minmax(320px, 1.4fr); }
-  .col-right { grid-column: 1 / -1; }
-  .col-right { flex-direction: row; flex-wrap: wrap; }
-  .col-right .panel { flex: 1 1 300px; }
-  .transcript { height: 60vh; }
+/* ---------- responsive ----------
+   Down to a tablet the deck stays above the transcript, which is the point of
+   it. On a phone one column makes that six panels of scroll before the first
+   line of the story, so there and only there the transcript comes first. */
+/* One column below this: the flex basis of every band is its own content
+   (in a column flex container `flex` sizes height, so a grow factor here
+   would squash the transcript to the leftover viewport and spill it under
+   the panels beneath). The transcript keeps a floor instead. */
+@media (max-width: 1080px) {
+  .layout { flex-direction: column; align-items: stretch; }
+  .rail {
+    flex: 0 0 auto; align-self: stretch;
+    display: grid; gap: 12px; align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .stack { flex: 0 0 auto; align-self: stretch; width: 100%; }
+  .feed { flex: 0 0 auto; }
+  .transcript { flex: 0 0 auto; height: 56vh; min-height: 300px; }
 }
 @media (max-width: 760px) {
-  .layout { grid-template-columns: 1fr; }
-  .col-right { flex-direction: column; }
-  .transcript { height: 55vh; }
+  .deck { order: 2; grid-template-columns: minmax(0, 1fr); }
+  .feed { order: 1; }
+  .rail { grid-template-columns: minmax(0, 1fr); }
+  .initiative { max-height: none; }
+  .transcript { height: 60vh; }
   .row, .row-4 { grid-template-columns: 1fr; }
   .topbar-right { width: 100%; }
   .cost-bar { width: 50px; }
