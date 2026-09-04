@@ -49,3 +49,32 @@ def test_the_reader_takes_a_voice_per_chunk():
     assert "cur.vkey" not in js
     for call in re.findall(r"ttsUrl\(([^,]+),", js):
         assert call.strip() in ("key", "ahead.key", "chunkKey(cur)"), call
+
+
+def test_the_line_in_flight_is_only_read_for_fields_it_carries():
+    """Every `cur.x` / `V.current.x` the reader reads is one something sets.
+
+    `cur` is a plain object built in one place and then read from a dozen —
+    the speaking paths, the fallback, the prefetch, the status panel — so a
+    field dropped from the constructor fails silently as `undefined` rather
+    than loudly. That happened once already: the voice moved onto the chunks,
+    `cur.phrase` went with it, and the narration panel went blank for every
+    line while every test still passed.
+    """
+    # From the reader down: `cur` is a common local name and an initiative
+    # entry higher up in the file is a different object entirely.
+    js = read().split("// ---- the reader ----")[-1]
+    assert js, "the reader section is no longer marked"
+    literal = re.search(r"var cur = \{(.+?)\};", js, re.S)
+    assert literal, "the reader no longer builds a `cur`"
+    carried = set(re.findall(r"(\w+):", literal.group(1)))
+    carried |= set(re.findall(r"cur\.(\w+) =", js))       # set later: token, local, ...
+    read_back = set(re.findall(r"(?:cur|V\.current)\.(\w+)", js)) - {"classList"}
+    assert read_back <= carried, f"read but never set: {sorted(read_back - carried)}"
+
+
+def test_the_panel_says_what_is_being_read():
+    """The status text comes off the chunks, so it cannot go stale or missing."""
+    js = read()
+    assert "text: lineText(V.current)" in js
+    assert "V.current.phrase" not in js

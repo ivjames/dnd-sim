@@ -943,6 +943,15 @@
   function chunkText(cur) { return cur.chunks[cur.idx].text; }
   function chunkKey(cur) { return cur.chunks[cur.idx].key; }
 
+  // The whole line as the panel reports it, chunks rejoined — the narrator's
+  // naming of the speaker included, because that is part of what is being
+  // heard. Read back off the chunks rather than kept beside them: a copy of
+  // the line held on `cur` is a copy that can go stale or go missing, which is
+  // how this line came to be written.
+  function lineText(cur) {
+    return cur.chunks.map(function (c) { return c.text; }).join(' ');
+  }
+
   // Speak the chunk the playhead is on, in whichever engine is answering.
   // Both paths end at the same `voiceChunkDone`, so everything above here —
   // the playhead, the transport, the holds, the read marks — is untouched by
@@ -1277,7 +1286,7 @@
     if (!V.settings.enabled) return { tag: '', text: 'voice off' };
     if (!V.unlocked) return { tag: '', text: 'press play to start — browsers only allow speech from a tap' };
     if (V.current) {
-      return { tag: V.current.ev.kind.replace('_', ' '), text: V.current.phrase };
+      return { tag: V.current.ev.kind.replace('_', ' '), text: lineText(V.current) };
     }
     if (!V.playing) {
       var next = S.events[V.cursor];
