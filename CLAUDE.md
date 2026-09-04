@@ -149,7 +149,11 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   someone's character sheet. `gender_for_pronouns` in `tts/voices.py` is the
   only place that mapping happens and it runs one way; the older `gender` key
   is still read where a config states it alone. The New game panel has a
-  pronoun row per seat, which a gender picker could never have been.
+  pronoun row per seat, which a gender picker could never have been. The same
+  key is what the DM is told to call the character (`pronouns_for` in
+  `agents/views.py`, the COMBATANTS column), so the pronouns a character is
+  narrated in and the voice it is spoken in cannot disagree — it is carried on
+  `CharacterSheet` for that, and read by no rule.
   **Every seat is cast as an adult unless its party spec says otherwise.**
   Polly's roster carries three children's voices (`Ivy`, `Justin`, `Kevin`) and
   they used to be dealt to anyone, which is how a cleric called Father Bexley

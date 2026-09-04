@@ -207,8 +207,11 @@ vars). A party member may carry its own `"model"`, which overrides
 character can be cast from (see [Spoken narration](#spoken-narration)) —
 `"pronouns"` takes any set a character goes by (`he/him`, `she/her`,
 `they/them`, anything else), and `"age"` takes `child`, `adult` or a number of
-years, of which only an age that reads as a child changes anything. Neither is
-a rules field: the engine, the DM and the players never see either of them.
+years, of which only an age that reads as a child changes anything.
+`"pronouns"` is also what the DM is told to call the character, in the
+COMBATANTS block of its own prompt, so the pronouns a character is narrated in
+and the voice it is spoken in come off the one authored string. Neither is a
+rules field: nothing in the engine reads either, and the players see neither.
 
 Two rows are **hosts** rather than platforms: SiliconFlow and DeepInfra serve
 other people's models under namespaced ids (`deepseek-ai/DeepSeek-V3.2`,

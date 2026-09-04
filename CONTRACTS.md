@@ -217,7 +217,7 @@ class GameConfig:
     seed: int
     setting: str                     # free text world/tone
     tone: str = "classic heroic"
-    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat) and "pronouns"/"age" (voice casting) — none of them reaches the engine
+    party: list[dict]                # character specs (see build_character); may also carry "model" (per-seat), "age" (voice casting; never reaches the engine) and "pronouns" (voice casting + the DM's pronouns column; carried on CharacterSheet, read by no rule)
     scenario: dict                   # {"opening": str, "encounters": [{"trigger":"scene_1", "monsters":[{"name":"Goblin","count":4}], "grid": {"width":12,"height":10,"party_start":[[1,4],[1,5],[2,4],[2,5]], "enemy_start":[[10,3],...], "difficult":[[5,5]], "walls":[]}}], "max_scenes": 3}
     dm_model: str; player_model: str; summary_model: str
     max_rounds_per_combat: int = 20
@@ -1590,7 +1590,7 @@ of an authored string, and the turn's actor is state the engine already holds.
 `tests/orchestrator/test_narration_attribution.py` asserts the narration
 prompts themselves are identical across two runs of one seed.
 
-### 2026-09-04 — tts/ + web/ — a character states pronouns, not a gender
+### 2026-09-04 — tts/ + web/ + engine/ + agents/ — a character states pronouns, not a gender
 
 The narration amendment gave a party member a `gender`, `female` or `male`,
 because Polly's roster is `Female` and `Male` and that is the field
@@ -1612,9 +1612,19 @@ about a person recorded to serve a two-item voice list.
    it. Any set at all may be stated; the function answers what the roster can
    do about it, not what the character is.
 
-   **Not an engine field**, exactly as `gender` was not: `CharacterSheet`
-   (§1.3) is unchanged, `build_character` ignores the key, and neither the DM
-   nor the players see it.
+   **It is the key the amendment above wanted.** That one put `gender` on
+   `CharacterSheet` (§1.3) — inert, read by nothing in the rules — so that one
+   authored answer could reach both the voice casting and the pronouns column
+   in `dm_view`, and it read it there through `agents.views.PRONOUNS`, which
+   infers `female` → `she/her`. With `pronouns` stated there is nothing left to
+   infer: `CharacterSheet` gains `pronouns` beside `gender`, `build_character`
+   copies each verbatim from the spec, and `pronouns_for` returns a stated
+   `pronouns` **as written** — a set neither table has heard of reaches the DM
+   intact — falling back to `PRONOUNS.get(gender)` and then to `they/them`. So
+   the string the DM narrates a character in and the string the voice is dealt
+   from are the same string, and `tests/orchestrator/test_narration_attribution.py`
+   pins that both ways. The engine still reads neither: both fields are carried,
+   not consulted, and no rule, prompt or action sees them.
 
 2. **`they/them` becomes sayable, and it is not the same statement as silence.**
    Both cast from the whole pool — Polly has no third voice and inventing one
@@ -1624,15 +1634,18 @@ about a person recorded to serve a two-item voice list.
    are now distinguishable in the config even though the audio is identical,
    which is the point: the file is also read by people.
 
-3. **`gender` is still read, and stated pronouns beat it.** A game persists its
-   config and its clips are cached per cast, so a row written before this — or
-   a stranger's config — would otherwise re-cast mid-transcript and pay Polly
-   again to do it. `_pool_gender_of` in `web/routes/tts.py` reads `pronouns`
+3. **`gender` is still read, and stated pronouns beat it — on both sides.** A
+   game persists its config and its clips are cached per cast, so a row written
+   before this — or a stranger's config — would otherwise re-cast mid-transcript
+   and pay Polly again to do it. `_pool_gender_of` in `web/routes/tts.py` reads
+   `pronouns`
    where the key is present and non-blank, `gender` otherwise; a stated
    `pronouns` decides **including when it narrows nothing**, or a config
    updated to `they/them` would go on being narrowed by the key that update
-   replaced. No example or preset states `gender` any more, and
-   `web/tests/test_tts_api.py` holds them to that.
+   replaced. `pronouns_for` resolves the same collision the same way, or a
+   config that took the trouble to say so would be narrated in one set of
+   pronouns and spoken in the voice of another. No example or preset states
+   `gender` any more, and `web/tests/test_tts_api.py` holds them to that.
 
 4. **The panel asks, where it could not ask for a gender.** `#ng-party`'s rows
    gain a pronoun select beside the age one (`renderPartySeats` /
