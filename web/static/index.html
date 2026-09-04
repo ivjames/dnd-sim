@@ -76,8 +76,8 @@
 
   <div class="stack">
 
-  <!-- DECK: map, narration, controls — above the transcript, not below it -->
-  <section class="deck" aria-label="Battle map, narration and controls">
+  <!-- DECK: map and controls — above the transcript, not below it -->
+  <section class="deck" aria-label="Battle map and controls">
     <div class="panel">
       <h2 class="panel-title">Battle map</h2>
       <div class="canvas-wrap">
@@ -91,6 +91,41 @@
         <span><i class="sw wall"></i>wall</span>
       </div>
     </div>
+    <div class="panel">
+      <h2 class="panel-title">Controls</h2>
+      <p id="ctl-note" class="ctl-note" hidden></p>
+      <p id="write-locked" class="hint" hidden></p>
+      <div id="write-controls" hidden>
+        <div class="controls">
+          <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
+          <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
+          <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
+        </div>
+        <form id="note-form" class="note-form">
+          <label class="lbl" for="note-text">DM note from the table</label>
+          <textarea id="note-text" rows="2" maxlength="2000"
+                    placeholder="A raven lands on the cart&hellip;"></textarea>
+          <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
+        </form>
+      </div>
+      <p id="conn" class="conn conn-off">stream: offline</p>
+    </div>
+  </section>
+
+  <!-- FEED: the transcript, its toggles under the text, and the narrator's
+       transport under both -->
+  <section class="feed" aria-label="Transcript and narration">
+    <div class="panel panel-fill">
+      <h2 class="panel-title">Transcript</h2>
+      <div id="transcript" class="transcript" tabindex="0">
+        <p class="empty">Start a game or pick one above.</p>
+      </div>
+      <div class="transcript-tools">
+        <label class="chk"><input type="checkbox" id="toggle-mech" checked> mechanics</label>
+        <label class="chk"><input type="checkbox" id="toggle-follow" checked> follow</label>
+      </div>
+    </div>
+
     <div id="voice-panel" class="panel" hidden>
       <h2 class="panel-title">Narration</h2>
       <div class="transport">
@@ -116,39 +151,6 @@
           <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
         <label class="chk disabled" title="Turn voice on: with no narration there is nothing to hold the game for.">
           <input type="checkbox" id="voice-hold" checked disabled> hold the game for the narrator</label>
-      </div>
-    </div>
-    <div class="panel">
-      <h2 class="panel-title">Controls</h2>
-      <p id="ctl-note" class="ctl-note" hidden></p>
-      <p id="write-locked" class="hint" hidden></p>
-      <div id="write-controls" hidden>
-        <div class="controls">
-          <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
-          <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
-          <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
-        </div>
-        <form id="note-form" class="note-form">
-          <label class="lbl" for="note-text">DM note from the table</label>
-          <textarea id="note-text" rows="2" maxlength="2000"
-                    placeholder="A raven lands on the cart&hellip;"></textarea>
-          <button id="btn-note" class="btn" type="submit" disabled>Send note</button>
-        </form>
-      </div>
-      <p id="conn" class="conn conn-off">stream: offline</p>
-    </div>
-  </section>
-
-  <!-- FEED: the transcript, with its toggles under the text rather than above it -->
-  <section class="feed" aria-label="Transcript">
-    <div class="panel panel-fill">
-      <h2 class="panel-title">Transcript</h2>
-      <div id="transcript" class="transcript" tabindex="0">
-        <p class="empty">Start a game or pick one above.</p>
-      </div>
-      <div class="transcript-tools">
-        <label class="chk"><input type="checkbox" id="toggle-mech" checked> mechanics</label>
-        <label class="chk"><input type="checkbox" id="toggle-follow" checked> follow</label>
       </div>
     </div>
   </section>

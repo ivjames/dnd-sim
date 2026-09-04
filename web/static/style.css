@@ -243,11 +243,13 @@ body {
   display: flex; flex-direction: column; gap: 12px; min-width: 0;
 }
 .stack { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* Two panels, and they do not want the same width: the map is square-ish and
+   has a natural size, the controls are a form and take what is left. */
 .deck {
   display: grid; gap: 12px; align-items: start; min-width: 0;
-  grid-template-columns: repeat(auto-fit, minmax(226px, 1fr));
+  grid-template-columns: minmax(200px, 380px) minmax(220px, 1fr);
 }
-.feed { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.feed { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 
 .panel {
   background: var(--bg-panel);
@@ -320,9 +322,9 @@ body {
 
 /* one row per enemy */
 .card-tight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.card-tight .card-name { flex: 0 1 auto; min-width: 0; font-size: 13px; font-weight: 500; }
-.card-tight .card-vitals { flex: 1 1 70px; max-width: 190px; margin-top: 0; }
-.card-tight .card-sub { flex: 0 0 auto; margin-left: auto; }
+.card-tight .card-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 500; }
+.card-tight .card-vitals { flex: 0 0 auto; width: 112px; margin-top: 0; }
+.card-tight .card-sub { flex: 0 0 auto; margin-left: 0; }
 .card-tight .tags { flex: 1 0 100%; margin-top: 2px; }
 
 /* ---------- transcript ----------
@@ -478,8 +480,18 @@ body {
 .transcript.voice-clickable .scene,
 .transcript.voice-clickable .dmnote { cursor: pointer; }
 
-/* ---------- narration transport ---------- */
-.transport { display: flex; gap: 6px; flex-wrap: wrap; }
+/* ---------- narration transport ----------
+   Under the transcript and the width of it, so the row reads left to right as
+   one sentence: what it is, the transport, the line being read, the settings.
+   `display: flex` beats the UA stylesheet's `[hidden]`, so the hidden case is
+   spelled out — without it a page with no narration shows an empty bar. */
+#voice-panel {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px 16px;
+}
+#voice-panel[hidden] { display: none; }
+#voice-panel .panel-title { margin: 0; flex: 0 0 auto; }
+.transport { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 0 auto; }
 .btn-transport {
   min-width: 44px; padding: 7px 10px; font-size: 15px; line-height: 1;
   font-variant-emoji: text;
@@ -487,18 +499,22 @@ body {
 .btn-live { font-size: 12px; font-family: var(--mono); }
 .btn-transport.on { border-color: var(--accent); color: var(--accent); }
 .vt-now {
-  margin: 8px 0 0; min-height: 2.4em;
+  flex: 1 1 170px; margin: 0; min-height: 2.4em;
+  display: flex; align-items: center;
   font-size: 12px; font-family: var(--mono); color: var(--ink-dim);
   overflow-wrap: anywhere;
 }
 .vt-now .vt-tag { color: var(--ink-faint); text-transform: uppercase; letter-spacing: .07em; margin-right: 6px; }
 /* Which engine is reading: server-rendered voices, or this browser's own. */
+/* Ordered last so that turning it on wraps a line of its own rather than
+   pushing the settings off the bar. */
 .vt-src {
-  margin: 4px 0 0; font-size: 11px; font-family: var(--mono); color: var(--ink-faint);
+  order: 2; flex: 0 0 100%; margin: 0;
+  font-size: 11px; font-family: var(--mono); color: var(--ink-faint);
   overflow-wrap: anywhere;
 }
 .vt-src[hidden] { display: none; }
-.vt-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.vt-settings { order: 1; display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
 /* A setting that is not doing anything says so, rather than sitting there
    ticked as though it were. `disabled` is "cannot apply to this game at all";
    `idle` is "on, but nothing to do just now" — still changeable. Titles differ.

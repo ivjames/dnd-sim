@@ -355,13 +355,15 @@ prompt-cached, and summaries are written by the cheap model.
 
 One rail and one column. Initiative, the party and the enemies sit down the
 left in tight rows — one line per enemy, two per party member — so a full
-combat is a glance rather than a scroll. The battle map, the narration
-transport and the controls sit in a strip **above** the transcript, and the
-transcript takes whatever height the viewport has left, with its own
-`mechanics` and `follow` toggles under the text rather than between you and it.
-Below a phone's width the whole thing becomes one column and the transcript
-moves back above the strip, because six panels of preamble is not a way to read
-a story.
+combat is a glance rather than a scroll. The battle map and the controls sit in
+a strip **above** the transcript; the transcript takes whatever height the
+viewport has left; and under it, in reading order, come its own `mechanics` and
+`follow` toggles and then the narrator's transport — the things you reach for
+because of a line you have just read, rather than something between you and the
+line. Below a phone's width the whole thing becomes one column and the
+transcript moves back above the strip, because six panels of preamble is not a
+way to read a story. The narration bar stays under the transcript at every
+width.
 
 **Dark or light, and the page will follow the system unless told otherwise.**
 The button in the top bar cycles `auto → light → dark`; the choice is kept in
