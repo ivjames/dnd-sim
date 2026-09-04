@@ -43,7 +43,16 @@
     // whether the two agree.
     writes: 'unknown',  // 'unknown' | 'token' | 'unconfigured'
     token: '',
-    authed: false
+    authed: false,
+    // Bumped by every probe and by Forget, so only the newest answer may land
+    // — the same rule `loadGen` enforces for a game load, and for the same
+    // reason: an answer to a question nobody is asking any more must not be
+    // allowed to write state. Forget is the case that matters. It is
+    // deliberately not disabled while a probe is in flight (it is the one
+    // control you never want taken away), so it can land mid-probe, and the
+    // callback would otherwise re-persist the very token that was just
+    // cleared.
+    authGen: 0
   };
 
   var WRITE_HEADER = 'X-Dnd-Token';
@@ -129,7 +138,9 @@
   // only way to know before trying a write — which for "create a game" would
   // mean starting one to find out.
   function checkAuth() {
+    var gen = ++S.authGen;
     return api('/api/auth').then(function (a) {
+      if (gen !== S.authGen) return null;   // superseded, or forgotten
       S.writes = (a && a.writes) || 'unknown';
       S.authed = !!(a && a.authenticated);
       renderWriteAccess();
@@ -196,12 +207,19 @@
     // or reloading.
     var previous = S.token;
     var wasAuthed = S.authed;
+    var gen = ++S.authGen;
     S.token = value;
     var btn = $('ul-save');
     btn.disabled = true;
     // Checked against the server before it is kept, so a mistyped token is a
     // message here rather than a 401 on the next thing you try to do.
     api('/api/auth').then(function (a) {
+      // Forget, or a newer submission, landed while this was in flight. Both
+      // branches below write the credential — one stores the submitted token,
+      // the other puts the previous one back — so a stale answer here would
+      // undo an explicit Forget and leave the token in localStorage on a
+      // browser whose user had just cleared it.
+      if (gen !== S.authGen) return;
       S.writes = (a && a.writes) || 'unknown';
       S.authed = !!(a && a.authenticated);
       if (S.authed) {
@@ -220,16 +238,21 @@
       }
       renderWriteAccess();
     }).catch(function (err) {
+      if (gen !== S.authGen) return;
       // The probe failing says nothing about either token, so the previous
       // state stands whole and the gate is left as it was.
       S.token = previous;
       S.authed = wasAuthed;
       $('ul-error').textContent = err.message;
       $('ul-error').hidden = false;
+      // The button is re-enabled below either way: a stale probe must not
+      // leave Unlock dead for the next attempt.
     }).then(function () { btn.disabled = false; });
   }
 
   function forgetToken() {
+    // First, so a probe already on the wire cannot write the token back.
+    S.authGen++;
     S.token = '';
     S.authed = false;
     tokenStore('');
