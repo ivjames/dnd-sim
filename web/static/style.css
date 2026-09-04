@@ -497,17 +497,25 @@ body {
 }
 
 /* ---------- map ---------- */
-/* Centred, but SAFELY centred: below the cell floor the map is bigger than
-   this box, and a plain `center` puts half of that overflow before the scroll
-   origin where no scroll can reach it — on a short laptop a 12-row map lost
-   the top half of its first row. `safe` falls back to start alignment exactly
-   when the item overflows, which is the only case that matters here; the
-   unprefixed pair stays first for the browsers that do not know the keyword. */
+/* Centred where centring is safe, and pinned to the corner where it is not.
+   Below the cell floor the map is bigger than this box, and a plain `center`
+   puts half of that overflow before the scroll origin where no scroll can
+   reach it — on a short laptop a 12-row map lost the top half of its first
+   row. `safe center` is exactly the rule for that, falling back to start
+   alignment only when the item overflows.
+
+   But the fallback has to be START, not `center`: `safe` arrived in Safari
+   16.4 and this page targets iPad Safari 14 (see the header of app.js), where
+   the whole declaration is dropped. A map in the corner of a box too small for
+   it is odd-looking; a map with its first row unreachable is broken, and the
+   corner is the one of those two an old browser should get. */
 .canvas-wrap {
   flex: 1 1 auto; min-height: 0; width: 100%;
-  display: flex; align-items: center; justify-content: center;
-  align-items: safe center; justify-content: safe center;
+  display: flex; align-items: flex-start; justify-content: flex-start;
   overflow: auto;
+}
+@supports (align-items: safe center) {
+  .canvas-wrap { align-items: safe center; justify-content: safe center; }
 }
 /* Both dimensions are set by drawGrid(), which is the only thing that knows
    how many squares there are: it fits the map to the width AND the height the
