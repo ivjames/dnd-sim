@@ -158,7 +158,8 @@ world stay the engine's and the DM's.
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | — | Amazon Polly, which reads the game aloud. Read by boto3 in the ordinary way, so an instance profile works too. Without them the spectator's own browser speaks the game. |
 | `DND_TTS` | unset (auto) | `0` → no server voices at all. `1` → on even for mock games, which otherwise stay free. |
 | `DND_TTS_ENGINE` | `neural` | Polly engine for the table: `standard`, `neural`, `long-form` or `generative`. Each is sent only the SSML it accepts. |
-| `DND_TTS_MONSTER_ENGINE` | `standard` | Engine for speaking monsters, which is separate because `vocal-tract-length` is standard-only. Set it equal to `DND_TTS_ENGINE` to put the whole table on one engine. |
+| `DND_TTS_MONSTER_ENGINE` | = `DND_TTS_ENGINE` | Engine for speaking monsters. They used to be held on `standard` for one SSML tag; the size shift is done in `tts/dsp.py` now, so they sit with the table unless you name an engine here. |
+| `DND_TTS_MONSTER_FX` | `1` | Post-process a speaking monster (`tts/dsp.py`): a size shift, and sometimes grit or a room. `0` goes back to the old arrangement — `<amazon:effect vocal-tract-length>` on the standard engine, which is where the monsters used to live. |
 | `DND_TTS_LANG` | `en-US` | The language the voice pool is drawn from. |
 | `DND_TTS_DM_VOICE` | `Brian` | The DM's voice; the rest of the table is dealt from the other voices. |
 | `DND_TTS_CACHE` | `<dir of DND_SIM_DB>/tts` | Where synthesized clips are kept. |
@@ -560,29 +561,44 @@ monster that can speak — one whose SRD stat block names a language it uses
 aloud, so a goblin or an ogre but not a wolf or a zombie — gets a voice of its
 own either way. In the browser it is cast from the **novelty** voices the OS
 ships beside the real ones (Bubbles, Trinoids, Zarvox and the rest, on Apple
-devices); Polly has no such thing, so there it is an ordinary voice put through
-`<amazon:effect vocal-tract-length>` — a longer vocal tract is a bigger
-creature — with pitch and rate behind it. Nobody else is ever treated: not the
-DM, not a PC, not an NPC that isn't a monster.
+devices); Polly has no such thing, so there it is an ordinary voice with the
+monster made **after** Polly has finished with it (`tts/dsp.py`): the clip is
+played back at a different sample rate, which scales pitch and formants
+together — a bigger creature — with grit and a stone room dealt to some of
+them behind it. Nobody else is ever treated: not the DM, not a PC, not an NPC
+that isn't a monster.
 
-That effect is the reason **a monster is synthesized on a different engine from
-everyone else**. It is standard-only, and so is pitch, while the table itself
-sounds better on neural — so the DM, the players and the NPCs are cast on
-`DND_TTS_ENGINE` (neural) and speaking monsters on `DND_TTS_MONSTER_ENGINE`
-(standard). The engine travels on the cast rather than being read from a
-setting when the clip is made, so a line cannot be cast for one engine and
-rendered on another; each engine keeps its own voice roster, its own cached
-clips and its own rate in the ledger. Set the two equal for one engine
-throughout.
+The size shift costs nothing: it is a number in the WAV header rather than a
+pass over the samples, and the line is spoken faster by exactly the factor the
+playback rate slows it by, so a monster is a different voice and not a slower
+one. Only the grit and the room touch samples, once per line, and every clip is
+cached forever.
 
-Because the monster seats are the only ones writing that tag and the only ones
-routed to a second engine, a working table proves nothing about them — and a
-monster line Polly refuses is a 502 the page answers by speaking that one line
-in the browser's own voice, so it sounds fine and shows up only in the server
-log. `python -m tools.polly_check` sends one real monster line and one real table
+**That is why a monster no longer needs its own engine.** It used to be
+synthesized on `standard`, alone, because the one thing that could make an
+ordinary voice sound like a creature — `<amazon:effect vocal-tract-length>` —
+exists on no other engine, and the table sounds better on neural. Doing the
+shift ourselves buys the same distinction without the split, so the whole table
+including its monsters is on `DND_TTS_ENGINE`. `DND_TTS_MONSTER_ENGINE` still
+names a second engine if you want one, and the engine travels on the cast
+rather than being read from a setting when the clip is made, so a line cannot
+be cast for one engine and rendered on another. `DND_TTS_MONSTER_FX=0` puts the
+old arrangement back whole.
+
+A monster's clip is the one that is post-processed, so it is the one that is
+asked for as `pcm` and served as `audio/wav` — an MP3 back out would need an
+encoder, and narration is not a path to acquire a system dependency on. That
+makes the monster seats the only ones asking Polly for something no other seat
+asks for, so a working table proves nothing about them — and a monster line
+Polly refuses is a 502 the page answers by speaking that one line in the
+browser's own voice, so it sounds fine and shows up only in the server log.
+`python -m tools.polly_check` sends one real monster line and one real table
 line and says what came back — on the droplet with `.env` sourced first, as
-`run.sh` does (`--dry-run` prints the documents and sends nothing, anywhere); `tests/tts/test_polly_contract.py` holds every document the
-app can emit against Amazon's published per-engine tag matrix.
+`run.sh` does (`--dry-run` prints the documents and sends nothing, anywhere;
+`--ab --out DIR` renders the monster line the new way and the old way so the
+two can be listened to back to back); `tests/tts/test_polly_contract.py` holds
+every document the app can emit against Amazon's published per-engine tag
+matrix, and `tests/tts/test_dsp.py` the arithmetic of the treatment.
 
 One thing the neural default costs: the built-in fallback roster is standard's
 and English's, so if `DescribeVoices` cannot be reached the table has nothing to

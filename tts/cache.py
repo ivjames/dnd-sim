@@ -34,6 +34,14 @@ def cache_key(*parts: str) -> str:
 class AudioCache:
     """A flat two-level directory of `<sha256>.mp3`.
 
+    The suffix is a name and not a claim: a monster's clip is a WAV
+    (`tts/dsp.py` treats `pcm` and wraps it, because an MP3 would need an
+    encoder), and it is filed under the same extension as everything else. The
+    key decides the format — it is a digest over the cast, and only a treated
+    cast produces a WAV — so nothing has to read the suffix to know what it
+    holds, and giving a monster its own would orphan every clip on the disk to
+    say something the key already says.
+
     Reads are lock-free (a file is written whole or not at all — see `put`);
     writes take a lock only to keep the byte total honest. `max_bytes <= 0`
     disables pruning, which is what the tests want.

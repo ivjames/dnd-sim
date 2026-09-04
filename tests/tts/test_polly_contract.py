@@ -35,9 +35,14 @@ import pytest
 
 from tts.cache import AudioCache
 from tts.client import DEFAULT_ENGINE, DEFAULT_MONSTER_ENGINE, PollyTTS, TTSError
+from tts.dsp import SAMPLE_RATE, MonsterFX
 from tts.voices import (
     CHILD_VOICE_IDS,
     ENGINE_SSML,
+    MONSTER_CAVE,
+    MONSTER_GROWL,
+    MONSTER_SIZE,
+    MONSTER_TEMPO,
     MONSTER_VTL,
     STANDARD_ENGLISH,
     Cast,
@@ -93,6 +98,14 @@ RATE_MIN, RATE_MAX = 20, 200
 #: staying inside the range is what makes the written value the heard one.
 VTL_PCT = re.compile(r"^[+-][0-9]+%$")
 VTL_MIN, VTL_MAX = -50, 100
+
+#: What `pcm` may be asked for at. "Valid values for pcm are '8000' and
+#: '16000'" — and an `InvalidSampleRateException` if it is anything else
+#: (https://docs.aws.amazon.com/polly/latest/APIReference/API_SynthesizeSpeech.html,
+#: read 2026-09-04). This matters now that a monster's clip is `pcm`: it is the
+#: one format that can be post-processed without a codec, and the price of it
+#: is a 16 kHz ceiling against the 24 kHz the table's MP3 gets.
+DOCUMENTED_PCM_SAMPLE_RATES = {"8000", "16000"}
 
 #: The standard engine's English voices, with the Gender and LanguageCode
 #: `DescribeVoices` reports. From the "Standard voice" column of
@@ -217,18 +230,30 @@ def assert_documented(doc: str, engine: str) -> None:
     assert treatments_in(doc) <= allowed, f"{engine} cannot read {doc!r}"
 
 
-def every_reachable_monster_cast():
+def every_reachable_monster_cast(monster_fx: bool = True):
     """Every `Cast` the monster branch of `cast_for` can produce.
 
-    Its three treatments are dealt from independent slices of one hash, so the
-    cross product is what a live game can actually reach — enumerating it costs
+    Its treatments are dealt from independent slices of one hash, so the cross
+    product is what a live game can actually reach — enumerating it costs
     nothing and enumerating the hash space costs a minute.
+
+    Both arrangements are reachable: the treated one is the default, and
+    `DND_TTS_MONSTER_FX=0` is the other.
     """
-    for vtl in MONSTER_VTL:
-        for pitch in range(-20, 11, 5):          # -20 + (h>>8 % 7)*5
-            for rate in (90, 95, 100, 105):      # 90 + (h>>16 % 4)*5
-                yield Cast("monster:x", "Joey", "en-US", "standard",
-                           pitch_pct=pitch, rate_pct=rate, vtl_pct=vtl)
+    if not monster_fx:
+        for vtl in MONSTER_VTL:
+            for pitch in range(-20, 11, 5):          # -20 + (h>>8 % 7)*5
+                for rate in (90, 95, 100, 105):      # 90 + (h>>16 % 4)*5
+                    yield Cast("monster:x", "Joey", "en-US", "standard",
+                               pitch_pct=pitch, rate_pct=rate, vtl_pct=vtl)
+        return
+    for size in MONSTER_SIZE:
+        for growl in MONSTER_GROWL:
+            for cave in MONSTER_CAVE:
+                for tempo in MONSTER_TEMPO:
+                    fx = MonsterFX(size_pct=size, growl_pct=growl, cave_pct=cave)
+                    yield Cast("monster:x", "Joey", "en-US", "neural",
+                               rate_pct=round(fx.rate_pct() * tempo / 100), fx=fx)
 
 
 # -- the matrix --------------------------------------------------------------
@@ -264,10 +289,33 @@ def test_the_childrens_voices_are_the_documented_ones():
 
 # -- the documents ------------------------------------------------------------
 
+def test_the_exact_monster_document_a_treated_monster_sends():
+    """What the droplet speaks by default now, pinned character for character.
+
+    Almost nothing: the size shift is a sample rate rather than markup, so the
+    document is the one tag every engine takes. That is the whole point of
+    doing the treatment ourselves — this line is legal on neural, where the
+    VTL document below is not.
+    """
+    fx = MonsterFX(size_pct=24, growl_pct=55, cave_pct=35)
+    goblin = Cast("monster:goblin_1", "Joey", "en-US", "neural",
+                  rate_pct=round(fx.rate_pct() * 95 / 100), fx=fx)
+    assert goblin.rate_pct == 118
+    for engine in ("standard", "neural", "long-form"):
+        assert ssml_for("Fee fi.", goblin, engine) == \
+            '<speak><prosody rate="118%">Fee fi.</prosody></speak>'
+    assert ssml_for("Fee fi.", goblin, "generative") == "<speak>Fee fi.</speak>"
+
+    # `rate_pct` is exactly the compensation for what playing at
+    # `playback_rate` does to duration, so a monster dealt no tempo of its own
+    # is heard at the length it was written.
+    assert fx.rate_pct() == 124 and fx.playback_rate(SAMPLE_RATE) == round(16000 / 1.24)
+
+
 def test_the_exact_monster_document_on_each_engine():
     """Pinned character for character, because this is the string that has
     never been sent to Polly. A change here is a change to what the droplet
-    speaks and has to be made on purpose."""
+    speaks with `DND_TTS_MONSTER_FX=0` and has to be made on purpose."""
     goblin = Cast("monster:goblin_1", "Joey", "en-US", "standard",
                   pitch_pct=-15, rate_pct=95, vtl_pct=30)
 
@@ -308,6 +356,21 @@ def test_the_exact_table_document_on_each_engine():
 
 
 def test_no_monster_is_dealt_no_treatment_at_all():
+    """`MONSTER_SIZE` holds no 0, and neither does `MONSTER_VTL`.
+
+    The size shift is the one treatment every monster gets — grit and a room
+    are characteristics, dealt to some of them — so a 0 in that tuple would
+    make one monster in six an ordinary voice reading a monster's lines.
+    """
+    assert 0 not in MONSTER_SIZE
+    for cast in every_reachable_monster_cast():
+        assert cast.fx and cast.fx.size_pct != 0
+        # And nothing standard-only, on any engine: that is what lets the
+        # monster sit on the table's.
+        assert treatments_in(ssml_for("Fee fi.", cast)) <= {"rate"}
+
+
+def test_no_monster_is_dealt_no_treatment_at_all_with_the_fx_off():
     """`MONSTER_VTL` holds no 0, and that is load-bearing twice over.
 
     CONTRACTS.md §6 puts it as "never 0%": a monster whose only treatment
@@ -318,20 +381,22 @@ def test_no_monster_is_dealt_no_treatment_at_all():
     untreated and that inference wrong.
     """
     assert 0 not in MONSTER_VTL
-    for cast in every_reachable_monster_cast():
+    for cast in every_reachable_monster_cast(monster_fx=False):
         assert cast.vtl_pct != 0
         assert "vocal-tract-length" in ssml_for("Fee fi.", cast, "standard")
 
 
+@pytest.mark.parametrize("monster_fx", [True, False])
 @pytest.mark.parametrize("engine", sorted(DOCUMENTED_ENGINE_SSML))
-def test_every_monster_a_game_can_deal_is_documented_ssml(engine):
-    """The cross product of the monster branch's three spreads, on every
-    engine — 168 documents, none of which any test has ever validated."""
+def test_every_monster_a_game_can_deal_is_documented_ssml(engine, monster_fx):
+    """The cross product of the monster branch's spreads, in both
+    arrangements, on every engine."""
     seen = 0
-    for cast in every_reachable_monster_cast():
+    for cast in every_reachable_monster_cast(monster_fx):
         assert_documented(ssml_for("The goblin snarls.", cast, engine), engine)
         seen += 1
-    assert seen == len(MONSTER_VTL) * 7 * 4
+    assert seen == ((len(MONSTER_SIZE) * len(MONSTER_GROWL) * len(MONSTER_CAVE)
+                     * len(MONSTER_TEMPO)) if monster_fx else len(MONSTER_VTL) * 7 * 4)
 
 
 @pytest.mark.parametrize("engine", sorted(DOCUMENTED_ENGINE_SSML))
@@ -346,8 +411,11 @@ def test_every_seat_a_game_can_deal_is_documented_ssml(engine):
         for key in keys:
             for gender in ("", "female", "male"):
                 for age in ("", "child", "adult", 9, 40):
-                    cast = cast_for(key, pool, "Brian", gender, engine, age)
-                    assert_documented(ssml_for("Grog & <the> \"boss\" said 'no'.", cast), engine)
+                    for fx in (True, False):
+                        cast = cast_for(key, pool, "Brian", gender, engine, age,
+                                        monster_fx=fx)
+                        assert_documented(
+                            ssml_for("Grog & <the> \"boss\" said 'no'.", cast), engine)
 
 
 def test_a_line_with_xml_in_it_still_parses():
@@ -390,6 +458,13 @@ class StrictPolly:
     def synthesize_speech(self, **kw):
         self.sent.append(kw)
         engine = kw["Engine"]
+        # "Valid values for pcm are '8000' and '16000'" — and the reference
+        # lists `InvalidSampleRateException` for anything else. A monster's
+        # clip is `pcm` now, so this is a mistake the app can newly make.
+        if kw.get("OutputFormat") == "pcm":
+            rate = kw.get("SampleRate")
+            if rate is not None and rate not in DOCUMENTED_PCM_SAMPLE_RATES:
+                raise RuntimeError(f"InvalidSampleRateException: {rate!r} is not valid for pcm")
         if engine not in DOCUMENTED_ENGINE_SSML:
             raise RuntimeError(f"ValidationException: unknown engine {engine!r}")
         if engine not in DOCUMENTED_ENGINES_BY_VOICE.get(kw["VoiceId"], set()):
@@ -427,28 +502,73 @@ def shipped(tmp_path, client):
     )
 
 
-def test_the_shipped_split_survives_a_polly_that_refuses(tmp_path):
-    """The end of the audit: a monster line and a table line, through the real
-    `PollyTTS` on the shipped defaults, against a Polly that raises the way the
-    documented one does."""
+def with_the_fx_off(tmp_path, client):
+    """And as `DND_TTS_MONSTER_FX=0` builds it: the standard-engine split."""
+    return PollyTTS(
+        AudioCache(str(tmp_path), 0),
+        client=client,
+        engine=DEFAULT_ENGINE,
+        monster_engine="standard",
+        monster_fx=False,
+    )
+
+
+def test_the_old_split_still_survives_the_same_polly(tmp_path):
+    """`DND_TTS_MONSTER_FX=0` is the escape hatch, so it has to keep working:
+    the monster line goes to the standard engine, carrying the one tag that
+    exists only there, and comes back as an MP3 like everything else."""
     polly = StrictPolly()
-    svc = shipped(tmp_path, polly)
-    assert (svc.engine, svc.monster_engine) == ("neural", "standard")
+    svc = with_the_fx_off(tmp_path, polly)
 
     table = svc.synthesize("dm", "The cart still smoulders.")
     monster = svc.synthesize("monster:goblin_1", "You will not leave this cave alive.")
 
-    assert table.cast.engine == "neural" and monster.cast.engine == "standard"
     assert [s["Engine"] for s in polly.sent] == ["neural", "standard"]
-    assert all(s["TextType"] == "ssml" and s["OutputFormat"] == "mp3" for s in polly.sent)
-
-    # The one tag the split exists for reaches the wire, and only there.
+    assert all(s["OutputFormat"] == "mp3" for s in polly.sent)
     assert "vocal-tract-length" not in polly.sent[0]["Text"]
     assert "vocal-tract-length" in polly.sent[1]["Text"]
 
     # Priced at the engine each seat rendered on, not at the table's.
     assert table.usd == pytest.approx(table.chars * 16.0 / 1_000_000)
     assert monster.usd == pytest.approx(monster.chars * 4.0 / 1_000_000)
+    assert monster.media_type == "audio/mpeg"
+
+
+def test_the_shipped_arrangement_survives_a_polly_that_refuses(tmp_path):
+    """The end of the audit: a monster line and a table line, through the real
+    `PollyTTS` on the shipped defaults, against a Polly that raises the way the
+    documented one does."""
+    polly = StrictPolly()
+    svc = shipped(tmp_path, polly)
+    assert (svc.engine, svc.monster_engine) == ("neural", "neural")
+
+    table = svc.synthesize("dm", "The cart still smoulders.")
+    monster = svc.synthesize("monster:goblin_1", "You will not leave this cave alive.")
+
+    assert table.cast.engine == "neural" and monster.cast.engine == "neural"
+    assert [s["Engine"] for s in polly.sent] == ["neural", "neural"]
+    assert all(s["TextType"] == "ssml" for s in polly.sent)
+
+    # The monster asks for the one format that can be treated without a codec,
+    # at the only rate `pcm` serves that is worth having; the table takes
+    # Polly's own MP3 untouched.
+    assert polly.sent[0]["OutputFormat"] == "mp3"
+    assert polly.sent[1]["OutputFormat"] == "pcm"
+    assert polly.sent[1]["SampleRate"] in DOCUMENTED_PCM_SAMPLE_RATES
+    assert polly.sent[1]["SampleRate"] == str(SAMPLE_RATE)
+
+    # Neither line carries a tag this engine would refuse, which is what the
+    # old split existed to arrange and what the treatment makes unnecessary.
+    assert all("vocal-tract-length" not in s["Text"] for s in polly.sent)
+
+    # One engine, so one rate on the bill.
+    assert table.usd == pytest.approx(table.chars * 16.0 / 1_000_000)
+    assert monster.usd == pytest.approx(monster.chars * 16.0 / 1_000_000)
+
+    # And the monster comes back as a RIFF, because the treatment happened
+    # between Polly and the listener.
+    assert monster.media_type == "audio/wav" and monster.audio[:4] == b"RIFF"
+    assert table.media_type == "audio/mpeg" and table.audio[:2] == b"\xff\xfb"
 
 
 def test_the_strict_polly_has_teeth(tmp_path):

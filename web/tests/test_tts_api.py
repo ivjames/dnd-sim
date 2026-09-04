@@ -44,6 +44,12 @@ def test_the_probe_says_what_the_page_needs_to_know(tts_client, tts):
     assert body["engine"] == "standard" and body["language"] == "en-US"
     assert body["max_chars"] == tts.max_chars
     assert body["price_per_million_chars"] == 4.0
+    # Whether a monster is treated after synthesis or made out of standard-only
+    # SSML, which decides both what its clip costs and what format it is.
+    assert body["monster_fx"] is True
+    tts.monster_fx = False
+    assert tts_client.get("/api/tts").get_json()["monster_fx"] is False
+    tts.monster_fx = True
     # Two engines, two rates: advertising only the table's describes a game's
     # spend wrongly wherever monsters do much of the talking.
     tts.engine, tts.monster_engine = "neural", "standard"
@@ -87,6 +93,29 @@ def test_a_different_speaker_is_a_different_clip(tts_client, tts, game):
     goblin = tts_client.get(speak_url(game, key="monster:goblin_1"))
     assert dm.headers["ETag"] != goblin.headers["ETag"]
     assert dm.headers["X-Dnd-Voice"] != goblin.headers["X-Dnd-Voice"]
+
+
+def test_a_monster_is_served_as_a_wav_and_a_cache_hit_agrees(tts_client, tts, game):
+    """A monster's clip is post-processed (`tts/dsp.py`) and so cannot be
+    handed back in the format Polly sent it in. The type comes off the CAST, so
+    the second request — answered from the cache without looking at the bytes —
+    cannot disagree with the first about what it is serving."""
+    url = speak_url(game, key="monster:goblin_1")
+    fresh = tts_client.get(url)
+    assert fresh.status_code == 200 and fresh.mimetype == "audio/wav"
+
+    hit = tts_client.get(url)
+    assert hit.status_code == 200 and hit.mimetype == "audio/wav"
+    assert hit.data == fresh.data
+    assert len(tts.calls) == 1                          # the second was the cache
+
+    # And nobody else is treated, so nobody else changes format.
+    assert tts_client.get(speak_url(game, key="npc")).mimetype == "audio/mpeg"
+
+    # With the treatment off it is an ordinary clip again.
+    tts.monster_fx = False
+    tts.clips.clear()
+    assert tts_client.get(url).mimetype == "audio/mpeg"
 
 
 def test_what_it_refuses(tts_client, tts, game):
