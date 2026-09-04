@@ -269,7 +269,7 @@ GET  /api/presets                       list of example configs (name, descripti
 GET  /api/auth                          {"writes": "token"|"unconfigured", "header", "authenticated"} — may this caller write?
 POST /api/games          {config}       → {"id", "status"}   (creates + starts)   **write token**
 GET  /api/games                         [{id, status, created_at, title, round, cost_usd}]
-GET  /api/games/<id>                    snapshot + config + ledger
+GET  /api/games/<id>[?at_seq=n]         snapshot + config + ledger; `at_seq` pins `snapshot.state`/`round` to the board archived at or before event n and reports it as `snapshot_seq` (status/ledger/cost stay live)
 GET  /api/games/<id>/events?after=seq   history (from SQLite)
 GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>`; on connect replays history after ?after=, then live; heartbeat comment every 15s; on finish sends `event: end`
 POST /api/games/<id>/pause | /resume | /stop                                   **write token**
@@ -1848,3 +1848,50 @@ end, not one per turn. That one is still open.
 
 `tests/engine/test_threat_pathing.py` pins the lot, replaying the recorded
 board.
+
+### 2026-09-04 — web/ — the screen waits for the voice, and the board with it
+
+The page read the game aloud while showing it at the speed the events arrived,
+so the two disagreed: pieces moved and hit points dropped minutes before the
+narration said anything about them, and the narration panel printed the line it
+was reading — and the line it was parked on — alongside a transcript that had
+long since run past both. The hold (the 2026-09-04 amendment above) throttles
+the *game*; this is the other half, and it is about the *screen*.
+
+1. **`web/static/speech.js` gains `revealRun(queue, settings) -> n`** — how many
+   of a queue of waiting events may go on screen in one beat: the run up to and
+   including the next event `shouldSpeak` admits, or 0 when there is no such
+   event in it yet. Pure and node-testable, like the rest of that module.
+
+   A run rather than one event, because a turn's mechanics are emitted BEFORE
+   the paragraph that describes them (`Game._emit_turn`, then `_narrate`) and
+   with mechanics muted are never spoken at all. `app.js` holds the queue: the
+   stream and the history load feed `ingest`, and `renderEvent` — the only
+   thing that puts an event on screen — is reached from one caller, the queue's
+   own release. With voice off, before the first tap, or during a history
+   replay the gate is open and everything is revealed as it arrives. This is
+   UI, not contract, and is described in the README.
+
+2. **`GET /api/games/<id>?at_seq=<n>`.** The queue can delay a paragraph, but
+   the board comes from the server's state, which is wherever the game has got
+   to — so the page asks for it *as of* the line it has just revealed. The
+   reply's `snapshot.state` and `round` come from the archive; `status`,
+   `ledger` and `cost_usd` stay live, because money and whether the game is
+   still running are facts about the table rather than things anyone narrates.
+   A new `snapshot_seq` field says which seq the board actually is: the newest
+   archived at or before `n`, the oldest kept when the caller is further behind
+   than the archive is deep, and `null` when the archive was not consulted (no
+   `at_seq`) or has nothing (a game this process is not running). A
+   non-integer `at_seq` is a 400.
+
+3. **`GameEntry` keeps that archive** (`web/registry.py`): `_record_board` runs
+   on the game thread from `on_event`, so what it stores is the state the event
+   was emitted against, and `board_at(seq)` reads it back. Bounded by
+   `BOARD_HISTORY = 128` entries, and skipped for `BOARD_SKIP_KINDS` — prose,
+   money, rolls and errors move nothing, so the state at the event before is
+   still the state, and skipping them roughly halves what is kept. A small
+   combat's state serializes to ~25 KB, so the ceiling is a few MB per live
+   game. `system` is deliberately not in that set: a mid-game encounter spawn
+   arrives on it.
+
+Nothing in `engine/`, `agents/`, `llm/` or `orchestrator/` changed.

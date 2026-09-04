@@ -119,10 +119,24 @@ def test_the_line_in_flight_is_only_read_for_fields_it_carries():
     assert read_back <= carried, f"read but never set: {sorted(read_back - carried)}"
 
 
-def test_the_panel_says_what_is_being_read():
-    """The status text comes off the chunks, so it cannot go stale or missing."""
+def test_the_panel_does_not_reprint_the_line_it_is_reading():
+    """The narration panel says *that* a line is being read, never the words.
+
+    It used to print the line itself, and the line the playhead was parked on
+    as well — which, once the transcript began revealing a line only as the
+    narrator started it, made this panel the one place on the page that showed
+    words before they were spoken. The transcript is where the words go; this
+    panel says what the transcript cannot, which is that something is being
+    read and in whose voice.
+    """
     js = read()
-    assert "text: lineText(V.current)" in js
+    now = re.search(r"function voiceNowText\(\) \{(.+?)\n  \}", js, re.S)
+    assert now, "app.js no longer has voiceNowText"
+    body = now.group(1)
+    assert "read by ' + voiceReaderName(" in body
+    # Nothing in here may reach for the words of a line, spoken or queued.
+    for forbidden in ("lineText", "phraseFor", "voicePhrase", "chunkText", ".text)"):
+        assert forbidden not in body, f"the panel is printing the line again ({forbidden})"
     assert "V.current.phrase" not in js
 
 

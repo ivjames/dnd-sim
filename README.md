@@ -271,7 +271,7 @@ GET  /api/presets                       [{name, description, config}]
 GET  /api/auth                          {"writes":"token"|"unconfigured", header, authenticated}
 POST /api/games          {config}       → 201 {"id","status"}  (creates + starts)   ← token
 GET  /api/games                         [{id, status, created_at, title, round, cost_usd}]
-GET  /api/games/<id>                    snapshot + config + ledger
+GET  /api/games/<id>[?at_seq=n]         snapshot + config + ledger; at_seq pins the board to that event
 GET  /api/games/<id>/events?after=seq   transcript from SQLite
 GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on finish
 POST /api/games/<id>/pause|resume|stop  → 202                                       ← token
@@ -661,17 +661,59 @@ The consequences are the point:
 - **It survives a reload.** The playhead is saved per game in `localStorage`,
   so reopening the page offers the line you were on, not the top of the game.
 - **A "N behind" badge** in the top bar says how far the narrator is from the
-  live edge, and doubles as the jump-to-live button. While the narrator is
+  live edge — including the events queued behind the gate below — and doubles
+  as the jump-to-live button. While the narrator is
   behind, **follow** follows the narrator rather than the tail — otherwise it
   would scroll away from the line you can hear.
 - **The transport outlives the game.** A finished, stopped or budget-exhausted
   game still has a full transcript, so play/back/skip keep working on it; only
-  the game controls (pause/resume/stop) go dead, and they say why.
+  the game controls (pause/resume/stop) go dead, and they say why. The
+  "session finished" banner waits for the narrator like everything else.
+- **The Narration panel does not print the line.** It says that something is
+  being read, what kind of line it is and in whose voice; the words are in the
+  transcript, revealed and highlighted as they are spoken. Printing them here
+  as well was the same sentence twice on one screen — and for the line the
+  playhead was parked on, a sentence shown before it was read.
+
+### The screen waits for the voice
+
+Nothing reaches the screen ahead of the narration. With voice on, arriving
+events queue in the page and go up — transcript, map, hit points, whose turn it
+is — in the beat the narrator *begins* the line that describes them. The game
+carries on into that queue; it is a delay and only a delay, and nothing is
+dropped, reordered or summarised on the way through.
+
+A whole run at a time, not one event as it is spoken, because a turn's
+mechanics are emitted **before** the paragraph that describes them — the
+orchestrator resolves the turn and only then asks the DM for the prose — and
+with **mute mechanics** ticked they are never spoken at all. Revealing each as
+it arrived is what used to drop a goblin's hit points to zero in silence. So
+the queue is released up to and including the next line that will be read, and
+that run goes up together. The rule is `revealRun` in `speech.js`, which is
+pure and `node`-testable; `app.js` holds the queue and the DOM.
+
+The board is the one thing the queue cannot delay on its own: the map and the
+hit points come from the server's state, which is wherever the game has got to.
+So the page asks for the board **as of** the line it has just revealed —
+`GET /api/games/<id>?at_seq=<seq>` — and the server answers from a small
+per-event archive of board states (`BOARD_HISTORY` in `web/registry.py`, the
+newest one at or before the seq asked for; `snapshot_seq` in the reply says
+which it actually is). Status, cost and the ledger stay live in that answer:
+money and whether the game is still running are facts about the table, not
+things anyone narrates.
+
+The gate is only there while there is something to keep step with. Voice off,
+before the first tap, or while a game's history is being replayed, everything
+goes up as it arrives, which is what this page did before the gate existed —
+and turning voice off releases whatever is waiting at once. Pausing the
+narrator pauses the transcript with it, which is the same rule seen from the
+other side; the "N behind" badge counts the queue, and **live** empties it.
 
 ### Holding the game for the narrator
 
 Text arrives far faster than a voice can speak it, so left alone the game runs
-minutes ahead of what you are hearing. **hold the game for the narrator** (on
+minutes ahead of what you are hearing — into the queue above, and, without a
+hold, without limit. **hold the game for the narrator** (on
 by default) fixes that from the listening end: while the narrator is more than
 a few lines behind, the page asks the game to wait.
 

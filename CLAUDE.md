@@ -163,6 +163,17 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   transcribed from Amazon's voice list and held to it by
   `tests/tts/test_polly_contract.py` — the only thing that can catch it going
   stale.
+- **The screen waits for the voice.** With narration on, arriving events queue
+  in the page and reach the screen — transcript, map, hit points — in the beat
+  the narrator *begins* the line that describes them, a whole turn at a time
+  where its mechanics are not themselves spoken. The game runs on into that
+  queue; the hold is what stops the queue growing without limit, and the two
+  are separate mechanisms. The board is the part that could not be delayed
+  client-side, so `GET /api/games/<id>?at_seq=<seq>` serves it from a bounded
+  per-event archive in `web/registry.py` while status and cost stay live. The
+  rule for how much may be revealed at once is `revealRun` in `speech.js`
+  (pure, node-tested); the queue and the DOM are `app.js`. Voice off, or before
+  the first tap, the gate is open and the page behaves as it always did.
 - **Writes take a token; reads never do.** `POST /api/games`, `/note`,
   `/pause`, `/resume` and `/stop` require `X-Dnd-Token` to match
   `DND_WRITE_TOKEN` (`web/auth.py`). Everything a spectator does stays

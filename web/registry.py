@@ -16,6 +16,23 @@ from web.serialize import event_to_dict, to_jsonable
 TERMINAL_STATUSES = {"finished", "stopped", "error", "budget_exceeded"}
 SNAPSHOT_EVERY = 25
 
+#: Board snapshots kept per live game, so the spectator page can ask for the
+#: map and the hit points *as of* the line it has just put on screen rather
+#: than as of now. The page reveals the transcript at the pace of the spoken
+#: narration and the game runs ahead of it into a queue; without this the one
+#: thing that queue cannot delay is the board, which would go on showing where
+#: everyone ended up while the voice is still describing how they got there.
+#: A small combat's state serializes to ~25 KB, so this is a few MB per live
+#: game — a ceiling, not a target, and old entries are dropped.
+BOARD_HISTORY = 128
+
+#: Kinds that cannot move anything on the board, so nothing is archived for
+#: them: the state at the event before is still the state. Prose and money are
+#: most of a transcript, so skipping them roughly halves what is kept. Note
+#: that ``system`` is *not* here — it is the event a mid-game encounter spawn
+#: arrives on.
+BOARD_SKIP_KINDS = frozenset({"narration", "dialogue", "dm_note", "cost", "roll", "error"})
+
 
 class GameEntry:
     """One live game: the Game object, its bus, and its persistence bookkeeping."""
@@ -32,6 +49,7 @@ class GameEntry:
         self.round = 0
         self.cost_usd = 0.0
         self._events_since_snapshot = 0
+        self._boards: dict[int, dict[str, Any]] = {}   # seq -> board, oldest first
         self._last_status = "created"
         self._lock = threading.Lock()
         # Every snapshot write goes through this. `persist_snapshot` reads the
@@ -64,12 +82,64 @@ class GameEntry:
             due = self._events_since_snapshot >= SNAPSHOT_EVERY
             if due:
                 self._events_since_snapshot = 0
+        if d["kind"] not in BOARD_SKIP_KINDS:
+            self._record_board(d["seq"])
         try:
             self.db.add_event(self.id, d["seq"], d["kind"], d)
         except Exception:  # pragma: no cover - persistence must never kill the game
             pass
         if due:
             self.persist_snapshot()
+
+    def _record_board(self, seq: int) -> None:
+        """Keep the board as it stood when this event was published.
+
+        Called on the game thread, from ``on_event``, so what it reads is the
+        state that event was emitted against. Only the board is kept — never
+        the ledger, the status or the hold — because money, whether the game
+        is still running and whether it is being held are live facts about the
+        table rather than things anyone narrates.
+        """
+        game = self.game
+        if game is None:
+            return
+        try:
+            snap = game.snapshot() or {}
+            board = {
+                "state": to_jsonable(snap.get("state")),
+                "round": int(snap.get("round") or 0),
+            }
+        except Exception:  # pragma: no cover - a board must never kill the game
+            return
+        with self._lock:
+            self._boards[seq] = board
+            # Seqs are monotonic, so insertion order is seq order and the
+            # oldest is always the first key.
+            while len(self._boards) > BOARD_HISTORY:
+                del self._boards[next(iter(self._boards))]
+
+    def board_at(self, seq: int) -> dict[str, Any] | None:
+        """The board as of ``seq``: the newest one archived at or before it.
+
+        Asked for something older than anything kept — a listener minutes
+        behind the game — it answers with the oldest kept, which is the least
+        far ahead this can be; the reply carries the seq it actually is, so
+        the caller is never told a state is older than it is. ``None`` when
+        nothing has been archived at all.
+        """
+        with self._lock:
+            if not self._boards:
+                return None
+            best = None
+            for s in self._boards:
+                if s <= seq:
+                    best = s
+                else:
+                    break
+            if best is None:
+                best = next(iter(self._boards))
+            board = self._boards[best]
+            return {"seq": best, "state": board["state"], "round": board["round"]}
 
     def status(self) -> str:
         game = self.game
