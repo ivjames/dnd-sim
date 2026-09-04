@@ -22,6 +22,8 @@
     es: null,
     lastSeq: -1,
     seen: {},
+    events: [],         // every event in arrival order; the narrator's playhead indexes it
+    game: null,         // last /api/games/<id> body (config, ledger, …)
     snapshot: null,
     status: 'idle',
     budget: 1.0,
@@ -44,6 +46,19 @@
     return n;
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  // A game that has ended cannot un-end. Three sources report status — the SSE
+  // `end` frame, the 5 s poll, and a control's own reply — and the control
+  // reply is the one that can be stale by the time it arrives: POST /stop
+  // answers "running", because the loop only notices the stop at its next
+  // gate. Landing after the stream has already said "stopped", it would put
+  // the UI back to claiming a live game, with a Stop button that then does
+  // nothing. Latching terminal makes the ordering not matter.
+  function setGameStatus(next) {
+    if (!next || next === S.status) return;
+    if (TERMINAL[S.status] && !TERMINAL[next]) return;
+    S.status = next;
+  }
   function num(v, d) { var x = Number(v); return isFinite(x) ? x : (d || 0); }
 
   function api(path, opts) {
@@ -71,6 +86,7 @@
     clear(t);
     S.group = null; S.groupBody = null;
     S.seen = {}; S.lastSeq = -1;
+    S.events = [];
   }
 
   function atBottom(node) {
@@ -81,7 +97,7 @@
     var t = transcriptEl();
     var empty = t.querySelector('.empty');
     if (empty) t.removeChild(empty);
-    var follow = $('toggle-follow').checked;
+    var follow = $('toggle-follow').checked && !voiceOwnsScroll();
     var wasBottom = atBottom(t);
     t.appendChild(node);
     if (follow && wasBottom) t.scrollTop = t.scrollHeight;
@@ -119,6 +135,7 @@
     if (!ev || S.seen[ev.seq]) return;
     S.seen[ev.seq] = 1;
     if (ev.seq > S.lastSeq) S.lastSeq = ev.seq;
+    S.events.push(ev);
 
     if (ev.kind === 'cost') {
       var d = ev.data || {};
@@ -156,7 +173,7 @@
       node = mechLine(ev);
       if (S.groupBody) {
         var t = transcriptEl();
-        var follow = $('toggle-follow').checked, wasBottom = atBottom(t);
+        var follow = $('toggle-follow').checked && !voiceOwnsScroll(), wasBottom = atBottom(t);
         S.groupBody.appendChild(node);
         if (follow && wasBottom) t.scrollTop = t.scrollHeight;
       } else {
@@ -164,7 +181,7 @@
       }
     }
     if (node) node.setAttribute('data-seq', String(ev.seq));
-    voiceOnEvent(ev);
+    voiceOnEvent();
     if (SNAPSHOT_TRIGGERS[ev.kind]) scheduleSnapshot();
   }
 
@@ -196,8 +213,10 @@
   function refreshSnapshot() {
     if (!S.gameId) return Promise.resolve();
     return api('/api/games/' + encodeURIComponent(S.gameId)).then(function (g) {
+      S.game = g;
       S.snapshot = g.snapshot || null;
-      S.status = g.status || S.status;
+      setGameStatus(g.status);
+      voiceCtxDirty();
       var cfg = g.config || {};
       if (cfg.budget_usd) S.budget = num(cfg.budget_usd, S.budget);
       setCost(num(g.cost_usd, S.cost), g.ledger);
@@ -448,33 +467,54 @@
   }
 
 
-  // ---------- voice (Web Speech API) ----------
+  // ---------- narration playback (Web Speech API) ----------
   // The selection + wording live in speech.js (pure, node-testable); this is
-  // the queue and the speechSynthesis glue. Designed around iPad Safari:
+  // the transport and the speechSynthesis glue. Designed around iPad Safari:
   // speech only starts inside a user gesture, the voice list arrives late (or
   // never fires voiceschanged), onend can go missing, and speak() right after
   // cancel() is dropped — each of which has a line below.
+  //
+  // The model is a PLAYHEAD, not a queue. `V.cursor` is an index into
+  // `S.events`, the whole transcript in arrival order, and the narrator reads
+  // forward from it. Nothing is ever silently dropped and nothing is ever
+  // silently skipped: pausing (or backgrounding the tab) leaves the playhead
+  // exactly where it was, so coming back resumes the line you were on rather
+  // than jumping to whatever the game has reached since. Going faster than the
+  // game is impossible; the game going faster than the narrator is handled by
+  // holding it — see voiceHoldEval.
   var Speech = window.DndSpeech || null;
   var VOICE_RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
-  var VOICE_MAX_QUEUE = 20;
+  var HOLD_HIGH = 3;        // unread speakable lines at which we ask the game to wait
+  var HOLD_LOW = 1;         // ... and at which we let it go again (hysteresis)
+  var HOLD_LEASE = 12;      // seconds asked for; the server caps it and it self-expires
+  var HOLD_TICK = 4000;     // renewal interval, comfortably inside the lease
+  var BACKLOG_SCAN = 400;   // cap the count: the badge only needs "lots"
+
   var V = {
     supported: false,
     synth: null,
-    settings: { enabled: false, rate: 'normal', muteMechanics: false },
+    settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true },
     unlocked: false,       // a user gesture has started speech on this page
-    sinceSeq: Infinity,    // speak only events with seq > this
-    caughtUp: false,       // history replay rendered; until then sinceSeq stays Infinity
-    queue: [],             // [{ ev, phrase, key }] in seq order
-    current: null,         // { item, chunks, idx, node, timer, utt }
+    playing: false,        // transport state: the spectator wants to hear it
+    cursor: 0,             // index into S.events of the line to read next
+    current: null,         // { ev, chunks, idx, node, timer, utt }
+    resumeChunk: null,     // { seq, idx }: pick a part-read line up where it stopped
     voices: [],
     profiles: {},
-    heldUtt: null          // keeps the unlock utterance referenced until it ends
+    ctx: null,             // { names, party }, rebuilt when the snapshot changes
+    heldUtt: null,         // keeps the unlock utterance referenced until it ends
+    holdTimer: null,
+    holding: false,
+    holdBroken: false      // this game will not take a hold (ended, or another process)
   };
 
-  // Hidden pages stay disarmed: the SSE stream keeps flowing in the background,
-  // so a cancel on hide is not enough — the next event would speak again.
   function pageHidden() { return typeof document !== 'undefined' && !!document.hidden; }
-  function voiceArmed() { return V.supported && V.settings.enabled && V.unlocked && !pageHidden(); }
+  // Backgrounded tabs suspend synthesis and hand back garbled audio, so the
+  // playhead stops there too — but it stops, it does not move.
+  function voiceArmed() {
+    return V.supported && V.settings.enabled && V.unlocked && V.playing && !pageHidden();
+  }
+  function voiceUsable() { return V.supported && V.settings.enabled; }
 
   function voiceLoadSettings() {
     try {
@@ -484,11 +524,32 @@
         V.settings.enabled = !!o.enabled;
         V.settings.rate = VOICE_RATES[o.rate] ? o.rate : 'normal';
         V.settings.muteMechanics = !!o.muteMechanics;
+        V.settings.hold = o.hold === undefined ? true : !!o.hold;
       }
     } catch (e) { /* private mode or junk */ }
   }
   function voiceSaveSettings() {
     try { localStorage.setItem('dndsim.voice', JSON.stringify(V.settings)); } catch (e) { /* ignore */ }
+  }
+
+  // The playhead survives a reload: it is the answer to "where was I?".
+  function voicePosKey() { return S.gameId ? 'dndsim.pos.' + S.gameId : null; }
+  function voiceSavePos() {
+    var k = voicePosKey();
+    if (!k) return;
+    var ev = S.events[V.cursor];
+    var seq = ev ? ev.seq : (S.lastSeq + 1);
+    try { localStorage.setItem(k, String(seq)); } catch (e) { /* ignore */ }
+  }
+  function voiceLoadPos() {
+    var k = voicePosKey();
+    if (!k) return null;
+    try {
+      var raw = localStorage.getItem(k);
+      if (raw === null) return null;
+      var n = Number(raw);
+      return isFinite(n) ? n : null;
+    } catch (e) { return null; }
   }
 
   function voiceRefreshVoices() {
@@ -508,58 +569,174 @@
 
   // {id: true} for every party member: the snapshot's combatants with side
   // 'party', plus the config's party ids when the snapshot carries them (before
-  // combat the combatant list can be empty).
-  function voiceParty() {
-    var cs = combatants(), out = {};
-    Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].side === 'party') out[id] = true; });
-    var g = S.game || {}, cfg = g.config || {};
-    if (cfg && Array.isArray(cfg.party)) cfg.party.forEach(function (m) { if (m && m.id) out[m.id] = true; });
-    return out;
-  }
-
-  function voiceNames() {
-    var cs = combatants(), out = {};
-    Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].name) out[id] = cs[id].name; });
-    return out;
-  }
-
-  function voiceOnEvent(ev) {
-    if (!voiceArmed() || !ev || !(ev.seq > V.sinceSeq)) return;
-    if (!Speech.shouldSpeak(ev, V.settings)) return;
-    var party = voiceParty();
-    var phrase = Speech.phraseFor(ev, voiceNames(), party);
-    if (!phrase) return;
-    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party) });
-    voiceTrimQueue();
-    voicePump();
-  }
-
-  // Keep speech from falling minutes behind: over the cap, shed the oldest
-  // mechanics first; if a burst of story lines alone overflows twice the cap
-  // (a reconnect replay), keep only the newest of those.
-  function voiceTrimQueue() {
-    var q = V.queue;
-    for (var i = 0; i < q.length && q.length > VOICE_MAX_QUEUE;) {
-      if (Speech.isMechanic(q[i].ev)) q.splice(i, 1); else i++;
+  // combat the combatant list can be empty). Cached — voicePump asks per line.
+  function voiceCtx() {
+    if (!V.ctx) {
+      var cs = combatants(), names = {}, party = {};
+      Object.keys(cs).forEach(function (id) {
+        var c = cs[id] || {};
+        if (c.name) names[id] = c.name;
+        if (c.side === 'party') party[id] = true;
+      });
+      var cfg = (S.game || {}).config || {};
+      if (Array.isArray(cfg.party)) cfg.party.forEach(function (m) { if (m && m.id) party[m.id] = true; });
+      V.ctx = { names: names, party: party };
     }
-    if (q.length > VOICE_MAX_QUEUE * 2) q.splice(0, q.length - VOICE_MAX_QUEUE * 2);
+    return V.ctx;
+  }
+  function voiceCtxDirty() { V.ctx = null; }
+
+  function voicePhrase(ev) {
+    if (!ev || !Speech.shouldSpeak(ev, V.settings)) return null;
+    var ctx = voiceCtx();
+    return Speech.phraseFor(ev, ctx.names, ctx.party) || null;
   }
 
+  // Unread speakable lines ahead of the playhead, counted up to BACKLOG_SCAN.
+  // shouldSpeak alone (not phraseFor) — this runs on every event, and the
+  // handful of lines that turn out to have nothing to say do not change any
+  // decision made from the count.
+  function voiceBacklog() {
+    var n = 0;
+    for (var i = V.cursor; i < S.events.length && n < BACKLOG_SCAN; i++) {
+      if (Speech.shouldSpeak(S.events[i], V.settings)) n++;
+    }
+    return n;
+  }
+  function voiceBehind() { return V.supported && V.settings.enabled ? voiceBacklog() : 0; }
+
+  // ---- transport ----
+  function voicePlay() {
+    if (!voiceUsable()) return;
+    if (!V.unlocked) voiceUnlock();   // must happen inside the click that got us here
+    V.playing = true;
+    voicePump();
+    voiceHoldStart();
+    voiceRenderControls();
+  }
+
+  function voicePausePlayback() {
+    V.playing = false;
+    voiceStopCurrent(false);
+    voiceHoldStop();
+    voiceRenderControls();
+  }
+
+  function voiceToggle() { if (V.playing) voicePausePlayback(); else voicePlay(); }
+
+  // Stop the utterance in flight. `advance` moves the playhead past the line;
+  // without it the playhead stays put and the line is read again from the part
+  // it had reached, which is what pause/resume has to do.
+  function voiceStopCurrent(advance) {
+    var cur = V.current;
+    if (cur) {
+      clearTimeout(cur.timer);
+      if (cur.node) cur.node.classList.remove('speaking');
+      V.current = null;
+      if (advance) {
+        V.cursor++;
+        V.resumeChunk = null;
+      } else {
+        V.resumeChunk = { seq: cur.ev.seq, idx: cur.idx };
+      }
+      voiceSavePos();
+    }
+    if (V.supported) { try { V.synth.cancel(); } catch (e) { /* ignore */ } }
+  }
+
+  // iOS drops a speak() issued synchronously after cancel(), so every transport
+  // move that cancels pumps the next line a beat later.
+  function voiceRepump() { setTimeout(voicePump, 80); }
+
+  function voiceSkip() {
+    if (!voiceUsable()) return;
+    if (V.current) voiceStopCurrent(true);
+    else { V.cursor = voiceNextSpeakable(V.cursor + 1); V.resumeChunk = null; voiceSavePos(); }
+    voiceRenderControls();
+    voiceRepump();
+  }
+
+  function voiceBack() {
+    if (!voiceUsable()) return;
+    var from = V.current ? indexOfSeq(V.current.ev.seq) : V.cursor;
+    voiceStopCurrent(false);
+    V.resumeChunk = null;
+    var prev = voicePrevSpeakable(from - 1);
+    if (prev !== null) V.cursor = prev;
+    voiceSavePos();
+    voiceRenderControls();
+    voiceRepump();
+  }
+
+  function voiceJumpLive() {
+    if (!voiceUsable()) return;
+    voiceStopCurrent(false);
+    V.resumeChunk = null;
+    V.cursor = S.events.length;
+    voiceSavePos();
+    voiceHoldRelease();
+    voiceRenderControls();
+    voiceRepump();
+  }
+
+  // Read from a particular transcript line: the spectator's own "back to here".
+  function voicePlayFromSeq(seq) {
+    if (!voiceUsable()) return;
+    var i = indexOfSeq(seq);
+    if (i < 0) return;
+    voiceStopCurrent(false);
+    V.resumeChunk = null;
+    V.cursor = i;
+    voiceSavePos();
+    voicePlay();
+    voiceRepump();
+  }
+
+  function indexOfSeq(seq) {
+    for (var i = S.events.length - 1; i >= 0; i--) if (S.events[i].seq === seq) return i;
+    return -1;
+  }
+  function voiceNextSpeakable(from) {
+    for (var i = Math.max(0, from); i < S.events.length; i++) {
+      if (Speech.shouldSpeak(S.events[i], V.settings)) return i;
+    }
+    return S.events.length;
+  }
+  function voicePrevSpeakable(from) {
+    for (var i = Math.min(from, S.events.length - 1); i >= 0; i--) {
+      if (Speech.shouldSpeak(S.events[i], V.settings)) return i;
+    }
+    return null;
+  }
+
+  // ---- the reader ----
   function voicePump() {
-    if (V.current || !V.queue.length || !voiceArmed()) return;
-    var item = V.queue.shift();
-    var chunks = Speech.chunksFor(item.phrase);
-    if (!chunks.length) { voicePump(); return; }
-    var prof = voiceProfile(item.key);
-    var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
-    var node = transcriptEl().querySelector('[data-seq="' + item.ev.seq + '"]');
-    var cur = { item: item, chunks: chunks, idx: 0, node: node, timer: null, utt: null };
-    V.current = cur;
-    if (node) node.classList.add('speaking');
-    voiceSpeakChunk(cur, prof, rate);
+    if (V.current || !voiceArmed()) { voiceRenderControls(); return; }
+    while (V.cursor < S.events.length) {
+      var ev = S.events[V.cursor];
+      var phrase = voicePhrase(ev);
+      var chunks = phrase ? Speech.chunksFor(phrase) : [];
+      if (!chunks.length) { V.cursor++; continue; }
+      var idx = 0;
+      if (V.resumeChunk && V.resumeChunk.seq === ev.seq && V.resumeChunk.idx < chunks.length) {
+        idx = V.resumeChunk.idx;
+      }
+      V.resumeChunk = null;
+      var node = transcriptEl().querySelector('[data-seq="' + ev.seq + '"]');
+      var cur = { ev: ev, phrase: phrase, chunks: chunks, idx: idx, node: node, timer: null, utt: null };
+      V.current = cur;
+      if (node) { node.classList.add('speaking'); voiceFollow(node); }
+      voiceSavePos();
+      voiceSpeakChunk(cur, voiceProfile(Speech.voiceKeyFor(ev, voiceCtx().party)));
+      voiceRenderControls();
+      return;
+    }
+    voiceSavePos();
+    voiceRenderControls();
   }
 
-  function voiceSpeakChunk(cur, prof, rate) {
+  function voiceSpeakChunk(cur, prof) {
+    var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
     var text = cur.chunks[cur.idx];
     var u = new SpeechSynthesisUtterance(text);
     if (prof.voice) { u.voice = prof.voice; u.lang = prof.voice.lang || u.lang; }
@@ -570,9 +747,8 @@
       if (V.current !== cur || cur.utt !== u) return;   // stale: skipped or cancelled
       clearTimeout(cur.timer);
       cur.idx++;
-      if (cur.idx < cur.chunks.length) { voiceSpeakChunk(cur, prof, rate); return; }
-      voiceFinishCurrent();
-      voicePump();
+      if (cur.idx < cur.chunks.length) { voiceSpeakChunk(cur, prof); return; }
+      voiceFinishLine();
     };
     u.onend = done;
     u.onerror = done;     // not-allowed / synthesis-failed / interrupted: move on rather than stall
@@ -582,76 +758,196 @@
     V.synth.speak(u);
   }
 
-  function voiceFinishCurrent() {
+  function voiceFinishLine() {
     var cur = V.current;
     if (!cur) return;
     clearTimeout(cur.timer);
     if (cur.node) cur.node.classList.remove('speaking');
     V.current = null;
+    V.cursor++;
+    V.resumeChunk = null;
+    voiceSavePos();
+    voicePump();
+    voiceHoldEval();
   }
 
-  function voiceCancelAll() {
-    V.queue = [];
-    voiceFinishCurrent();
-    if (V.supported) { try { V.synth.cancel(); } catch (e) { /* ignore */ } }
+  // When the narrator is behind, the transcript follows the narrator rather
+  // than the tail — otherwise "follow" scrolls away from the line you can hear.
+  function voiceFollow(node) {
+    if (!node || !$('toggle-follow').checked) return;
+    var t = transcriptEl();
+    var top = node.offsetTop - t.offsetTop;
+    if (top < t.scrollTop || top > t.scrollTop + t.clientHeight - 40) {
+      t.scrollTop = Math.max(0, top - t.clientHeight * 0.5);
+    }
+  }
+  function voiceOwnsScroll() { return voiceArmed() && voiceBacklog() > 1; }
+
+  // ---- holding the game for the narrator ----
+  // A lease, renewed every HOLD_TICK while the narrator is behind: the game
+  // waits, so what you hear is what is happening. It expires by itself, so a
+  // tab that dies mid-hold costs the game seconds, not the rest of the session.
+  function voiceHoldStart() {
+    if (V.holdTimer) return;
+    V.holdTimer = setInterval(voiceHoldEval, HOLD_TICK);
+    voiceHoldEval();
+  }
+  function voiceHoldStop() {
+    if (V.holdTimer) { clearInterval(V.holdTimer); V.holdTimer = null; }
+    voiceHoldRelease();
+  }
+  function voiceHoldEval() {
+    if (!V.settings.hold || V.holdBroken || !S.gameId || TERMINAL[S.status] || !voiceArmed()) {
+      voiceHoldRelease();
+      return;
+    }
+    var behind = voiceBacklog();
+    if (V.holding ? behind > HOLD_LOW : behind >= HOLD_HIGH) voiceHoldSend(HOLD_LEASE);
+    else voiceHoldRelease();
+  }
+  function voiceHoldRelease() {
+    if (!V.holding) return;
+    V.holding = false;
+    voiceHoldSend(0);
+  }
+  function voiceHoldSend(seconds) {
+    if (!S.gameId) return;
+    if (seconds > 0) V.holding = true;
+    var id = S.gameId;
+    api('/api/games/' + encodeURIComponent(id) + '/hold', { method: 'POST', body: { seconds: seconds } })
+      .catch(function () {
+        // 404/409/501: this game cannot be held (ended, restarted, or served by
+        // another process). Stop asking; the narrator just runs behind.
+        if (id === S.gameId) { V.holdBroken = true; V.holding = false; voiceRenderControls(); }
+      });
   }
 
-  // Skip the line being read. iOS drops a speak() issued synchronously after
-  // cancel(), so the next line is pumped a beat later.
-  function voiceSkip() {
-    if (!V.supported) return;
-    voiceFinishCurrent();
-    try { V.synth.cancel(); } catch (e) { /* ignore */ }
-    setTimeout(voicePump, 80);
+  // ---- lifecycle ----
+  // Switching games: silence, and start at the saved playhead if there is one.
+  function voiceReset() {
+    voiceStopCurrent(false);
+    V.resumeChunk = null;
+    V.cursor = 0;
+    V.holding = false;
+    V.holdBroken = false;
+    voiceCtxDirty();
+    voiceRenderControls();
   }
 
-  // Switching games: silence, and speak nothing until the history replay is done.
-  function voiceReset() { voiceCancelAll(); V.sinceSeq = Infinity; V.caughtUp = false; }
-  function voiceCaughtUp(seq) { V.caughtUp = true; V.sinceSeq = seq; }
-  // Move the "speak from here" mark to the latest seen event — but only once
-  // the history replay has been rendered; before that the Infinity guard
-  // stays, or enabling mid-load would read the whole transcript.
-  function voiceMarkNow() { if (V.caughtUp) V.sinceSeq = S.lastSeq; }
+  // Called once the history replay has been rendered: with no saved playhead
+  // the narrator starts at the live edge rather than reading the whole
+  // transcript back; with one, it picks up where this browser left off.
+  function voiceStartAt() {
+    var seq = voiceLoadPos();
+    var i = seq === null ? -1 : indexOfSeq(seq);
+    if (i < 0 && seq !== null) {
+      // The saved line is not in this transcript (or is the one past its end).
+      i = seq > S.lastSeq ? S.events.length : -1;
+    }
+    V.cursor = i < 0 ? S.events.length : i;
+    V.resumeChunk = null;
+    voiceRenderControls();
+    voicePump();
+  }
 
-  function voiceOnGameEnd(status) {
-    // 'finished' lets the epilogue finish; anything else is a halt.
-    if (status !== 'finished') voiceCancelAll();
+  function voiceOnEvent() {
+    if (!V.settings.enabled) { V.cursor = S.events.length; V.resumeChunk = null; }
+    voicePump();
+    voiceHoldEval();
+    voiceRenderControls();
+  }
+
+  function voiceOnGameEnd() {
+    // Nothing is cancelled: the transcript is complete and the playhead is
+    // wherever the listener is. Let it read to the end; there is just no
+    // longer anything to hold.
+    V.holdBroken = true;
+    voiceHoldStop();
+    voiceRenderControls();
   }
 
   // Must run inside a user gesture the first time (autoplay policy): the short
   // confirmation is what unlocks speech for the rest of the page.
+  function voiceUnlock() {
+    if (V.unlocked || !V.supported) return;
+    V.unlocked = true;
+    voiceRefreshVoices();
+    var u = new SpeechSynthesisUtterance('Voice on.');
+    var p = voiceProfile('dm');
+    if (p.voice) { u.voice = p.voice; u.lang = p.voice.lang || u.lang; }
+    V.heldUtt = u;
+    u.onend = u.onerror = function () { V.heldUtt = null; };
+    try { V.synth.speak(u); } catch (e) { /* ignore */ }
+  }
+
   function voiceEnable() {
     V.settings.enabled = true;
     voiceSaveSettings();
-    if (!V.unlocked) {
-      V.unlocked = true;
-      voiceRefreshVoices();
-      var u = new SpeechSynthesisUtterance('Voice on.');
-      var p = voiceProfile('dm');
-      if (p.voice) { u.voice = p.voice; u.lang = p.voice.lang || u.lang; }
-      V.heldUtt = u;
-      u.onend = u.onerror = function () { V.heldUtt = null; };
-      try { V.synth.speak(u); } catch (e) { /* ignore */ }
-    }
-    voiceMarkNow();           // only what arrives from now on; never the replayed transcript
-    voiceRenderControls();
+    voicePlay();
   }
 
   function voiceDisable() {
     V.settings.enabled = false;
     voiceSaveSettings();
-    voiceCancelAll();
-    voiceRenderControls();
+    voicePausePlayback();
+  }
+
+  // ---- controls ----
+  function voiceNowText() {
+    if (!V.settings.enabled) return { tag: '', text: 'voice off' };
+    if (!V.unlocked) return { tag: '', text: 'press play to start — browsers only allow speech from a tap' };
+    if (V.current) {
+      return { tag: V.current.ev.kind.replace('_', ' '), text: V.current.phrase };
+    }
+    if (!V.playing) {
+      var next = S.events[V.cursor];
+      if (next) return { tag: 'paused at', text: voicePhrase(next) || ('#' + next.seq) };
+      return { tag: '', text: 'paused — nothing to read yet' };
+    }
+    if (pageHidden()) return { tag: '', text: 'held while the tab is in the background' };
+    return { tag: '', text: 'caught up — waiting for the table' };
   }
 
   function voiceRenderControls() {
+    if (!V.supported) return;
     $('voice-on').checked = V.settings.enabled;
     $('voice-rate').value = V.settings.rate;
     $('voice-mute-mech').checked = V.settings.muteMechanics;
+    $('voice-hold').checked = V.settings.hold;
+
     var locked = V.settings.enabled && !V.unlocked;
     $('voice').classList.toggle('locked', locked);
     $('voice-hint').hidden = !locked;
-    $('voice-skip').disabled = !voiceArmed();
+
+    var on = voiceUsable();
+    var glyph = V.playing ? '⏸' : '▶';
+    var label = V.playing ? 'Pause the narration' : 'Play the narration';
+    ['vt-play', 'vt-play2'].forEach(function (id) {
+      var b = $(id);
+      b.disabled = !on;
+      b.textContent = glyph;
+      b.setAttribute('aria-label', label);
+      b.classList.toggle('on', V.playing);
+    });
+    $('vt-back').disabled = !on;
+    $('vt-skip').disabled = !on;
+
+    var behind = voiceBehind();
+    $('vt-live').disabled = !on || behind === 0;
+    var badge = $('vt-behind');
+    badge.hidden = !(on && behind > 0);
+    badge.textContent = (behind >= BACKLOG_SCAN ? BACKLOG_SCAN + '+' : behind) +
+      ' behind' + (V.holding ? ' · holding' : '');
+
+    var now = voiceNowText();
+    var el0 = $('vt-now');
+    clear(el0);
+    if (now.tag) el0.appendChild(el('span', 'vt-tag', now.tag));
+    el0.appendChild(document.createTextNode(now.text || ''));
+
+    var t = transcriptEl();
+    t.classList.toggle('voice-clickable', on);
+    t.classList.toggle('has-playhead', on && behind > 0);
   }
 
   function voiceInit() {
@@ -664,6 +960,7 @@
     V.synth = synth;
     voiceLoadSettings();
     $('voice').hidden = false;
+    $('voice-panel').hidden = false;
     voiceRefreshVoices();
     if (typeof synth.addEventListener === 'function') synth.addEventListener('voiceschanged', voiceRefreshVoices);
     else synth.onvoiceschanged = voiceRefreshVoices;
@@ -678,23 +975,48 @@
     $('voice-mute-mech').addEventListener('change', function () {
       V.settings.muteMechanics = this.checked;
       voiceSaveSettings();
-      if (this.checked) V.queue = V.queue.filter(function (q) { return !Speech.isMechanic(q.ev); });
+      voiceRenderControls();
     });
-    $('voice-skip').addEventListener('click', voiceSkip);
+    $('voice-hold').addEventListener('change', function () {
+      V.settings.hold = this.checked;
+      voiceSaveSettings();
+      if (this.checked) voiceHoldEval(); else voiceHoldRelease();
+      voiceRenderControls();
+    });
+    $('vt-play').addEventListener('click', voiceToggle);
+    $('vt-play2').addEventListener('click', voiceToggle);
+    $('vt-back').addEventListener('click', voiceBack);
+    $('vt-skip').addEventListener('click', voiceSkip);
+    $('vt-live').addEventListener('click', voiceJumpLive);
+    $('vt-behind').addEventListener('click', voiceJumpLive);
 
-    // Voice was on last time. It cannot start without a gesture, so the toggle
-    // shows "tap to start" and the first tap anywhere on the page unlocks it.
+    // Click any spoken line to read from there — the fastest way back to a
+    // place you recognise after being away.
+    transcriptEl().addEventListener('click', function (e) {
+      if (!voiceUsable()) return;
+      var n = e.target;
+      while (n && n !== this && !n.hasAttribute('data-seq')) n = n.parentNode;
+      if (!n || n === this) return;
+      var seq = Number(n.getAttribute('data-seq'));
+      if (isFinite(seq)) voicePlayFromSeq(seq);
+    });
+
     if (V.settings.enabled) {
       var unlockOnce = function (e) {
-        if (e && e.target && e.target.id === 'voice-on') return;   // the toggle decides for itself
+        var id = e && e.target && e.target.id;
+        if (id === 'voice-on' || id === 'vt-play' || id === 'vt-play2') return;  // those decide for themselves
         document.removeEventListener('click', unlockOnce, true);
         document.removeEventListener('touchend', unlockOnce, true);
-        if (V.settings.enabled && !V.unlocked) voiceEnable();
+        if (V.settings.enabled && !V.unlocked) voicePlay();
       };
       document.addEventListener('click', unlockOnce, true);
       document.addEventListener('touchend', unlockOnce, true);
     }
-    window.addEventListener('pagehide', voiceCancelAll);
+
+    window.addEventListener('pagehide', function () {
+      voiceStopCurrent(false);
+      voiceHoldStop();
+    });
     voiceRenderControls();
   }
 
@@ -730,9 +1052,9 @@
     es.addEventListener('end', function (e) {
       var d = {};
       try { d = JSON.parse(e.data); } catch (err) { /* ignore */ }
-      S.status = d.status || S.status;
+      setGameStatus(d.status);
       closeStream();
-      voiceOnGameEnd(S.status);
+      voiceOnGameEnd();
       setConn('ended (' + S.status + ')', 'conn-off');
       appendNode(el('div', 'end-banner', 'session ' + S.status));
       refreshSnapshot();
@@ -746,20 +1068,53 @@
   }
 
   // ---------- controls ----------
+  // A disabled control has to say why: "the buttons do nothing" is otherwise
+  // indistinguishable from a game that ended while you were looking elsewhere.
+  function ctlNote(msg, bad) {
+    var n = $('ctl-note');
+    n.textContent = msg || '';
+    n.classList.toggle('bad', !!bad);
+    n.hidden = !msg;
+  }
+
   function updateControls() {
-    var live = S.gameId && !TERMINAL[S.status];
-    $('btn-pause').disabled = !(live && S.status === 'running');
+    var live = !!S.gameId && !TERMINAL[S.status];
+    // 'created' counts: the game thread may not have reached run() yet, and a
+    // pause issued in that window is honoured by the orchestrator.
+    var pausable = live && (S.status === 'running' || S.status === 'created');
+    $('btn-pause').disabled = !pausable;
     $('btn-resume').disabled = !(live && S.status === 'paused');
     $('btn-stop').disabled = !live;
     $('btn-note').disabled = !live;
+    var why = !S.gameId ? 'No game selected.'
+      : TERMINAL[S.status] ? 'This game has ended (' + S.status + '). Narration still plays back.'
+      : '';
+    ['btn-pause', 'btn-resume', 'btn-stop', 'btn-note'].forEach(function (id) {
+      $(id).title = $(id).disabled ? (why || 'Not available while ' + S.status + '.') : '';
+    });
+    if (!$('ctl-note').classList.contains('bad')) ctlNote(why);
   }
 
   function control(action) {
     if (!S.gameId) return;
-    if (action === 'stop') voiceCancelAll();
+    ctlNote('');
     api('/api/games/' + encodeURIComponent(S.gameId) + '/' + action, { method: 'POST', body: {} })
-      .then(function (r) { S.status = r.status || S.status; renderAll(); })
-      .catch(function (e) { alert(action + ' failed: ' + e.message); });
+      .then(function (r) {
+        setGameStatus(r.status);
+        renderAll(S.game);
+        if (action === 'stop') { V.holdBroken = true; voiceHoldStop(); }
+        // stop and pause both settle a beat after the call returns: re-read so
+        // the buttons show what the game is actually doing.
+        refreshSnapshot();
+        setTimeout(refreshSnapshot, 1500);
+      })
+      .catch(function (e) {
+        // The usual cause is a status this page believes and the server does
+        // not (the game ended, or the process restarted under it), so re-read
+        // the truth rather than leaving the buttons lying about what they do.
+        ctlNote(action + ' failed: ' + e.message, true);
+        refreshSnapshot();
+      });
   }
 
   // ---------- game selection ----------
@@ -767,24 +1122,27 @@
     if (!id) return;
     S.gameId = id;
     S.activeId = null;
+    S.status = 'idle';   // clears the terminal latch: a different game may be live
     resetTranscript();
     voiceReset();
     S.snapshot = null;
+    S.game = null;
+    ctlNote('');
     try { localStorage.setItem('dndsim.game', id); } catch (e) { /* private mode */ }
     if ($('game-select').value !== id) $('game-select').value = id;
 
     api('/api/games/' + encodeURIComponent(id) + '/events?after=-1')
       .then(function (events) {
         (events || []).forEach(renderEvent);
-        voiceCaughtUp(S.lastSeq);
         return refreshSnapshot();
       })
+      .then(function () { voiceStartAt(); })
       .then(function () {
         if (!TERMINAL[S.status]) connect(id);
-        else setConn('ended (' + S.status + ')', 'conn-off');
+        else { setConn('ended (' + S.status + ')', 'conn-off'); voiceOnGameEnd(); }
         startPolling();
       })
-      .catch(function (e) { alert('load failed: ' + e.message); });
+      .catch(function (e) { ctlNote('load failed: ' + e.message, true); });
   }
 
   function startPolling() {
@@ -898,16 +1256,26 @@
       if (!text || !S.gameId) return;
       api('/api/games/' + encodeURIComponent(S.gameId) + '/note',
         { method: 'POST', body: { text: text } })
-        .then(function () { $('note-text').value = ''; })
-        .catch(function (e2) { alert('note failed: ' + e2.message); });
+        .then(function () { $('note-text').value = ''; ctlNote('note sent'); })
+        .catch(function (e2) { ctlNote('note failed: ' + e2.message, true); });
     });
     $('toggle-mech').addEventListener('change', function () {
       transcriptEl().classList.toggle('hide-mech', !this.checked);
     });
     window.addEventListener('resize', function () { drawGrid(); });
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) { voiceCancelAll(); }
-      else { voiceMarkNow(); }  // back: speak only what arrives from now on
+      if (document.hidden) {
+        // Backgrounded synthesis is suspended and comes back garbled, so stop —
+        // but leave the playhead on the line it was reading. Coming back
+        // resumes there; it does not jump to whatever the game reached
+        // meanwhile, which is the whole point of a playhead.
+        voiceStopCurrent(false);
+        voiceHoldRelease();
+      } else {
+        voiceRepump();      // pick the same line back up
+        voiceHoldEval();
+      }
+      voiceRenderControls();
       if (!document.hidden && S.gameId && !TERMINAL[S.status]) {
         if (!S.es || S.es.readyState === 2) connect(S.gameId);
         refreshSnapshot();

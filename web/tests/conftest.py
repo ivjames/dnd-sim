@@ -2,7 +2,7 @@
 
 The fakes implement exactly the slice of CONTRACTS.md 2/4 that web touches:
 ``EventBus.subscribe/unsubscribe/publish/history``, ``Event`` fields, and
-``Game.id/status/start/pause/resume/stop/inject_dm_note/snapshot/ledger``.
+``Game.id/status/start/pause/resume/stop/hold/release/inject_dm_note/snapshot/ledger``.
 """
 
 from __future__ import annotations
@@ -92,6 +92,8 @@ class FakeGame:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
+        self.held = 0.0
+        self._hold_until = 0.0
         self.step_delay = float(os.environ.get("FAKE_STEP_DELAY", "0.02"))
 
     # -- helpers
@@ -137,7 +139,20 @@ class FakeGame:
     def stop(self) -> None:
         self._stop.set()
         self._paused.clear()
+        self.release()
         self.status = "stopped"
+
+    def hold(self, seconds: float = 0.0) -> float:
+        secs = max(0.0, min(float(seconds), 30.0))
+        self.held = secs
+        self._hold_until = (time.monotonic() + secs) if secs else 0.0
+        return secs
+
+    def release(self) -> None:
+        self.hold(0.0)
+
+    def hold_remaining(self) -> float:
+        return max(0.0, self._hold_until - time.monotonic())
 
     def inject_dm_note(self, text: str) -> None:
         self.notes.append(text)
@@ -146,6 +161,7 @@ class FakeGame:
     def snapshot(self) -> dict:
         return {
             "status": self.status,
+            "holding": self.hold_remaining() > 0,
             "round": 1,
             "summary": "The party ambushed on the trail.",
             "ledger": self.ledger,

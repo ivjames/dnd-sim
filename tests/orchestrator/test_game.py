@@ -303,6 +303,103 @@ def test_stop_while_paused_releases_the_loop(cfg):
     assert game.status == "stopped"
 
 
+def test_pause_before_the_thread_starts_reads_back_as_paused(cfg):
+    """A pause landing in the gap between start() and run() must be visible.
+
+    run() used to set "running" unconditionally, so such a game sat frozen at
+    its first gate while reporting itself running — and the UI, which offers
+    Resume only for "paused", had no way to let it go again.
+    """
+    cfg.tempo_ms = 5
+    game, bus = make_game(cfg)
+    game.pause()
+    assert game.status == "paused"
+    game.start()
+    time.sleep(0.1)
+    assert game.status == "paused"
+    assert len(bus.history()) <= 1
+    game.resume()
+    assert game.status == "running"
+    game.join(timeout=20)
+    assert game.status == "finished"
+
+
+def test_resume_before_the_thread_starts_leaves_it_created(cfg):
+    game, _ = make_game(cfg)
+    game.pause()
+    game.resume()
+    assert game.status == "created"
+
+
+# --- narration hold --------------------------------------------------------
+
+
+def test_hold_stalls_the_loop_and_expires_on_its_own(cfg):
+    """The hold is a lease: a spectator that stops renewing it is not a game
+    that stays frozen."""
+    cfg.tempo_ms = 0
+    game, bus = make_game(cfg)
+    game.hold(0.4)
+    game.start()
+    time.sleep(0.15)
+    held = len(bus.history())
+    assert held <= 1  # the event that was already in flight
+    assert game.status == "running"  # a hold is not a pause
+    assert game.hold_remaining() > 0
+    game.join(timeout=20)
+    assert game.status == "finished"
+    assert len(bus.history()) > held
+    assert game.hold_remaining() == 0
+
+
+def test_release_lets_the_loop_go_at_once(cfg):
+    cfg.tempo_ms = 0
+    game, bus = make_game(cfg)
+    game.hold(20)
+    game.start()
+    time.sleep(0.15)
+    held = len(bus.history())
+    game.release()
+    time.sleep(0.15)
+    assert len(bus.history()) > held
+    game.join(timeout=20)
+    assert game.status == "finished"
+
+
+def test_hold_is_capped_and_renewable(cfg):
+    game, _ = make_game(cfg)
+    assert game.hold(1000) == game_mod.MAX_HOLD_SECONDS
+    first = game.hold_remaining()
+    assert game.hold(-5) == 0.0
+    assert game.hold_remaining() == 0
+    assert game.hold("bad") == 0.0
+    assert game.hold(float("nan")) == 0.0   # NaN would otherwise survive min/max
+    assert game.hold(float("inf")) == game_mod.MAX_HOLD_SECONDS
+    assert game.hold(5) == 5.0
+    assert game.hold_remaining() <= first
+
+
+def test_stop_releases_a_held_loop(cfg):
+    cfg.tempo_ms = 0
+    game, _ = make_game(cfg)
+    game.hold(20)
+    game.start()
+    time.sleep(0.1)
+    game.stop()
+    game.join(timeout=20)
+    assert game.status == "stopped"
+    assert game.hold_remaining() == 0
+
+
+def test_snapshot_reports_holding(cfg):
+    game, _ = make_game(cfg)
+    assert game.snapshot()["holding"] is False
+    game.hold(10)
+    assert game.snapshot()["holding"] is True
+    game.release()
+    assert game.snapshot()["holding"] is False
+
+
 def test_subscriber_receives_live_events_and_a_close_sentinel(cfg):
     game, bus = make_game(cfg)
     q = bus.subscribe()

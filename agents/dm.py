@@ -22,14 +22,21 @@ from .views import render_actions
 
 __all__ = ["DMAgent"]
 
-MAX_TOKENS_SCENE = 600
-MAX_TOKENS_NARRATE = 300
+MAX_TOKENS_SCENE = 400
+MAX_TOKENS_NARRATE = 180
 MAX_TOKENS_ACTION = 220
-MAX_TOKENS_ADJUDICATE = 400
+MAX_TOKENS_ADJUDICATE = 300
 MAX_TOKENS_OPTIONS = 200
 
-NARRATION_WORDS = 120
-SCENE_WORDS = 150
+# Word ceilings. These are a listening budget, not just a token budget: the
+# spectator UI reads narration aloud at roughly 150 words a minute, so 120 words
+# of narration per resolved turn is a minute of speech per six seconds of combat
+# and the voice can never catch up. Prose is clamped to these after the model
+# replies, and the prompts ask for the same numbers.
+NARRATION_WORDS = 60
+SCENE_WORDS = 90
+EPILOGUE_WORDS = 100
+ADJUDICATION_WORDS = 45
 SPEECH_WORDS = 20
 
 _EVENT_KINDS_FOR_NARRATION = {
@@ -164,7 +171,7 @@ class DMAgent:
         user = render(
             "dm_epilogue.txt", view=view, outcome=outcome, dm_note=self.take_note()
         )
-        return self._prose(self._call(user, MAX_TOKENS_SCENE), "narration", SCENE_WORDS)
+        return self._prose(self._call(user, MAX_TOKENS_SCENE), "narration", EPILOGUE_WORDS)
 
     # -- monsters ----------------------------------------------------------
 
@@ -270,7 +277,7 @@ class DMAgent:
             "skill": obj.get("skill"),
             "dc": dc,
             "actor": obj.get("actor"),
-            "narration": clamp_words(obj.get("narration"), NARRATION_WORDS) or "",
+            "narration": clamp_words(obj.get("narration"), ADJUDICATION_WORDS) or "",
             "encounter": encounter,
         }
 

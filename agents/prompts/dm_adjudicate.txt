@@ -9,5 +9,5 @@ Decide how this resolves.
 
 RESPONSE_SHAPE: dm_adjudication
 Reply with JSON only:
-{{"resolution": "skill_check"|"narrative"|"start_combat", "skill": "<skill name or null>", "dc": <int or null>, "actor": "<combatant id or null>", "narration": "<80 words max setting it up, no outcome>", "encounter": {{"monsters": [{{"name": "Goblin", "count": 3}}]}} or null}}
+{{"resolution": "skill_check"|"narrative"|"start_combat", "skill": "<skill name or null>", "dc": <int or null>, "actor": "<combatant id or null>", "narration": "<45 words max setting it up, no outcome>", "encounter": {{"monsters": [{{"name": "Goblin", "count": 3}}]}} or null}}
 Do not state the result of a check — the engine rolls it. Use only monsters that fit the setting.

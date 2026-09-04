@@ -37,6 +37,7 @@ FUZZY_MIN_WORDS = 4  # below this, only identical content counts as a repeat
 MAX_TURNS_PER_COMBAT = 400
 DEFAULT_BEATS_PER_SCENE = 2
 RECENT_EVENTS = 12
+MAX_HOLD_SECONDS = 30.0  # ceiling on one narration hold; see Game.hold
 
 
 class _Stopped(Exception):
@@ -103,6 +104,9 @@ class Game:
         self._resume = threading.Event()
         self._resume.set()
         self._stop = threading.Event()
+        self._live = False  # run() has taken over; distinguishes created from running
+        self._hold_until = 0.0  # monotonic deadline of the current narration hold
+        self._hold_wake = threading.Event()  # poked so a hold ends the instant it is lifted
         self._notes: list[str] = []
         self._spoken: list[tuple[str, frozenset, bool]] = []  # guard: actor, words, negates
         self._thread: threading.Thread | None = None
@@ -121,18 +125,52 @@ class Game:
         self._thread.start()
 
     def pause(self) -> None:
-        if self.status == "running":
-            self.status = "paused"
+        # Also from "created": a pause issued before the thread reaches run()
+        # must not read back as running, or the UI offers no way to resume it.
         self._resume.clear()
+        if self.status in ("created", "running"):
+            self.status = "paused"
 
     def resume(self) -> None:
-        if self.status == "paused":
-            self.status = "running"
         self._resume.set()
+        if self.status == "paused":
+            self.status = "running" if self._live else "created"
 
     def stop(self) -> None:
         self._stop.set()
         self._resume.set()  # release a paused loop so it can notice the stop
+        self.release()  # ... and a held one
+
+    def hold(self, seconds: float = 0.0) -> float:
+        """Ask the loop to wait `seconds` before emitting anything further.
+
+        A *lease*, not a pause: it expires on its own, so a spectator whose
+        browser dies mid-hold costs the game at most `MAX_HOLD_SECONDS` rather
+        than freezing it forever. Renew it to keep holding; call it with 0 (or
+        `release()`) to lift it now. Deliberately does not touch `status` —
+        holding is the narration keeping step, not the table pausing, and the
+        two must stay separately controllable. Returns the seconds granted.
+        """
+        try:
+            secs = float(seconds)
+        except (TypeError, ValueError):
+            secs = 0.0
+        if secs != secs:  # NaN compares false against everything, min/max included
+            secs = 0.0
+        secs = max(0.0, min(secs, MAX_HOLD_SECONDS))
+        with self._lock:
+            self._hold_until = (time.monotonic() + secs) if secs else 0.0
+        self._hold_wake.set()
+        return secs
+
+    def release(self) -> None:
+        """Lift any narration hold immediately."""
+        self.hold(0.0)
+
+    def hold_remaining(self) -> float:
+        with self._lock:
+            until = self._hold_until
+        return max(0.0, until - time.monotonic())
 
     def join(self, timeout: float | None = None) -> None:
         if self._thread is not None:
@@ -155,13 +193,28 @@ class Game:
         return " | ".join(notes)
 
     def _gate(self) -> None:
-        """Honour pause/stop. Called between events and before LLM calls."""
+        """Honour pause/hold/stop. Called between events and before LLM calls."""
         if self._stop.is_set():
             raise _Stopped()
         if not self._resume.is_set():
             self._resume.wait()
         if self._stop.is_set():
             raise _Stopped()
+        self._wait_hold()
+        if self._stop.is_set():
+            raise _Stopped()
+
+    def _wait_hold(self) -> None:
+        """Block while a narration hold is in force, waking the moment it lifts."""
+        while not self._stop.is_set():
+            # Clear before reading the deadline, never after: a release landing
+            # in between would otherwise be swallowed and the loop would sit out
+            # the whole of the hold it was just let out of.
+            self._hold_wake.clear()
+            remaining = self.hold_remaining()
+            if remaining <= 0:
+                return
+            self._hold_wake.wait(remaining)  # hold() may extend it; the loop re-reads
 
     def _check_budget(self) -> None:
         if self.ledger.total_usd >= self.cfg.budget_usd:
@@ -411,7 +464,10 @@ class Game:
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        self.status = "running"
+        self._live = True
+        # A pause landing between start() and here must survive: _gate() will
+        # block on it, so the status has to say paused rather than running.
+        self.status = "running" if self._resume.is_set() else "paused"
         try:
             self._setup()
             self._emit_new(
@@ -789,6 +845,7 @@ class Game:
             "summary": self.summary,
             "ledger": self.ledger.to_dict(),
             "status": self.status,
+            "holding": self.hold_remaining() > 0,
             "round": getattr(self.state, "round", 0) if self.state is not None else 0,
             "outcome": self.outcome,
             "error": self.error,

@@ -225,6 +225,34 @@ def stop(game_id: str):
     return _control(game_id, "stop")
 
 
+@bp.post("/games/<game_id>/hold")
+def hold(game_id: str):
+    """Hold the game for a spectator's narration (a renewable lease, in seconds).
+
+    Not `pause`: it expires by itself, so a browser that dies mid-hold costs the
+    game a few seconds rather than freezing it, and it leaves `status` alone so
+    the table's own pause/resume stays meaningful. Called every few seconds
+    while a spectator's spoken narration is behind, so unlike the other controls
+    it does not write a snapshot.
+    """
+    entry, row = _game_or_404(game_id)
+    if entry is None:
+        if row is None:
+            return _err("no such game", 404)
+        return _err("game is not running in this process", 409)
+    body = request.get_json(silent=True) or {}
+    raw = body.get("seconds", 0)
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return _err("seconds must be a number")
+    fn = getattr(entry.game, "hold", None)
+    if not callable(fn):
+        return _err("game does not support hold", 501)
+    granted = fn(seconds)
+    return jsonify({"id": game_id, "status": entry.status(), "holding": granted}), 202
+
+
 @bp.post("/games/<game_id>/note")
 def note(game_id: str):
     body = request.get_json(silent=True) or {}

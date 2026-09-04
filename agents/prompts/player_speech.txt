@@ -4,5 +4,5 @@ The DM says: {prompt}
 
 RESPONSE_SHAPE: player_speech
 Reply with JSON only:
-{{"speech": "<what your character says or does, in character, 60 words max>"}}
+{{"speech": "<what your character says or does, in character, 35 words max>"}}
 Say what you attempt. Do not state whether it succeeds, do not roll, do not narrate the world's reaction.
