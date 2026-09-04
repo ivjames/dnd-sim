@@ -66,24 +66,29 @@ scene-setting and the epilogue. That reproduces both measured games to within
 2%, and it is the number to plan with.
 
 The cap is `max_rounds_per_combat`, and it is enforced **per combat**
-(`orchestrator/game.py:661`), not per game. goblin_ambush has one encounter and
-a cap of 20; crypt has two and a cap of 25 — its observed 7 rounds are already
-4 + 3 across two fights. So the configured ceilings are 20 and 50 rounds
-against the 13 and 7 observed:
+(`orchestrator/game.py:661`), not per game. crypt's observed 7 rounds are
+already 4 + 3 across two fights.
 
-| | encounters × cap | rounds | chars at cap |
+How many combats a game can hold is `max_scenes`, and exactly that.
+`_exploration()` runs one beat loop per scene; a DM `start_combat` ruling calls
+`_run_combat()` and returns immediately (`game.py:615-616`), skipping both the
+remaining beats and the scene's configured encounter at the bottom of the
+function. So a scene yields **at most one combat** — the DM's or the config's,
+never both — and neither `beats_per_scene` nor the length of the encounter list
+can add another. Note the ceiling does not require a configured encounter:
+goblin_ambush lists one, for scene 1, but a `start_combat` ruling in scene 2
+would still open a second fight.
+
+| | max_scenes × cap | rounds | chars at cap |
 |---|---|---|---|
-| goblin_ambush | 1 × 20 | 20 | ~59,000 |
+| goblin_ambush | 2 × 20 | 40 | ~117,000 |
 | crypt | 2 × 25 | 50 | ~146,000 |
 
-That is 2× and 6× the central figure. And it is not even a hard ceiling: a DM
-`start_combat` ruling (`game.py:615`) can open a fight that is in no encounter
-list, up to one per beat, which at `max_scenes × beats_per_scene = 4` would put
-crypt at 150 rounds and ~436,000 characters.
-
-The honest conclusion is that the round caps do not bound the bill. Once
-narration is in the ledger, `budget_usd` does — which is the argument for
-putting it there before turning any of this on, not after.
+Against 13 and 7 rounds observed, that is 3–5× the central figure — a static
+ceiling, but not a reassuring one. It is the argument for putting narration in
+the ledger before turning any of this on rather than after: `budget_usd` is
+what stops a long game costing $15 of ElevenLabs, and today it cannot see the
+spend at all.
 
 ## 2. Rates
 
@@ -122,10 +127,9 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 | ElevenLabs Flash | $1.50 | $1.10 | $2.61 |
 | ElevenLabs v3 | $3.00 | $2.20 | $5.22 |
 
-At the configured round ceilings (§1) the same games cost far more: 59,000
-chars for goblin_ambush is $0.89 on Aura-1 and $5.90 on ElevenLabs v3;
-crypt's 146,000 is **$2.19 and $14.60**. Budget for the ceiling, not the
-average.
+At the configured ceilings (§1) the same games cost far more: goblin_ambush's
+117,000 chars is $1.76 on Aura-1 and $11.70 on ElevenLabs v3; crypt's 146,000
+is **$2.19 and $14.60**. Budget for the ceiling, not the average.
 
 Monthly, at 30,000 chars/game:
 
