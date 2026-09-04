@@ -50,6 +50,8 @@ __all__ = [
     "normalize_gender",
     "gender_for_pronouns",
     "normalize_age",
+    "accent_for",
+    "ACCENTS",
     "is_child_voice",
     "GENDERS",
     "PRONOUN_GENDERS",
@@ -260,6 +262,45 @@ def is_monster_key(key: str) -> bool:
 
 def _pick(pool: list[Voice], h: int) -> Voice:
     return pool[h % len(pool)]
+
+
+#: What a Polly LanguageCode sounds like, in the words a listener would use.
+#:
+#: The roster is dealt from by `cast_for` and the language rides along on the
+#: `Cast`, so the page can already say *which* voice reads a seat — but "Aditi"
+#: tells a spectator nothing and "en-IN" only slightly more. These are the
+#: accents of the English roster Polly actually serves; anything else is
+#: reported by its code rather than guessed at, because a wrong accent on a
+#: character is worse than an unfamiliar language tag (`accent_for`).
+#:
+#: en-GB-WLS is Welsh-accented English rather than Welsh, which is why it is
+#: keyed on the whole code rather than on the `en-GB` it starts with.
+ACCENTS: dict[str, str] = {
+    "en-au": "Australian",
+    "en-gb": "British",
+    "en-gb-wls": "Welsh",
+    "en-ie": "Irish",
+    "en-in": "Indian",
+    "en-nz": "New Zealand",
+    "en-sg": "Singaporean",
+    "en-us": "American",
+    "en-za": "South African",
+}
+
+
+def accent_for(language: str) -> str:
+    """A human accent name for a Polly LanguageCode, or the code itself.
+
+    Falls back to the code because `PollyTTS.voices()` reads the live roster:
+    a voice Amazon adds tomorrow in a locale not listed above must still be
+    describable, and "en-GB-SCT" said plainly is honest where a guess at
+    "Scottish" from a table written today would eventually be a lie about
+    which voice a listener is hearing.
+    """
+    code = str(language or "").strip()
+    if not code:
+        return ""
+    return ACCENTS.get(code.lower(), code)
 
 
 def normalize_gender(gender: str) -> str:

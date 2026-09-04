@@ -278,6 +278,7 @@ POST /api/games/<id>/pause|resume|stop  → 202                                 
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)             ← token
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
+POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
@@ -357,6 +358,46 @@ budget live. Prompts are built for frugality: players see a compact state view
 plus enumerated legal actions (not full state), the static rules digest is
 prompt-cached, and summaries are written by the cheap model.
 
+## The spectator page
+
+One rail and one column. Initiative, the party and the enemies sit down the
+left in tight rows — one line per enemy, two per party member — so a full
+combat is a glance rather than a scroll. The battle map and the controls sit in
+a strip **above** the transcript; the transcript takes whatever height the
+viewport has left; and under it, in reading order, come its own `mechanics` and
+`follow` toggles and then the narrator's transport — the things you reach for
+because of a line you have just read, rather than something between you and the
+line. Below a phone's width the whole thing becomes one column and the
+transcript moves back above the strip, because six panels of preamble is not a
+way to read a story. The narration bar stays under the transcript at every
+width.
+
+**Dark or light, and the page will follow the system unless told otherwise.**
+The button in the top bar cycles `auto → light → dark`; the choice is kept in
+that browser's `localStorage` and nowhere else, so it is a reader's preference
+and never a server setting. Dark is a rich brown rather than near-black, light
+is pale wood, and both were solved rather than eyeballed: **every** run of text
+clears WCAG AAA (7:1) against the worst of the eight surfaces it can land on,
+with the tiers spaced by ratio so the hierarchy is carried by measured steps
+rather than by letting the quietest one sag — story text at 12:1, the secondary
+tier at 9.5:1, the metadata (initiative scores, the AC/class line, sequence
+numbers) at 7:1. A name or a status colour clears 8:1 on the surfaces it is
+printed on — panels, the card wells, the active row, the line being read — and
+7:1 everywhere else.
+
+The carriers of meaning that are not text clear more than the 3:1 1.4.11 asks:
+control borders and focus rings 4.5:1, the HP and budget bars against their own
+tracks 3:1, the map's walls and difficult ground 3:1 against both the board and
+the legend that names them. The soft rules between panels and cards are not in
+that set — they separate, they do not signify, and they sit at 1.3-2.2:1 on
+purpose.
+
+The battle map paints from the same custom properties as everything else, so it
+changes with the theme instead of staying dark on a light page.
+`web/tests/test_theme_tokens.py` holds every floor named above as arithmetic
+over the token pairs that actually occur — which is what makes them claims
+rather than intentions.
+
 ## Spoken narration
 
 The spectator page can read the game aloud. Tick **voice** in the top bar (the
@@ -376,6 +417,19 @@ to be glued to the front of the words instead, which meant it was spoken by the
 monster through its own distortion, with a colon in the middle of the sentence
 that the engine reads as a label. The name is unchanged **on screen**: the
 transcript prints it in front of every line of dialogue as it always has.
+
+### Who a character is
+
+**The pronouns a character states reach the table, not just the casting.** The
+DM's combatant table has carried a pronouns column since the attribution fix;
+`player_view` now carries the same one, because a player talks about its allies
+and the monsters both and infers a gender from a name exactly as readily. The
+roster that opens a scene introduces each character with them, the player's own
+cached prefix carries its own, and both system prompts say it outright: use the
+pronouns you are given, never infer them from a name, a class, a title or a
+voice. A monster has no character sheet, so it gets they/them on its own row,
+every row, every turn — the fix for a Bandit Captain who is "she" in round 2
+and "he" in round 5 is not to deal her a gender, it is to close the question.
 
 A party member may state `"pronouns"` — `he/him`, `she/her`, `they/them`, or
 any other set — and that decides which voices the character can be dealt.
@@ -448,6 +502,18 @@ backwards.
 age attribute in any browser, and inferring one from voice names across every
 OS and locale would be a guess dressed as data. A session on the fallback
 engine casts as it always did.
+
+**And the panel says what those two rows dealt you** — under each seat, the
+voice it will be read by, that voice's accent, and the gender Polly records for
+the recording: `Geraint · Welsh · male`. A panel can show its controls and stay
+silent about the outcome they turn, which is the state this was in; the outcome
+is the interesting half, and it is not one a reader can work out from a pronoun
+set and an age. The line comes from `POST /api/tts/cast`, which is `cast_for`
+over the roster the server has already listed: the same function, roster and
+hash that will read the game, so the panel cannot name a voice the game then
+does not use. It renders nothing and spends nothing, and a server without Polly
+answers that it has no cast — the browser's own voices will read the game, and
+they are not this roster.
 
 ### Two engines, one narrator
 

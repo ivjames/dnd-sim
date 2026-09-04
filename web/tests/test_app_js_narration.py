@@ -124,3 +124,35 @@ def test_the_panel_says_what_is_being_read():
     js = read()
     assert "text: lineText(V.current)" in js
     assert "V.current.phrase" not in js
+
+
+# -- the theme toggle --------------------------------------------------------
+
+def test_the_theme_cycle_does_not_ask_storage_what_it_is_showing():
+    """A browser may refuse `localStorage` — Safari with cookies blocked, an
+    embedded WebView, a full quota. `themeApply` swallows the write, which is
+    right: the theme still applies, it just does not stick. But a cycle that
+    read the value back from storage on the next click would be told "auto"
+    every time and step to "light" for ever: a button that visibly works once
+    and is then inert, and `dark` unreachable. It also mattered with storage
+    working — two tabs stepped from each other's last write rather than from
+    what each was showing.
+
+    So the click reads the variable this page set, and storage is where the
+    choice is kept between visits rather than between clicks.
+    """
+    js = read()
+    click = re.search(r"\$\('btn-theme'\)\.addEventListener\('click', function \(\) \{(.+?)\}\);", js, re.S)
+    assert click, "app.js no longer wires the theme button"
+    assert "themeNow" in click.group(1)
+    assert "themeStored" not in click.group(1) and "localStorage" not in click.group(1)
+
+    # And the same for the system-theme listener, which asks the same question.
+    mq = re.search(r"mq\.addEventListener\('change', function \(\) \{(.+?)\}\);", js, re.S)
+    assert mq and "themeNow" in mq.group(1)
+
+    # `themeApply` is the only writer, so the variable cannot drift from the
+    # attribute on <html> that it sets in the same breath. (Its declaration is
+    # not a write; anything else that assigns it is.)
+    writes = [m for m in re.findall(r"[ \t]*(var )?themeNow = ", js) if not m]
+    assert len(writes) == 1, "something other than themeApply assigns themeNow"

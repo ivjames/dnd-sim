@@ -7,7 +7,7 @@ from agents.dm import DMAgent
 from agents import player
 from agents.player import PlayerAgent
 from agents.summarizer import summarize
-from agents.views import dm_view, player_view, render_actions
+from agents.views import dm_view, party_summary, player_view, pronouns_for, render_actions
 from llm.client import LLMResponse, MockLLMClient
 from llm.cost import Ledger
 
@@ -37,11 +37,18 @@ class ScriptedClient:
 def make_state(n_enemies=5):
     rng = eng.RNG(1)
     combatants = {}
-    for i, (name, klass) in enumerate(
-        [("Thorin", "Fighter"), ("Vessa", "Rogue"), ("Marigold", "Cleric"), ("Ilbrandt", "Wizard")]
+    for i, (name, klass, who) in enumerate(
+        [
+            ("Thorin", "Fighter", {"gender": "male"}),          # implied he/him
+            ("Vessa", "Rogue", {"pronouns": "they/them"}),      # stated
+            ("Marigold", "Cleric", {"gender": "female"}),       # implied she/her
+            ("Ilbrandt", "Wizard", {}),                         # nothing said
+        ]
     ):
         sheet = eng.build_character(
-            {"id": f"pc_{i+1}", "name": name, "klass": klass, "level": 3, "persona": "brave"}, rng
+            dict({"id": f"pc_{i+1}", "name": name, "klass": klass, "level": 3,
+                  "persona": "brave"}, **who),
+            rng,
         )
         combatants[sheet.id] = eng.Combatant(
             id=sheet.id,
@@ -116,6 +123,40 @@ def test_dm_view_shows_exact_numbers_and_positions():
     view = dm_view(state, events(3), "")
     assert "7/7" in view
     assert "(9,3)" in view
+
+
+def test_every_way_a_seat_can_answer_reaches_the_view():
+    """The four cases a party spec can present, resolved through `pronouns_for`
+    and into the fixture the view tests below run on. Which of `pronouns` and
+    `gender` wins when a spec states both is not this — that is
+    `test_narration_attribution.py::test_stated_pronouns_beat_a_legacy_gender_here_too`,
+    and no seat here states both."""
+    state = make_state()
+    assert pronouns_for(state.combatants["pc_1"]) == "he/him"      # implied by gender
+    assert pronouns_for(state.combatants["pc_2"]) == "they/them"   # stated outright
+    assert pronouns_for(state.combatants["pc_3"]) == "she/her"     # implied by gender
+    assert pronouns_for(state.combatants["pc_4"]) == "they/them"   # nothing said
+
+
+def test_the_player_view_carries_the_pronoun_column_the_dm_view_has():
+    """A player talks about their allies and the monsters both, and infers a
+    gender from a name exactly as readily as the DM does."""
+    view = player_view(make_state(), "pc_1", events(), "")
+    assert "COMBATANTS (name | pronouns | side | health | dist | conditions)" in view
+    def row(cid):
+        return next(l for l in view.splitlines() if l.startswith(f"{cid} "))
+
+    for cid, pron in [("pc_1", "he/him"), ("pc_2", "they/them"),
+                      ("pc_3", "she/her"), ("pc_4", "they/them")]:
+        assert f"| {pron} |" in row(cid), cid
+    # A monster states nothing and is not guessed at.
+    assert "| they/them |" in row("mon_1")
+
+
+def test_the_roster_that_opens_a_scene_introduces_each_character_properly():
+    rows = party_summary(make_state()).splitlines()
+    assert rows[0].startswith("Thorin (he/him, ")
+    assert "Ilbrandt (they/them, " in "\n".join(rows)
 
 
 def test_render_actions_format():

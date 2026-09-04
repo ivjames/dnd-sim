@@ -18,6 +18,7 @@ __all__ = [
     "hp_band",
     "party_summary",
     "pronouns_for",
+    "pronouns_of_sheet",
     "PRONOUNS",
     "DEFAULT_PRONOUNS",
 ]
@@ -73,7 +74,17 @@ def pronouns_for(c: Any) -> str:
     that built it stated one. Nothing is inferred from a name, a class or a
     stat block.
     """
-    sheet = getattr(c, "sheet", None)
+    return pronouns_of_sheet(getattr(c, "sheet", None))
+
+
+def pronouns_of_sheet(sheet: Any) -> str:
+    """`pronouns_for` for a bare sheet, for a caller that has no combatant.
+
+    The player's own cached system block is built from its `CharacterSheet`
+    alone, and it has to answer this the same way the COMBATANTS column will —
+    a prompt that introduces a character as they/them and then lists her as
+    she/her has told the model two things in one breath.
+    """
     said = str(getattr(sheet, "pronouns", "") or "").strip()
     if said:
         return said
@@ -242,7 +253,7 @@ def party_summary(state: Any) -> str:
         sheet = getattr(c, "sheet", None)
         if sheet is not None:
             rows.append(
-                f"{c.name} ({getattr(sheet, 'race', '?')} "
+                f"{c.name} ({pronouns_for(c)}, {getattr(sheet, 'race', '?')} "
                 f"{getattr(sheet, 'klass', '?')} {getattr(sheet, 'level', 1)}): "
                 f"{getattr(sheet, 'persona', '') or 'no notes'}"
             )
@@ -273,7 +284,7 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
         lines.append("Your conditions: " + _conds(me))
 
     lines.append("")
-    lines.append("COMBATANTS (name | side | health | dist | conditions)")
+    lines.append("COMBATANTS (name | pronouns | side | health | dist | conditions)")
     for cid, c in combatants.items():
         if not _active(c):
             continue
@@ -287,7 +298,8 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
             dist = f"{_distance_ft(state, me, c)}ft" if me is not None else "?"
             tag = ""
         lines.append(
-            f"{cid} {getattr(c, 'name', '?')}{tag} | {side} | {health} | {dist} | {_conds(c)}"
+            f"{cid} {getattr(c, 'name', '?')}{tag} | {pronouns_for(c)} | "
+            f"{side} | {health} | {dist} | {_conds(c)}"
         )
 
     events = _event_lines(recent)

@@ -55,9 +55,11 @@ class CharacterSheet:
     spellcasting_ability: str | None
     features: list[str]                # engine-recognized feature ids: "second_wind","action_surge","sneak_attack","cunning_action","channel_divinity_turn_undead","arcane_recovery","extra_attack",...
     persona: str                       # free text; not used by engine
+    pronouns: str                      # as stated, or ""; read by agents.views.pronouns_for and tts/. No rules meaning
+    gender: str                        # the older spelling of the same answer, still read underneath it
 
 def build_character(spec: dict, rng: RNG) -> CharacterSheet
-# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str}
+# spec: {"id","name","race","klass","level","abilities": {"STR":15,...} | "standard_array" | "point_buy_default", "equipment": "default"|[...], "spells": "default"|[...], "persona": str, "pronouns": str}
 def monster_to_combatant(name: str, cid: str, rng: RNG, roll_hp: bool=False) -> "Combatant"
 ```
 
@@ -274,6 +276,7 @@ POST /api/games/<id>/pause | /resume | /stop                                   *
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202                                  **write token**
 GET  /api/tts                           {"available":bool,"engine","monster_engine","language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
+POST /api/tts/cast       {party}       {"available":bool,"seats":[{"id","voice","language","accent","gender"}]} — who will read each seat, before the game exists; casts nothing, spends nothing
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 Routes marked **write token** require the `X-Dnd-Token` header to match
@@ -1682,3 +1685,100 @@ about a person recorded to serve a two-item voice list.
 6. **The browser fallback is unaffected.** `SpeechSynthesisVoice` reports no
    gender and no age in any browser, so `speech.js` casts as it always did.
 
+---
+
+---
+
+---
+
+### 2026-09-04 — tts/ + web/ — the panel says who will read each seat
+
+The new-game panel gained a per-seat `adult`/`child` control (the age
+amendment above) and stopped there: one visible knob over an outcome — which
+of Polly's voices reads your cleric, and what it sounds like — that is
+otherwise decided silently by a hash. Gender is in the party spec and was
+never shown at all; accent is not in the spec, falls out of the roster, and a
+listener notices it in the first sentence.
+
+1. **`tts/voices.py: accent_for(language) -> str`**, with the `ACCENTS` table
+   behind it: a Polly `LanguageCode` in the words a listener would use —
+   `en-GB-WLS` is *Welsh* and is keyed on the full code, because
+   Welsh-accented English is not `en-GB`. An unlisted locale is returned **as
+   its code**, not guessed at: `voices()` reads the live roster, so a locale
+   Amazon adds tomorrow has to remain describable, and a guess from a table
+   written today would eventually be a confident lie about which voice a
+   listener is hearing. Pure, and every voice on `STANDARD_ENGLISH` is held to
+   having a name by `tests/tts/test_voices.py`.
+
+2. **`POST /api/tts/cast`** answers, for a proposed party, the voice each seat
+   is dealt, its accent and the gender Polly records for the recording. Body
+   `{"party":[{"id","pronouns","gender","age"}…]}`, read through
+   `_pool_gender_of` so the preview narrows the pool exactly as the paid
+   endpoint will — at most `MAX_CAST_SEATS` (16) seats;
+   a member with no `id` comes back with `"voice": null`, because `cast_for`
+   reads an empty key as the DM and the narrator's voice printed against a
+   player's name would be a confident wrong answer. A server with no Polly
+   answers `{"available": false, "seats": []}` — the same shape `/api/tts`
+   refuses in — since a cast nobody will hear is worse than no cast.
+
+   **Anonymous, and safe to be.** It renders nothing, spends nothing and
+   writes no cache entry; it is `cast_for` over a roster the service has
+   already listed. That is the opposite of the rule on `GET
+   /api/games/<id>/tts`, where traits are read from the game's own config and
+   never the request (narration amendment §5) — there the request could walk
+   the roster a *paid clip* at a time. Here there is no clip. What this must
+   never become is a way to *hear* an arbitrary voice.
+
+3. **One implementation of the casting, asked twice.** The panel does not
+   compute the cast; `web/static/app.js` asks this route and prints the
+   answer. A copy of the rules in JS would agree with `cast_for` exactly until
+   somebody edited one of them, and the failure mode is a panel that names a
+   voice the game does not use. `web/tests/test_tts_api.py` checks the preview
+   against the `X-Dnd-Voice` of the clip the paid endpoint then serves for the
+   same seat.
+
+Unchanged: the party spec (§1.3 and the age amendment), what the engine sees,
+and which traits the panel may edit — age remains the only one, for the reason
+stated there.
+
+---
+
+---
+
+---
+
+### 2026-09-04 — agents/ — the pronouns reach the players, the roster and the prompts
+
+Layered on "a character states pronouns, not a gender", which arrived on `main`
+while this was open and settled the data model: `pronouns` verbatim on the
+sheet, `gender` still read underneath, `agents.views.pronouns_for` the one
+reader. This branch had built the same thing a different way — resolving in
+`build_character` and storing the result — and that version is dropped whole
+rather than kept alongside. Storing a resolution writes `they/them` into the
+sheet of a character who said nothing, and an unstated answer not being written
+down is the whole point of the key.
+
+What is added here is where the answer goes:
+
+1. **`player_view` carries the pronouns column `dm_view` has.** A player talks
+   about its allies and the monsters both, and infers a gender from a name
+   exactly as readily as the DM does.
+
+2. **`party_summary` introduces each character with them**, so the roster that
+   opens a scene establishes them before the first narration rather than after
+   it.
+
+3. **The player's cached system prefix carries its own**, and `dm_system.txt`
+   and `player_system.txt` both gain the rule in the place a model reads before
+   anything else: use the pronouns you are given, never infer them from a name,
+   a class, a title or a voice. `dm_narrate.txt` says it per turn; these say it
+   once, in the block that is cached for the session.
+
+4. **The spectator card shows them**, on the line it already uses for identity,
+   beside AC and class.
+
+Unchanged: `pronouns_for`, the DM column, what a party spec states, and the
+casting. `tests/engine/test_pronouns.py` keeps only what those cover between
+them — that the sheet carries both keys verbatim, that both survive the
+round-trip a restart puts them through (including a row written before either
+existed), and that neither touches a rule.
