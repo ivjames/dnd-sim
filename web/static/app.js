@@ -771,6 +771,24 @@
     return Speech.phraseFor(ev, ctx.names, ctx.party) || null;
   }
 
+  // What the event is read as: `[{key, text}]`, utterance-sized and each piece
+  // carrying the voice that says it. Most events are one voice throughout; a
+  // line of dialogue that names its speaker is two, the narrator saying who
+  // and then the speaker saying the words. Cast here rather than on arrival —
+  // a monster's first line can beat the snapshot that first names it, so the
+  // later this is asked the better the answer.
+  function voiceChunks(ev) {
+    if (!ev || !Speech.shouldSpeak(ev, V.settings)) return [];
+    var ctx = voiceCtx();
+    var out = [];
+    Speech.segmentsFor(ev, ctx.names, ctx.party, ctx.monsters).forEach(function (seg) {
+      Speech.chunksFor(seg.text).forEach(function (text) {
+        out.push({ key: seg.key, text: text });
+      });
+    });
+    return out;
+  }
+
   // Unread speakable lines ahead of the playhead, counted up to BACKLOG_SCAN.
   // shouldSpeak alone (not phraseFor) — this runs on every event, and the
   // handful of lines that turn out to have nothing to say do not change any
@@ -898,8 +916,7 @@
     if (V.current || !voiceArmed()) { voiceRenderControls(); return; }
     while (V.cursor < S.events.length) {
       var ev = S.events[V.cursor];
-      var phrase = voicePhrase(ev);
-      var chunks = phrase ? Speech.chunksFor(phrase) : [];
+      var chunks = voiceChunks(ev);
       if (!chunks.length) { V.cursor++; continue; }
       var idx = 0;
       if (V.resumeChunk && V.resumeChunk.seq === ev.seq && V.resumeChunk.idx < chunks.length) {
@@ -907,17 +924,12 @@
       }
       V.resumeChunk = null;
       var node = transcriptEl().querySelector('[data-seq="' + ev.seq + '"]');
-      var cur = { ev: ev, phrase: phrase, chunks: chunks, idx: idx, node: node,
+      var cur = { ev: ev, chunks: chunks, idx: idx, node: node,
                   timer: null, utt: null, clip: null };
       V.current = cur;
       if (node) { node.classList.add('speaking'); voiceFollow(node); }
       voiceSavePos();
-      // Cast at the playhead, not on arrival: a monster's first line can beat
-      // the snapshot that first names it, and every moment the line waits its
-      // turn is a moment that fetch has to land.
-      var ctx = voiceCtx();
-      cur.vkey = Speech.voiceKeyFor(ev, ctx.party, ctx.monsters);
-      voiceSpeakChunk(cur);
+      voiceStartLine(cur);
       voiceRenderControls();
       return;
     }
@@ -925,20 +937,78 @@
     voiceRenderControls();
   }
 
+  // The chunk the playhead is on, and the voice that says it. The voice is
+  // per chunk rather than per line because an attributed line changes speaker
+  // partway through: the narrator names the monster, the monster answers.
+  function chunkText(cur) { return cur.chunks[cur.idx].text; }
+  function chunkKey(cur) { return cur.chunks[cur.idx].key; }
+
+  // The whole line as the panel reports it, chunks rejoined — the narrator's
+  // naming of the speaker included, because that is part of what is being
+  // heard. Read back off the chunks rather than kept beside them: a copy of
+  // the line held on `cur` is a copy that can go stale or go missing, which is
+  // how this line came to be written.
+  function lineText(cur) {
+    return cur.chunks.map(function (c) { return c.text; }).join(' ');
+  }
+
+  // How many voices are left in this line from the playhead on. Two means an
+  // attributed line: the narrator naming the speaker, then the speaker.
+  function voicesLeft(cur) {
+    var keys = {};
+    for (var i = cur.idx; i < cur.chunks.length; i++) keys[cur.chunks[i].key] = 1;
+    return Object.keys(keys).length;
+  }
+
+  // Begin a line — or resume it, which is the same question asked from a later
+  // chunk. A line that is more than one voice is settled onto ONE engine before
+  // any of it is heard: its clips are asked for together, and a refusal of any
+  // takes the whole line to the browser's voices. `cur.local` alone cannot do
+  // that, because it is set by a failure that has already happened — a name
+  // clip that is cached (they nearly all are, the same name every time) plays
+  // through Polly for free, and the words behind it can still be refused. A
+  // game running out of budget mid-scene is exactly when that happens, and it
+  // arrives as one line in two engines: the narrator on Polly, the goblin on
+  // the device.
+  //
+  // A single-voice line still starts on its first chunk and fetches the rest
+  // as it plays. That is what makes a long narration start promptly, and one
+  // speaker crossing engines between two chunks is a seam nobody can hear.
+  function voiceStartLine(cur) {
+    if (!ttsOn() || cur.local || voicesLeft(cur) < 2) { voiceSpeakChunk(cur); return; }
+    var rest = cur.chunks.slice(cur.idx);
+    // Over the server's cap is not a refusal — it is never asked — so it costs
+    // the line its server voices without counting toward giving up on them.
+    if (rest.some(function (c) { return c.text.length > V.tts.maxChars; })) {
+      cur.local = true;
+      voiceSpeakChunk(cur);
+      return;
+    }
+    var token = cur.token = 'line#' + cur.ev.seq + '#' + cur.idx;
+    Promise.all(rest.map(function (c) { return clipFetch(ttsUrl(c.key, c.text)); }))
+      .then(function () {
+        if (V.current !== cur || cur.token !== token) return;   // skipped while in flight
+        voiceSpeakChunk(cur);      // every clip is in hand; each is a cache hit now
+      })['catch'](function (err) {
+        voiceServerFailed(cur, err, token);
+      });
+  }
+
   // Speak the chunk the playhead is on, in whichever engine is answering.
   // Both paths end at the same `voiceChunkDone`, so everything above here —
   // the playhead, the transport, the holds, the read marks — is untouched by
   // which one it was.
   function voiceSpeakChunk(cur) {
-    // `cur.local` is set when a line has already fallen back: a line that
-    // changes voice halfway through sounds like two people reading it.
+    // `cur.local` is set when a line has already fallen back, and by
+    // `voiceStartLine` before an attributed line starts at all: a line that
+    // changes engine halfway through sounds like two people reading it.
     // A chunk over the server's cap would be refused, and a refusal counts
     // toward giving up on the server entirely — so it is not even asked. The
     // chunker caps at 220 and the server at 400, so this is only reachable on
     // a server configured tighter than its client.
-    var over = cur.chunks[cur.idx].length > V.tts.maxChars;
+    var over = chunkText(cur).length > V.tts.maxChars;
     if (ttsOn() && !cur.local && !over) voiceSpeakServer(cur);
-    else voiceSpeakLocal(cur, voiceProfile(cur.vkey));
+    else voiceSpeakLocal(cur, voiceProfile(chunkKey(cur)));
   }
 
   // Let go of the audio element: its handlers are per chunk, and one left
@@ -963,8 +1033,8 @@
 
   // ---- server voices: one clip, one <audio> element ----
   function voiceSpeakServer(cur) {
-    var text = cur.chunks[cur.idx];
-    var url = ttsUrl(cur.vkey, text);
+    var text = chunkText(cur);
+    var url = ttsUrl(chunkKey(cur), text);
     var token = cur.token = url + '#' + cur.idx;
     clipFetch(url).then(function (src) {
       if (V.current !== cur || cur.token !== token) return;   // skipped while it was in flight
@@ -1017,7 +1087,7 @@
     if (V.current !== cur) { voiceRenderControls(); return; }
     cur.local = true;
     if (V.synth) {
-      voiceSpeakLocal(cur, voiceProfile(cur.vkey));
+      voiceSpeakLocal(cur, voiceProfile(chunkKey(cur)));
     } else {
       // Nothing else here can speak. Stop rather than run the playhead
       // silently through the transcript.
@@ -1031,18 +1101,13 @@
   function ttsPrefetch(cur) {
     if (!ttsOn()) return;
     var url = null;
-    if (cur.idx + 1 < cur.chunks.length) {
-      url = ttsUrl(cur.vkey, cur.chunks[cur.idx + 1]);
-    } else {
+    var ahead = cur.chunks[cur.idx + 1];
+    if (!ahead) {
       var at = indexOfSeq(cur.ev.seq);
       var next = at < 0 ? null : S.events[voiceNextSpeakable(at + 1)];
-      var phrase = next ? voicePhrase(next) : null;
-      var chunks = phrase ? Speech.chunksFor(phrase) : [];
-      if (chunks.length) {
-        var ctx = voiceCtx();
-        url = ttsUrl(Speech.voiceKeyFor(next, ctx.party, ctx.monsters), chunks[0]);
-      }
+      ahead = next ? voiceChunks(next)[0] : null;
     }
+    if (ahead) url = ttsUrl(ahead.key, ahead.text);
     // A prefetch that fails is not news: the real attempt will report it.
     if (url) clipFetch(url)['catch'](function () { /* ignore */ });
   }
@@ -1051,7 +1116,7 @@
   function voiceSpeakLocal(cur, prof) {
     if (!V.synth) { voicePausePlayback(); return; }
     var rate = (VOICE_RATES[V.settings.rate] || 1) * (prof.rate || 1);
-    var text = cur.chunks[cur.idx];
+    var text = chunkText(cur);
     var u = new SpeechSynthesisUtterance(text);
     if (prof.voice) { u.voice = prof.voice; u.lang = prof.voice.lang || u.lang; }
     u.pitch = prof.pitch || 1;
@@ -1264,7 +1329,7 @@
     if (!V.settings.enabled) return { tag: '', text: 'voice off' };
     if (!V.unlocked) return { tag: '', text: 'press play to start — browsers only allow speech from a tap' };
     if (V.current) {
-      return { tag: V.current.ev.kind.replace('_', ' '), text: V.current.phrase };
+      return { tag: V.current.ev.kind.replace('_', ' '), text: lineText(V.current) };
     }
     if (!V.playing) {
       var next = S.events[V.cursor];

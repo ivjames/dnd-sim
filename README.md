@@ -296,6 +296,15 @@ than the dice string, and **mute mechanics** silences them entirely. The DM has
 one voice; each PC gets its own, dealt deterministically so the same character
 sounds the same every session.
 
+**Who is speaking is announced, not read out as a label.** A PC's line is just
+the line — their own voice is the attribution, and always was. Everyone else is
+introduced by the narrator first, in the DM's voice and as a clip of its own:
+"Goblin Sneak." and then, in the goblin's voice, "I'll gut you." The name used
+to be glued to the front of the words instead, which meant it was spoken by the
+monster through its own distortion, with a colon in the middle of the sentence
+that the engine reads as a label. The name is unchanged **on screen**: the
+transcript prints it in front of every line of dialogue as it always has.
+
 A party member may state a `"gender"` — `female` or `male` — and is then dealt
 only from the voices Polly reports as that gender. It narrows who can be cast
 and nothing else: the choice within that set is the same hash as before, so a
