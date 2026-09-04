@@ -34,8 +34,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import cues as C
+
 __all__ = ["Profile", "BED", "ONESHOT", "PROFILES", "have_ffmpeg", "normalize_file",
-           "normalize_manifest", "measure_peak_db", "probe_duration", "MissingFFmpeg"]
+           "normalize_manifest", "measure_peak_db", "probe_duration", "MissingFFmpeg",
+           "duration_problem"]
 
 
 class MissingFFmpeg(RuntimeError):
@@ -233,6 +236,27 @@ def normalize_file(path: Path, profile: Profile, *, run=_run) -> dict:
     return report
 
 
+def duration_problem(cue_id: str, seconds: float) -> str:
+    """A sentence when a file is not the length its cue can use, else "".
+
+    Sources lie about this. incompetech's catalogue gives "Cowboy Sting" as
+    8 seconds and ships 54, and "Deep Noise" as 2 seconds and ships 149 — both
+    picked as stings off a seven-second audition clip, both of which would have
+    played for a minute over the table. The search window filters on the
+    claimed length; this is the only place the real one is known.
+    """
+    cue = C.CUES_BY_ID.get(cue_id)
+    if cue is None:
+        return ""
+    lo, hi = cue.dur
+    if seconds > hi:
+        return (f"{seconds:.1f}s, but a {cue.group} cue takes {lo:g}-{hi:g}s "
+                f"— it will play for {seconds / hi:.0f}x its slot")
+    if seconds < lo:
+        return f"{seconds:.1f}s, shorter than the {lo:g}s a {cue.group} cue expects"
+    return ""
+
+
 def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -> dict:
     """Normalise every file a manifest names, and record it there.
 
@@ -247,6 +271,7 @@ def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -
     manifest = json.loads(path.read_text(encoding="utf-8"))
 
     changed = 0
+    problems: list[str] = []
     for cue_id, entry in (manifest.get("cues") or {}).items():
         profile = PROFILES.get(entry.get("group") or "")
         if profile is None:
@@ -269,6 +294,19 @@ def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -
         entry["sha256"] = hashlib.sha256(final.read_bytes()).hexdigest()
         entry["normalized"] = report
         changed += 1
+
+        # The measured length, not the one the source claimed.
+        try:
+            entry["duration_s"] = round(probe_duration(final, run=run), 2)
+        except (RuntimeError, OSError):
+            entry.pop("duration_s", None)
+        else:
+            problem = duration_problem(cue_id, entry["duration_s"])
+            if problem:
+                entry["duration_warning"] = problem
+                problems.append(f"{cue_id}: {problem}")
+            else:
+                entry.pop("duration_warning", None)
         saved = report["bytes_before"] - report["bytes_after"]
         log(f"  {cue_id:<28} {profile.id} "
             f"{report['bytes_before'] // 1024} kB → {report['bytes_after'] // 1024} kB "
@@ -276,4 +314,6 @@ def normalize_manifest(out: Path, *, force: bool = False, run=_run, log=print) -
 
     path.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     log(f"normalised {changed} file(s); manifest.json updated")
+    for problem in problems:
+        log(f"  WRONG LENGTH  {problem}")
     return manifest
