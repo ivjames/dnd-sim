@@ -131,7 +131,14 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   game; how many games can be started is capped by `DND_WRITE_TOKEN` — see
   **Write access** below. `DND_TTS=0` turns it off; mock games never
   touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
-  its §6 records what Polly changed and what is still open.
+  its §6 records what Polly changed and what is still open. The monster seats
+  are the only ones that write `<amazon:effect vocal-tract-length>` and the
+  only ones routed to a second engine (standard) to do it, so a working table
+  proves nothing about them and a refused monster line is a 502 the page hides
+  by speaking that line itself: `tests/tts/test_polly_contract.py` holds every
+  document the app can emit against Amazon's published matrix, and
+  `python -m tools.polly_check` sends two real lines from the droplet, with
+  `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
 - **Writes take a token; reads never do.** `POST /api/games`, `/note`,
   `/pause`, `/resume` and `/stop` require `X-Dnd-Token` to match
   `DND_WRITE_TOKEN` (`web/auth.py`). Everything a spectator does stays
