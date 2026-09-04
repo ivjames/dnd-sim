@@ -82,31 +82,41 @@ can add another. Note the ceiling does not require a configured encounter:
 goblin_ambush lists one, for scene 1, but a `start_combat` ruling in scene 2
 would still open a second fight.
 
-A combat ends at whichever of two limits binds first: `max_rounds_per_combat`,
-or `MAX_TURNS_PER_COMBAT = 400` (`game.py:37`). Which one that is depends on
-how many creatures are in the fight, and *that* is not bounded anywhere —
-`DMAgent.adjudicate()` requires a `start_combat` encounter to name monsters
-(`agents/dm.py:272`) but never checks how many.
+### There is no worst case to compute
 
-The configured encounters are 9–10 combatants, so for them the round cap binds
-first, and nobody dying is the worst case:
+Four attempts at a ceiling for this document were each too low, and always for
+the same reason, so it is worth stating as a finding rather than a caveat: the
+engine bounds how long a game runs, but nothing bounds how much it *says*.
 
-| | combats | turns at cap | chars |
-|---|---|---|---|
-| goblin_ambush | 2 × 20 rounds × 9 | 360 | ~152,000 |
-| crypt | 2 × 25 rounds × 9–10 | 475 | ~201,000 |
-| either, DM-created encounter | 2 × 400 turns | 800 | ~340,000 |
+Bounded: turns per combat (`MAX_TURNS_PER_COMBAT = 400`, `game.py:37`), rounds
+per combat (`max_rounds_per_combat`, 20 and 25 here), combats per game
+(`max_scenes`, since a scene yields one fight either way).
 
-The last row is the real structural ceiling: a DM-created fight of ~16–20
-creatures hits the 400-turn cap before its round cap, and `max_scenes` is all
-that stops there being a third. **~340,000 characters is $5.10 on Aura-1 and
-$34 on ElevenLabs v3.**
+Not bounded:
 
-Against 30,000 measured, that is a 5–11× spread between a typical game and a
-permitted one. Which is the argument for putting narration in the ledger before
-turning any of this on rather than after: `budget_usd` is the only thing in the
-system that would stop it, and today it cannot see character-priced spend at
-all.
+- **Encounter size.** `DMAgent.adjudicate()` requires a `start_combat`
+  encounter to name monsters (`agents/dm.py:272`) and never checks how many.
+- **Carry-over.** Nothing removes combatants between fights, and
+  `_spawn_monsters()` adds to whoever is still standing. Under the doc's own
+  "nobody dies" case crypt's second fight is 4 party + 6 survivors + 5 new =
+  15 combatants, not 9 — so 25×10 + 25×15 = 625 turns where I wrote 475.
+- **Characters per turn.** ~420 is a measured average over two mock games, not
+  a maximum. Each prose event has a word ceiling; the number of events in a
+  turn does not.
+- **The spawn line itself.** `_spawn_monsters()` emits `Enemies appear: ` plus
+  every living enemy's name as a `system` event (`game.py:726`), which
+  `speech.js` speaks with mechanics on — so an unbounded monster count is
+  unbounded spoken text before the turn loop even starts.
+
+Scaling the turn caps at the observed 420 chars/turn gives ~340,000 characters
+for a game that fills them — $5.10 on Aura-1, **$34 on ElevenLabs v3**, and
+11× the measured 30,000. Treat that as a lower bound on the bad case, not a
+ceiling.
+
+Which settles the design question the estimate exists to answer. Nothing in the
+configuration bounds narration spend, so `budget_usd` has to — and today the
+ledger cannot see character-priced cost at all. **Wire narration into the
+budget before turning it on, not after.**
 
 ## 2. Rates
 
@@ -145,10 +155,9 @@ At the central 30,000 chars/game, and again with mechanics muted (22,000).
 | ElevenLabs Flash | $1.50 | $1.10 | $2.61 |
 | ElevenLabs v3 | $3.00 | $2.20 | $5.22 |
 
-At the ceilings in §1 the same games cost far more: goblin_ambush's 152,000
-chars is $2.28 on Aura-1 and $15.20 on ElevenLabs v3, crypt's 201,000 is $3.02
-and $20.10, and a DM-created fight running to the 400-turn cap in both scenes
-is **$5.10 and $34.00**. Budget for the ceiling, not the average.
+A game that fills the engine's turn caps is ~340,000 characters (§1) — $5.10
+on Aura-1 and **$34.00 on ElevenLabs v3** — and that is a lower bound on the
+bad case, not a ceiling. Budget for it anyway.
 
 Monthly, at 30,000 chars/game:
 
