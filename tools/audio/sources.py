@@ -130,7 +130,14 @@ class Source:
         self.client = client
         self.credential = credential
 
-    def search(self, query: str, *, dur: tuple[float, float], limit: int) -> list[Candidate]:
+    def search(self, query: str, *, dur: tuple[float, float], limit: int,
+               group: str = "") -> list[Candidate]:
+        """Candidates for one query string.
+
+        `group` is the cue's group, for a source whose answer should differ:
+        the Archive uses it to ask for field recordings rather than songs when
+        the cue wants ambience. Sources that have one kind of thing ignore it.
+        """
         raise NotImplementedError
 
     def _json(self, url: str, params: dict, headers: dict | None = None) -> dict:
@@ -148,7 +155,8 @@ class FreesoundSource(Source):
     # Freesound license names, as its `filter` expects them.
     FILTER_LICENSES = '("Creative Commons 0" OR "Attribution" OR "Attribution NonCommercial")'
 
-    def search(self, query: str, *, dur: tuple[float, float], limit: int) -> list[Candidate]:
+    def search(self, query: str, *, dur: tuple[float, float], limit: int,
+               group: str = "") -> list[Candidate]:
         lo, hi = dur
         payload = self._json(
             self.API,
@@ -191,7 +199,8 @@ class JamendoSource(Source):
     needs = "JAMENDO_CLIENT_ID"
     API = "https://api.jamendo.com/v3.0/tracks/"
 
-    def search(self, query: str, *, dur: tuple[float, float], limit: int) -> list[Candidate]:
+    def search(self, query: str, *, dur: tuple[float, float], limit: int,
+               group: str = "") -> list[Candidate]:
         lo, hi = dur
         payload = self._json(self.API, {
             "client_id": self.credential,
@@ -281,7 +290,8 @@ class IncompetechSource(Source):
                         ("title", "description", "feel", "instruments")
                         ).lower() + " " + self.GENRES.get(str(p.get("genre")), "").lower()
 
-    def search(self, query: str, *, dur: tuple[float, float], limit: int) -> list[Candidate]:
+    def search(self, query: str, *, dur: tuple[float, float], limit: int,
+               group: str = "") -> list[Candidate]:
         words = [w for w in (w.strip(",.").lower() for w in query.split())
                  if len(w) > 2 and w not in self.STOP]
         scored: list[tuple[int, str, dict, float]] = []
@@ -341,17 +351,37 @@ class ArchiveSource(Source):
     # the licence filter goes into the query rather than throwing away a whole
     # page of results afterwards.
     LICENSE_Q = r"(licenseurl:*publicdomain* OR licenseurl:*licenses\/by\/* OR licenseurl:*licenses\/by-sa\/*)"
+    # A search for "cave ambience" over all of the Archive's audio returns
+    # songs about caves. Ambience wants recordings *of* places, so ask the
+    # part of the Archive that holds them — radio aporee alone is thousands of
+    # CC-licensed field recordings.
+    FIELD_Q = '(subject:"field recording" OR collection:aporee)'
+    FIELD_GROUPS = ("ambience",)
 
-    @staticmethod
-    def _terms(query: str) -> str:
+    # Words that match most of the corpus and so rank nothing. "ambience" is
+    # in every field recording's description, so ORing it in returns the whole
+    # collection in its own order and the place word does no work.
+    STOP = frozenset({"ambience", "ambient", "sound", "sounds", "audio", "loop",
+                      "recording", "field", "room", "tone", "background", "the"})
+
+    @classmethod
+    def _terms(cls, query: str) -> str:
         """OR the words: the Archive ANDs them by default, and a five-word
-        search phrase like "cave ambience water drips" then finds nothing."""
-        words = list(dict.fromkeys(w for w in query.split() if len(w) > 2))
+        search phrase like "cave ambience water drips" then finds nothing.
+
+        Generic words are dropped first — what is left is the part that picks
+        one recording out rather than all of them.
+        """
+        words = list(dict.fromkeys(
+            w for w in (w.strip(",.").lower() for w in query.split())
+            if len(w) > 2 and w not in cls.STOP))
         return " OR ".join(words) or query
 
-    def search(self, query: str, *, dur: tuple[float, float], limit: int) -> list[Candidate]:
+    def search(self, query: str, *, dur: tuple[float, float], limit: int,
+               group: str = "") -> list[Candidate]:
+        scope = f"{self.FIELD_Q} AND " if group in self.FIELD_GROUPS else ""
         payload = self._json(self.SEARCH, {
-            "q": f"mediatype:audio AND ({self._terms(query)}) AND {self.LICENSE_Q}",
+            "q": f"mediatype:audio AND {scope}({self._terms(query)}) AND {self.LICENSE_Q}",
             "fl[]": ["identifier", "title", "creator", "licenseurl"],
             "rows": self.ITEMS_PER_QUERY,
             "page": 1,
@@ -370,29 +400,40 @@ class ArchiveSource(Source):
                 meta = self._json(f"{self.META}{ident}", {})
             except httpx.HTTPError:
                 continue
+            # An item holds the same recording in several encodings. Take the
+            # best one and move on: two formats of one field recording are one
+            # candidate, and offering both wastes an audition.
+            best = None
             for f in meta.get("files") or []:
-                if f.get("format") not in self.AUDIO_FORMATS:
+                fmt = f.get("format")
+                if fmt not in self.AUDIO_FORMATS:
                     continue
                 length = _seconds(f.get("length"))
                 if length is not None and not (dur[0] <= length <= dur[1]):
                     continue
-                url = f"https://archive.org/download/{ident}/{_quote(f['name'])}"
-                out.append(Candidate(
-                    source=self.name,
-                    source_id=f"{ident}/{f['name']}",
-                    title=f.get("title") or f["name"],
-                    author=_first(doc.get("creator")) or "",
-                    license=lic,
-                    license_url=_first(doc.get("licenseurl")) or "",
-                    page_url=f"https://archive.org/details/{ident}",
-                    preview_url=url,
-                    download_url=url,
-                    duration=length,
-                    tags=[],
-                    extra={"item": ident, "format": f.get("format"), "bytes": _int(f.get("size"))},
-                ))
-                if len(out) >= limit:
-                    return out
+                rank = self.AUDIO_FORMATS.index(fmt)
+                if best is None or rank < best[0]:
+                    best = (rank, f, length)
+            if best is None:
+                continue
+            _, f, length = best
+            url = f"https://archive.org/download/{ident}/{_quote(f['name'])}"
+            out.append(Candidate(
+                source=self.name,
+                source_id=f"{ident}/{f['name']}",
+                title=doc.get("title") or f.get("title") or f["name"],
+                author=_first(doc.get("creator")) or "",
+                license=lic,
+                license_url=_first(doc.get("licenseurl")) or "",
+                page_url=f"https://archive.org/details/{ident}",
+                preview_url=url,
+                download_url=url,
+                duration=length,
+                tags=[],
+                extra={"item": ident, "format": f.get("format"), "bytes": _int(f.get("size"))},
+            ))
+            if len(out) >= limit:
+                return out
         return out
 
 
