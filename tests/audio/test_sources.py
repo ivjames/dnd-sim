@@ -203,12 +203,89 @@ def test_archive_lengths_parse(raw, secs):
 def test_build_sources_skips_what_it_has_no_key_for():
     with client_for(lambda r: httpx.Response(200, json={})) as c:
         live, skipped = S.build_sources(c, env={})
-        assert [s.name for s in live] == ["archive"]
+        assert [s.name for s in live] == ["incompetech", "archive"], "the keyless two"
         assert any("FREESOUND_API_KEY" in s for s in skipped)
         assert any("JAMENDO_CLIENT_ID" in s for s in skipped)
 
         live, _ = S.build_sources(c, env={"FREESOUND_API_KEY": "k", "JAMENDO_CLIENT_ID": "c"})
-        assert [s.name for s in live] == ["freesound", "jamendo", "archive"]
+        assert [s.name for s in live] == ["freesound", "jamendo", "incompetech", "archive"]
 
         live, _ = S.build_sources(c, env={"FREESOUND_API_KEY": "k"}, only=("freesound",))
         assert [s.name for s in live] == ["freesound"]
+
+
+INCOMPETECH_CATALOG = [
+    {"uuid": "1", "title": "Crypt of the Necrodancer", "filename": "Crypt Deep.mp3",
+     "length": "00:03:20", "instruments": "Strings, Choir", "genre": "10", "bpm": "70",
+     "description": "Slow dread under a stone ceiling.", "feel": "Dark, Eerie",
+     "isrc": "USUAN1100001"},
+    {"uuid": "2", "title": "Bright Wedding", "filename": "Bright Wedding.mp3",
+     "length": "00:02:10", "instruments": "Ukulele", "genre": "22", "bpm": "120",
+     "description": "Cheerful nonsense.", "feel": "Bright, Bouncy", "isrc": "USUAN1100002"},
+    {"uuid": "3", "title": "Discovery Hit", "filename": "Discovery Hit.mp3",
+     "length": "00:00:06", "instruments": "Brass", "genre": "23", "bpm": "0",
+     "description": "A short dark hit.", "feel": "Epic, Intense", "isrc": "USUAN1100003"},
+]
+
+
+def incompetech_client(calls=None):
+    def handler(request):
+        if calls is not None:
+            calls.append(str(request.url))
+        return httpx.Response(200, json=INCOMPETECH_CATALOG)
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_incompetech_ranks_by_the_words_that_matter():
+    with incompetech_client() as c:
+        got = S.IncompetechSource(c).search("dark dread music loop", dur=(45, 420), limit=10)
+    assert [x.title for x in got] == ["Crypt of the Necrodancer"], "the ukulele is not dark"
+    cand = got[0]
+    assert cand.license == "by"
+    assert cand.author == "Kevin MacLeod"
+    assert cand.duration == 200
+    assert cand.page_url.endswith("isrc=USUAN1100001")
+    assert cand.download_url == (
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Crypt%20Deep.mp3")
+    assert "Dark" in cand.tags and "Horror" in cand.tags
+
+
+def test_incompetech_honours_the_cue_duration_window():
+    """A six-second sting must not surface for a music bed, or the reverse."""
+    with incompetech_client() as c:
+        src = S.IncompetechSource(c)
+        beds = [x.title for x in src.search("dark epic", dur=(45, 420), limit=10)]
+        stings = [x.title for x in src.search("dark epic", dur=(0.4, 8), limit=10)]
+    assert "Discovery Hit" not in beds
+    assert stings == ["Discovery Hit"]
+
+
+def test_incompetech_ignores_words_that_match_the_whole_catalogue():
+    with incompetech_client() as c:
+        assert S.IncompetechSource(c).search("music loop track", dur=(0, 999), limit=10) == []
+
+
+def test_incompetech_fetches_its_catalogue_once():
+    calls = []
+    with incompetech_client(calls) as c:
+        src = S.IncompetechSource(c)
+        src.search("dark", dur=(0, 999), limit=5)
+        src.search("bright", dur=(0, 999), limit=5)
+    assert len(calls) == 1, "the catalogue is fetched per run, not per query"
+
+
+def test_incompetech_needs_no_credential():
+    with incompetech_client() as c:
+        live, _ = S.build_sources(c, env={})
+        assert "incompetech" in [s.name for s in live]
+
+
+def test_incompetech_strips_the_stray_newlines_in_the_catalogue():
+    """Real rows carry trailing newlines; one in a filename breaks the URL."""
+    row = dict(INCOMPETECH_CATALOG[0], title="Mesmerizing Galaxy\n",
+               filename="Mesmerizing Galaxy.mp3\n", isrc="USUAN1100009\n")
+    with client_for(lambda r: httpx.Response(200, json=[row])) as c:
+        cand = S.IncompetechSource(c).search("dark", dur=(0, 999), limit=1)[0]
+    assert cand.title == "Mesmerizing Galaxy"
+    assert cand.download_url.endswith("Mesmerizing%20Galaxy.mp3")
+    assert cand.page_url.endswith("isrc=USUAN1100009")

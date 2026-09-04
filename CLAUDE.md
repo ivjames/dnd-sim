@@ -158,7 +158,10 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
 - **Audio is sourced, not yet played.** `tools/audio/` (docs: `AUDIO.md`) is a
   dev tool — cue table, library search, a self-contained picker page, a fetcher
   that writes `audio/manifest.json` + `CREDITS.md`. It sits outside the layering
-  and nothing on the runtime path imports it; `audio/` is gitignored. The cue
+  and nothing on the runtime path imports it. The picked audio, manifest and
+  credits are **committed** (a deploy hard-resets the checkout, so untracked
+  files would not survive); only `audio/candidates.json` and `audio/picker.html`
+  are ignored, both re-made by one `harvest`. The cue
   table is held to `engine.events.EVENT_KINDS` by `tests/audio`, so a new event
   kind fails the suite until someone decides whether it makes a noise. Only
   public-domain and attribution licences are accepted, and CC BY credits are an

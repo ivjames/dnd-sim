@@ -231,3 +231,48 @@ def test_a_config_survives_json(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(full_config()))
     assert F.validate_config(json.loads(path.read_text())) == []
+
+
+# ------------------------------------------------------------- credit lines
+
+def test_the_credit_line_is_the_sentence_you_paste():
+    assert F.credit_line({
+        "title": "Crypt Deep", "author": "Kevin MacLeod", "source": "incompetech",
+        "license": "by", "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    }) == ('"Crypt Deep" Kevin MacLeod (incompetech.com) — Licensed under '
+           "Creative Commons: By Attribution 4.0 — https://creativecommons.org/licenses/by/4.0/")
+
+    assert F.credit_line({
+        "title": "Cave Loop", "author": "Truman", "source": "archive",
+        "license": "by-sa", "license_url": "http://creativecommons.org/licenses/by-sa/3.0/",
+    }) == ('"Cave Loop" by Truman via archive — CC BY-SA — '
+           "http://creativecommons.org/licenses/by-sa/3.0/")
+
+
+def test_a_credit_line_survives_a_missing_licence_url():
+    line = F.credit_line({"title": "T", "author": "A", "source": "freesound", "license": "by"})
+    assert line.endswith("https://creativecommons.org/licenses/by/4.0/")
+
+
+def test_credits_carry_a_paste_block_for_what_needs_crediting(tmp_path):
+    doc = config(sfx_dice=assignment(license="cc0", title="Dice"),
+                 music_combat=assignment(license="by", title="Fight", author="Kevin MacLeod",
+                                         source="incompetech"),
+                 music_explore=assignment(license="by", title="Fight", author="Kevin MacLeod",
+                                          source="incompetech"))
+    with audio_client() as client:
+        manifest = F.fetch_all(doc, tmp_path, client=client, log=lambda *_: None)
+    text = F.write_credits(manifest, tmp_path).read_text()
+
+    block = text.split("```")[1]
+    assert '"Fight" Kevin MacLeod (incompetech.com)' in block
+    assert block.count("Fight") == 1, "one line per track, not per cue that uses it"
+    assert "Dice" not in block, "CC0 needs no credit line"
+    assert "`sfx_dice`" in text, "but it is still recorded below"
+
+
+def test_no_paste_block_when_everything_is_public_domain(tmp_path):
+    with audio_client() as client:
+        manifest = F.fetch_all(config(sfx_dice=assignment()), tmp_path,
+                               client=client, log=lambda *_: None)
+    assert "```" not in F.write_credits(manifest, tmp_path).read_text()

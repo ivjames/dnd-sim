@@ -360,7 +360,8 @@ transport and the speech calls are in `app.js`.
 
 There is a tool for picking the game's music, ambience, stings, swells and
 effects: `python -m tools.audio harvest` searches the openly-licensed libraries
-(Freesound, Jamendo, the Internet Archive) for every one of the 55 cues,
+(Freesound, Jamendo, incompetech, the Internet Archive) for every one of the 55
+cues — two of those need no key at all —
 `audio/picker.html` is a self-contained preview screen you audition and assign
 in, and `python -m tools.audio fetch` turns what you picked into files, a
 `manifest.json` carrying each cue's event-match rule, and a `CREDITS.md`. Only

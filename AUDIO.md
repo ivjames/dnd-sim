@@ -16,19 +16,33 @@ open audio/picker.html                  # audition, assign, tune, Copy configura
 .venv/bin/python -m tools.audio verify  # re-hash what was fetched
 ```
 
-`audio/` is gitignored: the picks (`config.json`) are worth keeping and are
-small enough to paste anywhere; the audio itself is not repo material.
+**The picked audio is committed.** `audio/assets/`, `manifest.json`,
+`CREDITS.md` and the `config.json` that produced them are tracked, because a
+deploy hard-resets the checkout from git and anything untracked would not
+survive one. Only two build artefacts are ignored — `candidates.json` (a search
+dump) and `picker.html` (generated from it), both re-made by one `harvest`.
+Budget for it: a five-minute music bed off incompetech is ~10 MB at source
+quality, so a full 55-cue set is a hundred-odd megabytes unless it is
+re-encoded on the way in (see "What this deliberately does not do").
 
 ## Where the audio comes from
 
-Three libraries have both a real search API and a licence field worth
-trusting, so those are the three the harvester queries.
+Four libraries are worth querying programmatically — three with a real search
+API and a licence field worth trusting, plus one catalogue that publishes
+itself as a JSON file.
 
 | Source | Good for | Licences | Key | Notes |
 |---|---|---|---|---|
 | [Freesound](https://freesound.org/docs/api/) | effects, stings, swells, ambience, some loops | CC0, CC BY, CC BY-NC (the harvester keeps the first two) | [free, instant](https://freesound.org/apiv2/apply/) → `FREESOUND_API_KEY` | 60 requests/min, 2000/day. Originals need OAuth2; previews do not (see below) |
 | [Jamendo](https://developer.jamendo.com/v3.0) | full-length music beds | CC, per track via `license_ccurl` | [free](https://devportal.jamendo.com/) → `JAMENDO_CLIENT_ID` | Their API terms govern the free tier — read them before anything commercial |
+| [incompetech](https://incompetech.com/music/royalty-free/music.html) | music beds, and a Stings genre | CC BY 4.0, all of it | none | Kevin MacLeod's 1400-piece catalogue, published whole as [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json) — fetched once per run and searched in memory, so it is one request and no rate limit. Its `feel` vocabulary is *Dark, Eerie, Mysterious, Unnerving, Somber, Epic, Action, Suspenseful*, which is this game's mood list almost exactly |
 | [Internet Archive](https://archive.org/advancedsearch.php) | music and long ambience | whatever the uploader declared; the query keeps only public-domain / BY / BY-SA | none | Works with no credentials at all, which is why it is here. The metadata is user-supplied and the hit rate is poor — a fallback, not a first choice |
+
+**Why a CC BY catalogue is in the default set:** the `sheep` repo sourced two
+rounds of CC0 music for its game and *neither survived audition* — the CC0 pool
+is thin, and it switched to CC BY. That lesson is baked in here: incompetech is
+keyless, so it is queried by default, and the credit it requires is generated
+for you rather than left as homework.
 
 Everything else worth raiding has no search API. The picker's **Add by URL**
 form takes a direct audio link plus title, author and licence, so these are one
@@ -42,8 +56,10 @@ paste each rather than unreachable:
   under the Pixabay Content License. Their public API covers images and video
   only, so music is a manual paste.
 - [ccMixter](http://dig.ccmixter.org/) — CC music, mostly BY / BY-NC.
-- [Incompetech](https://incompetech.com/music/royalty-free/) — CC BY, so
-  usable, but the credit is mandatory.
+- [Audionautix](https://audionautix.com/) (Jason Shaw, CC BY) — scrapable but
+  not wired in: its categories are acoustic, bluegrass, country, folk, jazz,
+  lo-fi and so on, with nothing orchestral, cinematic or horror. It is the
+  right library for `sheep` and the wrong one for a dungeon.
 - [Sonniss GDC bundles](https://sonniss.com/gameaudiogdc) — large royalty-free
   SFX bundles; read the licence that ships inside each bundle.
 - [Tabletop Audio](https://tabletopaudio.com/) — built for exactly this job,
@@ -60,8 +76,18 @@ you have a reason to take one anyway, `fetch --allow by-nc` says so out loud.
 
 `fetch` writes `audio/CREDITS.md` from the manifest, grouped by licence, listing
 every asset with author, source and page. Anything under a BY or BY-SA heading
-has to be credited wherever the audio plays — keep that file next to the assets,
-and put its contents somewhere a listener can reach before this ships.
+has to be credited wherever the audio plays.
+
+The file opens with a **paste block**: the finished credit sentences, one per
+track, deduplicated across cues, in each source's own required wording —
+
+```
+"Curse of the Scarab" Kevin MacLeod (incompetech.com) — Licensed under Creative Commons: By Attribution 4.0 — https://creativecommons.org/licenses/by/4.0/
+```
+
+That block is the deliverable, not a list to write credits *from*: attribution
+is only done when a listener can read it, so it goes on the credits panel as
+it stands.
 
 Nothing here touches game *content* licensing: SRD 5.1 (CC-BY-4.0) still governs
 what the rules engine knows, and audio licences are a separate obligation.
@@ -182,6 +208,12 @@ redone.
   beds cross-fade on the client or a mixer runs server-side).
 - **No transcoding, normalising or trimming of the files.** The knobs are
   recorded as intent, not applied — no ffmpeg dependency, and a player can honour
-  them at runtime.
+  them at runtime. This is the open question, and `sheep` answered it the other
+  way: it normalised music to −16 LUFS (EBU R128, true peak −1.5 dB) at ~100 kbps
+  VBR, and effects to −0.7 dBFS peak with 8 ms edge fades, silence-trimmed, mono
+  64 kbps. Fifty-five cues pulled from four libraries will not match each other
+  in loudness, and a per-cue gain set by ear is a worse version of the same fix
+  — with the added benefit that re-encoding is what keeps the committed set from
+  being a couple of hundred megabytes.
 - **No original-quality Freesound downloads.** That needs the OAuth2 flow;
   previews are what is fetched.

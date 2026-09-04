@@ -28,16 +28,20 @@ __all__ = ["harvest", "select_cues", "write_candidates", "SOURCE_GROUPS", "MIN_I
 
 # Which source is worth asking for which kind of cue. Jamendo is full tracks,
 # so it never answers a two-second sting; the Archive's short-file metadata is
-# too unreliable to be worth the request.
+# too unreliable to be worth the request. incompetech carries a Stings genre
+# alongside the beds, but it is a music catalogue and never a door creak.
 SOURCE_GROUPS = {
     "freesound": ("music", "ambience", "sting", "swell", "sfx"),
     "jamendo": ("music",),
+    "incompetech": ("music", "ambience", "sting", "swell"),
     "archive": ("music", "ambience"),
 }
 
 # Seconds between calls, per source. Freesound allows 60/minute and answers
 # a 429 when pushed; the others are unmetered but not free to us either.
-MIN_INTERVAL = {"freesound": 1.1, "jamendo": 0.3, "archive": 0.3}
+# incompetech is zero because it fetches its catalogue once and then searches
+# in memory — the per-query cost is nothing.
+MIN_INTERVAL = {"freesound": 1.1, "jamendo": 0.3, "incompetech": 0.0, "archive": 0.3}
 
 
 def select_cues(*, groups: tuple[str, ...] = (), ids: tuple[str, ...] = (),
