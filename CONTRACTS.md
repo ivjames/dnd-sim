@@ -1335,7 +1335,11 @@ reads the environment mid-request.
    credential with no way out short of clearing site data; it is hidden only
    where the server has no token set. `renderWriteAccess()` never opens or
    closes that panel, so an auth answer arriving while someone has it open does
-   not shut it. `#ctl-note` stays outside the hidden wrapper: load failures are
+   not shut it. Every `/api/auth` probe carries a generation number
+   (`S.authGen`, the same rule `loadGen` enforces for a game load) and Forget
+   bumps it: Forget is deliberately not disabled while a probe is in flight —
+   it is the one control never worth taking away — so a stale answer would
+   otherwise re-persist the token the user had just cleared. `#ctl-note` stays outside the hidden wrapper: load failures are
    reported there and every spectator needs to see those. A 401 or 503 from any
    write re-renders the gate.
 

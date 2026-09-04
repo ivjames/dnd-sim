@@ -366,8 +366,12 @@ def test_a_server_with_no_token_offers_nothing_to_unlock():
 
 
 def submit(*, token: str, authed: bool, typed: str, answer: dict | None,
-           fail: str = "") -> dict:
-    """Run the real submitUnlock() against a stubbed `/api/auth` answer."""
+           fail: str = "", forget: bool = False) -> dict:
+    """Run the real submitUnlock() against a stubbed `/api/auth` answer.
+
+    With `forget=True` the probe is slow and Forget is pressed while it is in
+    flight, which is the race the generation counter exists for.
+    """
     script = """
     const IN = JSON.parse(process.argv[1]);
     const els = {};
@@ -375,21 +379,27 @@ def submit(*, token: str, authed: bool, typed: str, answer: dict | None,
       els[id] = { hidden: null, textContent: '', value: '', disabled: false };
     els['ul-token'].value = IN.typed;
     const $ = (id) => { if (!els[id]) throw new Error('no such element: ' + id); return els[id]; };
-    const S = { writes: 'token', token: IN.token, authed: IN.authed };
+    const S = { writes: 'token', token: IN.token, authed: IN.authed, authGen: 0 };
     let stored = IN.token;
     const tokenStore = (v) => { stored = v; };
     let renders = 0;
     const renderWriteAccess = () => { renders++; };
+    // A slow probe when the race is being exercised, so Forget lands first.
+    const settle = (fn) => new Promise((res, rej) =>
+      setTimeout(() => fn(res, rej), IN.forget ? 15 : 0));
     const api = () => IN.fail
-      ? Promise.reject(new Error(IN.fail))
-      : Promise.resolve(IN.answer);
+      ? settle((res, rej) => rej(new Error(IN.fail)))
+      : settle((res) => res(IN.answer));
+    %s
     %s
     submitUnlock({ preventDefault() {} });
+    if (IN.forget) forgetToken();
     setTimeout(() => process.stdout.write(
-      JSON.stringify({ S, stored, els, renders })), 25);
-    """ % function_source("submitUnlock")
+      JSON.stringify({ S, stored, els, renders })), 60);
+    """ % (function_source("submitUnlock"), function_source("forgetToken"))
     arg = json.dumps(
-        {"token": token, "authed": authed, "typed": typed, "answer": answer, "fail": fail}
+        {"token": token, "authed": authed, "typed": typed, "answer": answer,
+         "fail": fail, "forget": forget}
     )
     proc = subprocess.run(
         ["node", "-e", script, arg], capture_output=True, text=True, timeout=60
@@ -451,3 +461,43 @@ def test_an_empty_submission_does_not_touch_the_stored_token():
     assert out["S"]["authed"] is True
     assert out["renders"] == 0
     assert "Forget" in out["els"]["ul-error"]["textContent"]
+
+
+@needs_node
+def test_forget_wins_a_race_with_an_accepted_probe():
+    """Forget is deliberately not disabled while `/api/auth` is in flight — it
+    is the one control you never want taken away — so it can land mid-probe.
+    The accepted branch calls `tokenStore(value)`, which without the guard
+    writes the just-cleared token straight back into localStorage on a browser
+    whose user had asked for it gone."""
+    out = submit(token="", authed=False, typed="good", answer=ACCEPTED, forget=True)
+    assert out["stored"] == ""
+    assert out["S"]["token"] == ""
+    assert out["S"]["authed"] is False
+
+
+@needs_node
+def test_forget_wins_a_race_with_a_rejected_probe():
+    """The rejected branch restores `previous`/`wasAuthed`, which after a
+    Forget is a credential the user has just discarded."""
+    out = submit(token="good", authed=True, typed="wrong", answer=REJECTED, forget=True)
+    assert out["stored"] == ""
+    assert out["S"]["token"] == ""
+    assert out["S"]["authed"] is False
+
+
+@needs_node
+def test_forget_wins_a_race_with_a_failed_probe():
+    out = submit(token="good", authed=True, typed="maybe", answer=None,
+                 fail="offline", forget=True)
+    assert out["stored"] == ""
+    assert out["S"]["token"] == ""
+    assert out["S"]["authed"] is False
+
+
+@needs_node
+def test_a_stale_probe_does_not_leave_unlock_disabled():
+    """The button is re-enabled outside the guard: a superseded probe must not
+    kill the next attempt."""
+    out = submit(token="", authed=False, typed="good", answer=ACCEPTED, forget=True)
+    assert out["els"]["ul-save"]["disabled"] is False
