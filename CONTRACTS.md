@@ -1579,13 +1579,19 @@ about a person recorded to serve a two-item voice list.
    in from that key would run the mapping backwards, which is the inference
    this amendment exists to stop making.
 
-5. **Casting is unchanged; the clips are not.** `she/her` narrows exactly as
+5. **Casting is unchanged, and so is the bill.** `she/her` narrows exactly as
    `female` did and the hash within the narrowed set is untouched, so every
-   converted character keeps the voice it had. But `config_id()` hashes
-   `voices.py`'s own source (§ narration, `source_fingerprint`), and this
-   commit changes that file — so every cached clip is paid for once more, as it
-   was when the age amendment landed. `DND_TTS_MAX_USD` and each game's own
-   budget still bound it.
+   converted character keeps the voice it had — and the disk cache key is
+   `(engine, voice id, rendered SSML)`, with no fingerprint in it, so every
+   clip already paid for is still a hit. What does move is `config_id()`: it
+   hashes `voices.py`'s own source (§ narration, `source_fingerprint`) and this
+   commit changes that file, so the `&v=` in every clip URL changes and each
+   browser re-fetches its copies once. Those re-fetches are served from
+   `data/tts` and cost nothing at Polly. This is *not* the age amendment's §4,
+   where the casting itself changed and the orphaned clips genuinely were
+   re-synthesized; the only re-spend here would be for a config that states
+   `they/them` beside a legacy `gender`, and no config could state `pronouns`
+   before this commit.
 
 6. **The browser fallback is unaffected.** `SpeechSynthesisVoice` reports no
    gender and no age in any browser, so `speech.js` casts as it always did.

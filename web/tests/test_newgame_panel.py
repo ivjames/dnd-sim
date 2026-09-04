@@ -96,6 +96,45 @@ def test_every_pronoun_the_panel_offers_is_one_the_server_reads():
     }
 
 
+def test_a_row_still_showing_the_config_is_not_written_back():
+    """A select can only hold a trimmed string.
+
+    So writing an unchanged row back would rewrite `" they/them "`, and turn a
+    `pronouns` that JSON gave as a list or an object into "[object Object]" —
+    a config nobody touched, corrupted by opening the panel. The write is
+    guarded on the select differing from what the config already says.
+    """
+    js = read(APP_JS)
+    m = re.search(r"function applyPartySeats\((.+?)\n  \}", js, re.S)
+    assert m
+    assert "pro.value !== pronounText(member.pronouns)" in m.group(1)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_guard_holds_for_every_shape_a_config_can_state():
+    """The guard is only sound if the select can always hold what a stated
+    `pronouns` renders as — otherwise a row that looks unchanged writes."""
+    js = read(APP_JS)
+    block = re.search(r"(var PRONOUN_CHOICES = .*?function pronounOptions\(.*?\n  \})", js, re.S)
+    assert block, "the panel's pronoun reader is no longer where this test can find it"
+    script = block.group(1) + """
+var said = JSON.parse(process.argv[1]);
+process.stdout.write(JSON.stringify(said.map(function (x) {
+  var text = pronounText(x), opts = pronounOptions(x);
+  // the select's value is `text`, and it can only hold it if it is offered
+  return [text, !text || opts.indexOf(text) >= 0, pronounText(text) === text];
+})));
+"""
+    corpus = ["she/her", "He/Him", " they/them ", "ze/hir", "", "   ", None,
+              ["he", "him"], {"subject": "she"}, 42, True, "SHE/HER", "she/they"]
+    proc = subprocess.run(["node", "-e", script, json.dumps(corpus)],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    for said, (text, offered, stable) in zip(corpus, json.loads(proc.stdout)):
+        assert offered, (said, text, "the select cannot hold what the row shows")
+        assert stable, (said, text, "the rendered text is not its own answer")
+
+
 def test_a_config_that_states_something_else_keeps_it_verbatim():
     """The three offered are not a taxonomy of who a character may be. A
     scenario that states a set the panel does not list gets that set as its own

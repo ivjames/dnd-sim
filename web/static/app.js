@@ -1983,13 +1983,19 @@
   var PRONOUN_CHOICES = ['she/her', 'he/him', 'they/them'];
   var PRONOUN_UNSTATED = '— not stated —';
 
+  // What a stated `pronouns` looks like in a select: an option value is a
+  // string, and a config's is whatever JSON held.
+  function pronounText(said) {
+    return String(said === null || said === undefined ? '' : said).trim();
+  }
+
   // What this seat's select offers: the three above, plus whatever the config
   // already says if that is something else. A config's own spelling wins where
-  // the two differ only in case ("He/Him"), so opening the panel and touching
-  // nothing cannot restate a character's pronouns on submit.
+  // the two differ only in case ("He/Him"), so the row shows the character as
+  // written rather than a tidied-up version of it.
   function pronounOptions(said) {
     var opts = PRONOUN_CHOICES.slice();
-    var s = String(said === null || said === undefined ? '' : said).trim();
+    var s = pronounText(said);
     if (!s) return opts;
     var at = -1;
     opts.forEach(function (o, i) { if (o.toLowerCase() === s.toLowerCase()) at = i; });
@@ -2026,8 +2032,7 @@
         o.value = said;
         pro.appendChild(o);
       });
-      pro.value = String(member.pronouns === null || member.pronouns === undefined
-        ? '' : member.pronouns).trim();
+      pro.value = pronounText(member.pronouns);
       row.appendChild(pro);
 
       var sel = el('select');
@@ -2054,11 +2059,18 @@
   // question, and leaving both would leave the config arguing with itself.
   // Leaving the row unstated touches neither key: an answer nobody gave is not
   // an answer to write down.
+  //
+  // A row still showing the config's own answer is not written back AT ALL,
+  // rather than written back as the string the select holds. The select can
+  // only hold a trimmed string, so re-stating one would rewrite `" they/them "`
+  // and turn a `pronouns` that JSON gave as a list or an object into
+  // "[object Object]" — a config nobody touched, quietly corrupted by opening
+  // the panel.
   function applyPartySeats(party) {
     (party || []).forEach(function (member, i) {
       if (!member || typeof member !== 'object') return;
       var pro = $('ng-pronouns-' + i);
-      if (pro) {
+      if (pro && pro.value !== pronounText(member.pronouns)) {
         if (pro.value) { member.pronouns = pro.value; delete member.gender; }
         else delete member.pronouns;
       }

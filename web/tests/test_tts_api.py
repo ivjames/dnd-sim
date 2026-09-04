@@ -234,6 +234,32 @@ def test_a_legacy_gender_is_still_read_and_stated_pronouns_win(tts_client, sampl
     assert voice("pc_3") == cast_for("pc_3", STANDARD_ENGLISH, "Brian").voice_id
 
 
+def test_converting_a_config_to_pronouns_costs_nothing(tts_client, tts, sample_config):
+    """The claim the migration rests on, checked rather than asserted.
+
+    `she/her` resolves to the same pool constraint `female` did, so the cast is
+    the same voice and the SSML is the same document — and the disk cache key
+    is `(engine, voice id, SSML)` with no config fingerprint in it. So a
+    converted scenario's clips are still hits, and nothing is re-synthesized.
+    A change that quietly re-bought every clip a running table had already paid
+    for would be a real cost, not a cosmetic one.
+    """
+    line = "The cart still smoulders."
+    member = {"id": "pc_1", "name": "Vessa", "race": "Halfling (Lightfoot)",
+              "klass": "Rogue", "level": 3}
+
+    was = create(tts_client, dict(sample_config, party=[dict(member, gender="female")]))["id"]
+    before = tts_client.get(speak_url(was, key="pc_1", text=line))
+    assert before.status_code == 200 and len(tts.calls) == 1
+
+    now = create(tts_client, dict(sample_config, party=[dict(member, pronouns="she/her")]))["id"]
+    after = tts_client.get(speak_url(now, key="pc_1", text=line))
+    assert after.status_code == 200
+    assert after.headers["X-Dnd-Voice"] == before.headers["X-Dnd-Voice"]
+    assert after.headers["ETag"] == before.headers["ETag"]
+    assert len(tts.calls) == 1, "the converted config paid Polly for a clip it already had"
+
+
 def test_the_caller_cannot_choose_the_voice(tts_client, sample_config):
     """A voice trait is read from the game, never from the request.
 
