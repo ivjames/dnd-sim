@@ -204,8 +204,8 @@ GET  /api/games/<id>/stream?after=seq   SSE: replay then live, `event: end` on f
 POST /api/games/<id>/pause|resume|stop  → 202
 POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
-GET  /api/tts                           {"available":bool, engine, language, max_chars, price_per_million_chars}
-GET  /api/games/<id>/tts?key=&text=     audio/mpeg — one narrated line, cached and charged
+GET  /api/tts                           {"available":bool, engine, language, max_chars, price_per_million_chars, config}
+GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -285,6 +285,11 @@ as `by_role.tts` in the ledger, and a game that has spent its budget goes back
 to the browser's voices rather than quietly spending more. A whole game's
 narration is a few cents.
 
+A game that states no `budget_usd` gets `GameConfig`'s default rather than a
+blank cheque, and a zero or negative budget refuses everything — the
+orchestrator halts at `total_usd >= budget_usd`, so zero is a game already over
+rather than a game with no ceiling.
+
 A clip about to be synthesized **holds its own cost against the game** until it
 is charged or abandoned, so eight spectators asking for eight different lines
 at the same moment cannot each read the same below-budget total and each go to
@@ -295,11 +300,13 @@ served whatever the budget says**: the budget governs spend, and re-reading a
 line is not spend, so a game that has run out of money stays listenable to the
 end of its transcript.
 
-Every clip is cached on disk under `data/tts`, keyed by the words and the seat,
-so a line is paid for once however many times it is replayed — which matters,
+Every clip is cached on disk under `data/tts`, keyed by the voice and the exact
+SSML document sent, so a line is paid for once however many times it is replayed — which matters,
 because the playhead is designed to be run backwards. Deleting the cache is
-safe and costs only the re-synthesis. `DND_TTS=0` switches server voices off
-entirely; mock games never use them unless `DND_TTS=1` says so, because mock
+safe and costs only the re-synthesis. Clip URLs carry the probe's `config`
+fingerprint, so changing the engine, the language or the DM's voice retires the
+copies in every browser rather than leaving them to be replayed for a year.
+`DND_TTS=0` switches server voices off entirely; mock games never use them unless `DND_TTS=1` says so, because mock
 mode is the mode that costs nothing.
 
 ### The playhead

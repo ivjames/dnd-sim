@@ -272,8 +272,8 @@ GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>
 POST /api/games/<id>/pause | /resume | /stop
 POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
-GET  /api/tts                           {"available":bool,"engine","language","max_chars","price_per_million_chars"} — can this server render voices?
-GET  /api/games/<id>/tts?key=&text=     audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed
+GET  /api/tts                           {"available":bool,"engine","language","max_chars","price_per_million_chars","config"} — can this server render voices?
+GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line; 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
 
@@ -876,6 +876,7 @@ with the browser's voices kept as a real fallback rather than deleted.
        def voices(self) -> tuple[Voice, ...]              # DescribeVoices once, else STANDARD_ENGLISH
        def cached(self, ckey: str) -> bytes | None        # a clip already paid for
        def ssml(self, text: str, cast: Cast) -> str       # `ssml_for` at this instance's engine
+       def config_id(self) -> str                         # 12 hex over engine|language|dm_voice|roster
        def cast(self, key: str, gender: str = "") -> Cast
        def cache_key_for(self, key: str, text: str, gender: str = "") -> tuple[Cast, str]
        def synthesize(self, key: str, text: str, gender: str = "") -> TTSResult    # raises TTSError
@@ -894,10 +895,15 @@ with the browser's voices kept as a real fallback rather than deleted.
    engine spoke. `tests/tts/test_voices.py` drives `node` to assert it.
 
 3. **Two new routes** (§5 above). `GET /api/tts` is the capability probe the
-   page asks once at start-up. `GET /api/games/<id>/tts?key=&text=` returns
-   `audio/mpeg` with a strong `ETag` (the cache key) and a year-long immutable
-   `Cache-Control` — the URL names the words and the seat, so the bytes never
-   change — plus `X-Dnd-Voice`. Refusals are JSON the page can fall back from,
+   page asks once at start-up; it also returns `config`, a fingerprint of
+   everything process-level that decides a clip (engine, language, the DM's
+   voice, the roster `DescribeVoices` returned). `GET
+   /api/games/<id>/tts?key=&text=&v=<config>` returns `audio/mpeg` with a
+   strong `ETag` (the cache key) and a year-long immutable `Cache-Control`,
+   plus `X-Dnd-Voice`. `v` is a cache-buster the server ignores: the rest of
+   the URL names only the game, the seat and the words, so without it a
+   reconfigured server would leave every browser replaying the old voice out of
+   its own cache for a year. The page carries whatever the probe gave it. Refusals are JSON the page can fall back from,
    never a hang: **402** budget spent, **404** no such game, **400** nothing
    sayable or over `max_chars`, **502** Polly failed, **503** no service (or a
    mock game without `DND_TTS=1`).
@@ -937,6 +943,15 @@ with the browser's voices kept as a real fallback rather than deleted.
    game_id, usd)` — an atomic `cost_usd = cost_usd + ?`, correct against
    concurrent spectators, and safe only because nothing is writing snapshots
    over that row any more. The budget stop applies to it either way.
+
+   **An unknown budget is `GameConfig`'s default, never zero.** Zero is a real
+   value — `Game._check_budget` halts at `total_usd >= budget_usd`, so a zero
+   budget is a game already over — and a game created through the API without
+   `budget_usd` persists a config that never had the key, so after a restart
+   there is nothing in the row to read. Answering that with zero, and treating
+   zero as "no ceiling", would have removed the cap from exactly the games that
+   never set one. `_budget_of` falls back to `GameConfig().budget_usd` and
+   `_admission` has no `budget > 0` escape.
 
 5. **A party member may state a `gender`, and it decides which voices that
    character can be cast from.** New optional key in the party spec —

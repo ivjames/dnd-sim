@@ -289,3 +289,56 @@ def test_a_clip_already_paid_for_outlives_the_budget(tts_app, tts_client, tts, g
     assert tts_client.get(speak_url(game, text=text)).status_code == 200      # cached
     assert tts_client.get(speak_url(game, text="Something new.")).status_code == 402
     assert len(tts.calls) == 1
+
+
+def test_an_unstated_budget_is_the_default_not_a_blank_cheque(tts_app, tts_client, tts,
+                                                              sample_config):
+    """A game created without `budget_usd` persists a config that has no such
+    key, so after a restart there is nothing in the row to read. Reading that
+    as zero — and zero as "no cap" — removed the cap from exactly the games
+    that never asked for one."""
+    cfg = dict(sample_config)
+    cfg.pop("budget_usd")
+    game = create(tts_client, cfg)["id"]
+    tts_app.config["DND_REGISTRY"].get(game).shutdown()
+    tts_app.config["DND_REGISTRY"]._games.pop(game)          # as after a restart
+
+    db = tts_app.config["DND_DB"]
+    assert "budget_usd" not in (db.get_game(game)["config"] or {})
+    assert tts_client.get(speak_url(game, text="A little.")).status_code == 200
+
+    db.set_cost(game, 1.00)                                  # GameConfig's default
+    assert tts_client.get(speak_url(game, text="A little more.")).status_code == 402
+
+
+def test_a_zero_budget_refuses_everything(tts_app, tts_client, tts, sample_config):
+    """`Game._check_budget` halts at `total_usd >= budget_usd`, so a zero budget
+    is a game already over — not a game with no ceiling."""
+    for budget in (0, -1):
+        game = create(tts_client, dict(sample_config, budget_usd=budget))["id"]
+        rv = tts_client.get(speak_url(game, text="Anything at all."))
+        assert rv.status_code == 402, budget
+    assert tts.calls == []
+
+
+def test_reconfiguring_the_server_retires_the_browsers_copies(tts_client, tts):
+    """Clip URLs are immutable for a year and name none of the settings that
+    decide the audio, so the probe hands the page a token that moves when they
+    do."""
+    assert tts_client.get("/api/tts").get_json()["config"] == "fake-config"
+
+    # The real one moves with the engine, the language, the DM's voice and the
+    # roster — and with nothing else, so it is stable across a restart.
+    from tts.cache import AudioCache
+    from tts.client import PollyTTS
+
+    def svc(**kw):
+        s = PollyTTS(AudioCache("/nonexistent", 0), client=object(), **kw)
+        s._voices = tuple(STANDARD_ENGLISH)
+        return s
+
+    base = svc().config_id()
+    assert base and base == svc().config_id()
+    assert svc(engine="neural").config_id() != base
+    assert svc(dm_voice="Joanna").config_id() != base
+    assert svc(language="en-GB").config_id() != base

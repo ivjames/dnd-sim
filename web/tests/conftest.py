@@ -232,6 +232,9 @@ class FakeTTS:
     def available(self) -> bool:
         return self.up
 
+    def config_id(self) -> str:
+        return "fake-config"
+
     def price_of(self, chars: int) -> float:
         return max(0, int(chars)) * self.price_per_million / 1_000_000.0
 

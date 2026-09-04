@@ -70,8 +70,33 @@ def _gender_for(entry: Any, row: Any, key: str) -> str:
     return ""
 
 
+def _default_budget() -> float:
+    """`GameConfig.budget_usd`'s default, asked of the class that owns it.
+
+    A game created through the API without a `budget_usd` gets this from
+    `GameConfig` while it is live — but the config PERSISTED is the raw body,
+    which never had the key, so after a restart there is nothing in the row to
+    read. Falling back to the same number the orchestrator would have used
+    keeps the cap on. The web layer is meant to be importable without
+    `orchestrator` (see web/tests/conftest.py), hence the guard.
+    """
+    try:
+        from orchestrator.config import GameConfig  # noqa: PLC0415
+
+        return float(GameConfig().budget_usd)
+    except Exception:  # pragma: no cover - orchestrator absent
+        return 1.00
+
+
 def _budget_of(entry: Any, row: Any) -> float:
-    """This game's `budget_usd`, from wherever it can still be read."""
+    """This game's `budget_usd`, from wherever it can still be read.
+
+    Never 0 for "unknown": zero is a real and meaningful value — the
+    orchestrator halts at `total_usd >= budget_usd`, so a zero budget is a game
+    that is already over, not a game with no cap. Answering "unknown" with zero
+    would have turned the one case that must refuse everything into the one
+    case that refuses nothing.
+    """
     game = getattr(entry, "game", None) if entry is not None else None
     cfg = getattr(game, "cfg", None)
     for candidate in (
@@ -84,7 +109,7 @@ def _budget_of(entry: Any, row: Any) -> float:
                 return float(candidate)
             except (TypeError, ValueError):
                 continue
-    return 0.0
+    return _default_budget()
 
 
 def _ledger_of(entry: Any):
@@ -139,8 +164,10 @@ def _admission(game_id: str, entry: Any, usd: float, budget: float):
         # Strictly: a clip that WOULD take the game over is refused, where the
         # model-call check stops the game only once it already has. Erring
         # toward stopping is the house style (llm/cost.py picks peak rates for
-        # the same reason).
-        if budget > 0 and committed + usd > budget:
+        # the same reason). No `budget > 0` escape: a zero or negative budget is
+        # a game the orchestrator considers already exhausted, so it refuses
+        # everything rather than nothing.
+        if committed + usd > budget:
             raise _NoBudget(committed)
         _RESERVED[game_id] = held + usd
     try:
@@ -202,6 +229,13 @@ def capability():
             "language": svc.language,
             "max_chars": svc.max_chars,
             "price_per_million_chars": svc.price_per_million,
+            # The page puts this in every clip URL. A clip's bytes depend on
+            # process-level settings the URL does not otherwise name — engine,
+            # language, the DM's voice, the roster Polly reported — and the
+            # response is cached `immutable` for a year. Without a token that
+            # moves when they do, a browser that has heard a line keeps hearing
+            # the old voice for it forever after the server is reconfigured.
+            "config": svc.config_id(),
         }
     )
 

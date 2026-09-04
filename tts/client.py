@@ -203,6 +203,18 @@ class PollyTTS:
 
     # -- synthesis -----------------------------------------------------------
 
+    def config_id(self) -> str:
+        """A short token over everything process-level that changes a clip.
+
+        The clip URL names the game, the seat and the words; it does not name
+        the engine, the language, the DM's voice or the roster `DescribeVoices`
+        returned, and those decide the audio too. The page carries this in the
+        URL so that reconfiguring the server retires the browser's copies
+        rather than leaving them to be replayed for a year.
+        """
+        ids = ",".join(v.id for v in self.voices())
+        return cache_key(self.engine, self.language, self.dm_voice, ids)[:12]
+
     def cached(self, ckey: str) -> bytes | None:
         """A clip already paid for, or None. The caller checks this before the
         budget: a cache hit is not spend, so it is not refused for lack of it."""

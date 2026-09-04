@@ -535,7 +535,7 @@
     // game) or three failures running — after which every line is spoken by
     // the browser and the panel says so.
     tts: { available: false, checked: false, engine: '', maxChars: 400,
-           degraded: false, fails: 0, reason: '' },
+           config: '', degraded: false, fails: 0, reason: '' },
     clips: {},             // clip URL → object URL, for what has been fetched
     clipOrder: [],
     gestureArmed: false,   // the document-level "first tap starts it" listener is on
@@ -637,9 +637,15 @@
     return !!(V.tts.available && !V.tts.degraded && V.audio && S.gameId);
   }
 
+  // `v` is the server's synthesis fingerprint (engine, language, the DM's
+  // voice, the roster). The clip is served `immutable` for a year, and the rest
+  // of the URL does not name any of those — so without this, reconfiguring the
+  // server would leave every browser replaying the old voice from its own cache
+  // forever. The server ignores the value; moving it is the whole job.
   function ttsUrl(key, text) {
     return '/api/games/' + encodeURIComponent(S.gameId) + '/tts' +
-           '?key=' + encodeURIComponent(key) + '&text=' + encodeURIComponent(text);
+           '?key=' + encodeURIComponent(key) + '&text=' + encodeURIComponent(text) +
+           (V.tts.config ? '&v=' + encodeURIComponent(V.tts.config) : '');
   }
 
   // Fetched clips are kept as object URLs so a line can be prefetched while
@@ -701,6 +707,7 @@
         }
         V.tts.available = true;
         V.tts.engine = d.engine || '';
+        V.tts.config = d.config || '';
         V.tts.maxChars = Number(d.max_chars) || V.tts.maxChars;
         return true;
       });
