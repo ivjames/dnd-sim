@@ -217,6 +217,15 @@ pitch/rate nudge when there are too few to go round (an iPad often has one or
 two). The rate has three steps, **skip** drops the line being read, and the
 transcript line being spoken is highlighted.
 
+A monster that can speak — one whose SRD stat block names a language it uses
+aloud, so a goblin or an ogre but not a wolf or a zombie — is cast instead from
+the novelty voices the OS ships beside the real ones (Bubbles, Trinoids, Zarvox
+and the rest, on Apple devices), one per monster, pitch and rate spread wide so
+the ogre and the goblin still differ when that handful runs out. Nobody else is
+ever dealt one: not the DM, not a PC, not an NPC that isn't a monster. A device
+that ships none — Windows, Android, most of Linux — leaves speaking monsters on
+the shared NPC voice, as before.
+
 This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
 the device and it costs nothing, so voice quality is whatever the OS ships.
 Server-rendered voices (Amazon Polly, Cartesia and the like) would be a later,

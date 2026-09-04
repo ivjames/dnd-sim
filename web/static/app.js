@@ -517,6 +517,12 @@
     return out;
   }
 
+  // {id: true} for every monster in the snapshot whose stat block names a
+  // language it can speak — the seats a novelty voice may be cast to.
+  function voiceMonsters() {
+    return Speech.speakingMonsters(combatants());
+  }
+
   function voiceNames() {
     var cs = combatants(), out = {};
     Object.keys(cs).forEach(function (id) { if (cs[id] && cs[id].name) out[id] = cs[id].name; });
@@ -529,7 +535,7 @@
     var party = voiceParty();
     var phrase = Speech.phraseFor(ev, voiceNames(), party);
     if (!phrase) return;
-    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party) });
+    V.queue.push({ ev: ev, phrase: phrase, key: Speech.voiceKeyFor(ev, party, voiceMonsters()) });
     voiceTrimQueue();
     voicePump();
   }
