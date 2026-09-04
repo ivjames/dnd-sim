@@ -9,11 +9,14 @@ others; the page simply falls back to the dark value on a light ground, which
 is exactly the sort of thing nobody notices until a screenshot.
 
 The contrast table below is the design commitment made when the themes were
-written, in the only form that survives an edit: story text, names, mechanics
-and control labels at WCAG AAA (7:1) against every surface they can sit on,
-the quiet metadata tier at 6:1, and the non-text carriers of meaning at 3:1.
-A colour nudged "just a little" that drops one of these fails here rather than
-in front of a reader.
+written, in the only form that survives an edit: **every** run of text clears
+WCAG AAA (7:1) against every surface it can land on, with the tiers spaced by
+ratio — body text at 12:1, the secondary tier at 9.5:1, the quietest metadata
+at 7:1 — so the hierarchy is carried by measured steps rather than by letting
+the bottom step fall through the floor. Non-text carriers of meaning clear
+4.5:1, half again the 3:1 the guideline asks for, and the two terrain fills on
+the map clear 3:1 against the ground they sit on. A colour nudged "just a
+little" that drops one of these fails here rather than in front of a reader.
 """
 
 from __future__ import annotations
@@ -80,33 +83,47 @@ def contrast(fg: str, bg: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-# Every surface a run of text can land on, worst case first.
-SURFACES = ["--bg", "--bg-panel", "--bg-sunken", "--bg-raise", "--bg-active"]
+# Every surface a run of text can land on. A colour is checked against all of
+# them, not against the one it happens to be used on today: the card that moves
+# from the sunken well onto a panel next month must not take a drop with it.
+SURFACES = [
+    "--bg", "--bg-panel", "--bg-sunken", "--bg-raise",
+    "--bg-active", "--bg-speaking", "--bg-scene", "--glow",
+]
 
-# (token, surfaces it is used on, floor). 7.0 is AAA; 6.0 is the metadata tier,
-# a step down in emphasis and not in legibility; 3.0 is the non-text floor.
+# Where a side colour prints: panels, the card wells, and the two highlights.
+CARDS = ["--bg-panel", "--bg-sunken", "--bg-active", "--bg-speaking"]
+
+# (token, surfaces it is used on, floor). Everything that is text clears AAA;
+# the three tiers are spaced so the hierarchy survives without anyone dropping
+# to the floor. 4.5 is the non-text floor, set half again above the 3:1 the
+# guideline asks for.
 CONTRACT: List[Tuple[str, List[str], float]] = [
-    ("--ink", SURFACES, 7.0),
-    ("--ink-dim", SURFACES, 7.0),
-    ("--ink-faint", SURFACES, 6.0),
-    ("--accent", SURFACES, 7.0),
-    ("--party", ["--bg-panel", "--bg-active"], 7.0),
-    ("--enemy", ["--bg-panel", "--bg-active", "--bg-sunken"], 7.0),
-    ("--neutral", ["--bg-panel", "--bg-active", "--bg-sunken"], 7.0),
-    ("--good", ["--bg-panel", "--bg-active"], 7.0),
-    ("--danger", ["--bg-panel", "--bg-active", "--bg-raise"], 7.0),
-    ("--line-strong", SURFACES, 3.0),
-    ("--accent-line", ["--bg-panel", "--bg-sunken"], 3.0),
-    ("--hp-good", ["--bg-raise"], 3.0),
-    ("--hp-hurt", ["--bg-raise"], 3.0),
-    ("--hp-bad", ["--bg-raise"], 3.0),
+    ("--ink", SURFACES, 12.0),
+    ("--ink-dim", SURFACES, 9.5),
+    ("--ink-faint", SURFACES, 7.0),
+    ("--accent", SURFACES, 8.0),
+    ("--party", CARDS, 8.0),
+    ("--enemy", CARDS, 8.0),
+    ("--neutral", CARDS, 8.0),
+    ("--good", CARDS, 8.0),
+    ("--danger", SURFACES, 8.0),
+    ("--line-strong", SURFACES, 4.5),
+    ("--accent-line", SURFACES, 4.5),
+    ("--hp-good", ["--bg-raise"], 4.5),
+    ("--hp-hurt", ["--bg-raise"], 4.5),
+    ("--hp-bad", ["--bg-raise"], 4.5),
+    # The map's terrain is a graphical object that carries meaning, so it is
+    # held to 1.4.11 against the ground it is painted on.
+    ("--wall", ["--bg-sunken"], 3.0),
+    ("--difficult", ["--bg-sunken"], 3.0),
 ]
 
 # Text printed on a filled block, where the fill is the background.
 ON_FILL: List[Tuple[str, str, float]] = [
-    ("--on-accent", "--accent-fill", 7.0),
-    ("--on-good", "--good-fill", 7.0),
-    ("--on-danger", "--danger-fill", 7.0),
+    ("--on-accent", "--accent-fill", 8.0),
+    ("--on-good", "--good-fill", 8.0),
+    ("--on-danger", "--danger-fill", 8.0),
 ]
 
 

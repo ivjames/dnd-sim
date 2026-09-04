@@ -367,13 +367,17 @@ a story.
 The button in the top bar cycles `auto → light → dark`; the choice is kept in
 that browser's `localStorage` and nowhere else, so it is a reader's preference
 and never a server setting. Dark is a rich brown rather than near-black, light
-is pale wood, and both were measured rather than eyeballed: story text, names,
-mechanics and every control label clear WCAG AAA (7:1) against the surface they
-actually sit on, the quiet metadata tier (initiative scores, the AC/class line,
-sequence numbers) clears 6:1, and non-text carriers of meaning — borders, focus
-rings, the HP and budget bars — clear 3:1. The battle map paints from the same
-custom properties as everything else, so it changes with the theme instead of
-staying dark on a light page.
+is pale wood, and both were solved rather than eyeballed: **every** run of text
+clears WCAG AAA (7:1) against the worst of the eight surfaces it can land on,
+with the tiers spaced by ratio so the hierarchy is carried by measured steps
+rather than by letting the quietest one sag — story text at 12:1, the secondary
+tier at 9.5:1, names and status colours at 8:1, the metadata (initiative
+scores, the AC/class line, sequence numbers) at 7:1. Borders, focus rings and
+the HP and budget bars clear 4.5:1, half again what 1.4.11 asks of a non-text
+carrier of meaning; the map's walls and difficult ground clear 3:1 against the
+board. The battle map paints from the same custom properties as everything
+else, so it changes with the theme instead of staying dark on a light page, and
+`web/tests/test_theme_tokens.py` checks the whole table as arithmetic.
 
 ## Spoken narration
 

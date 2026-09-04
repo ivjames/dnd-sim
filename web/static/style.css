@@ -1,15 +1,19 @@
 /* dnd-sim spectator UI — "candlelit table".
  *
  * Two themes, one set of tokens. Dark is rich brown rather than near-black;
- * light is pale wood. Every pairing below was measured against the surface it
- * actually sits on rather than eyeballed: story text, names, mechanics and
- * every control label clear WCAG AAA (7:1); the deliberately quiet metadata
- * tier — initiative scores, the AC/class line, sequence numbers, the "mock"
- * and "round" pills — sits at 6.1:1 or better, well past AA and one step down
- * in emphasis rather than one step down in legibility; borders, focus rings
- * and bar fills, which carry meaning without being text, clear 3:1. A colour
- * that fails on one surface fails everywhere, so each was checked against the
- * worst of the five (page, panel, sunken, raised, active row).
+ * light is pale wood. Every pairing was solved rather than eyeballed, and
+ * every run of text clears WCAG AAA — 7:1 — against the worst of the eight
+ * surfaces it can land on (page, panel, sunken well, raised control, active
+ * row, the line being read aloud, a scene box, the candle pool), because a
+ * colour that fails on one surface fails everywhere.
+ *
+ * The three text tiers are then spaced by ratio rather than by letting the
+ * bottom one sag: body text 12:1, the secondary tier 9.5:1, and the quietest
+ * metadata — initiative scores, the AC/class line, sequence numbers — 7:1.
+ * Names, accents and status colours sit at 8:1. Borders, focus rings and the
+ * bar fills clear 4.5:1, half again what 1.4.11 asks of a non-text carrier of
+ * meaning, and the map's walls and difficult ground clear 3:1 against the
+ * board. `web/tests/test_theme_tokens.py` checks all of it as arithmetic.
  *
  * Which theme: a stored choice on <html data-theme>, else the system's. The
  * inline script in index.html sets the attribute before first paint.
@@ -22,43 +26,43 @@
   --bg:         #2b211a;
   --bg-panel:   #33271f;
   --bg-sunken:  #241c15;
-  --bg-raise:   #3a2c22;
-  --bg-active:  #3d2d19;
+  --bg-raise:   #382a20;
+  --bg-active:  #3a2a14;
+  --bg-speaking:#3c2b16;
   --bg-scene:   #3a2b1b;
   --glow:       #3b2e22;
 
-  --line:       #4e3d2f;
-  --line-soft:  #403126;
-  --line-strong:#8f775c;
+  --line:       #5c4939;
+  --line-soft:  #4a3a2c;
+  --line-strong:#a7957f;
 
-  --ink:        #f5eadc;
-  --ink-dim:    #d6c6b2;
-  --ink-faint:  #c0ae99;
+  --ink:        #faf4ec;
+  --ink-dim:    #e4dacc;
+  --ink-faint:  #ccbdac;
 
-  --accent:     #f0b75e;
-  --accent-line:#a8813c;
-  --accent-fill:#d79a3c;
+  --accent:     #f2c378;
+  --accent-line:#b49357;
+  --accent-fill:#e0a648;
   --on-accent:  #1e1409;
 
   --party:      #9cd0ee;
-  --enemy:      #f5b2a1;
-  --neutral:    #dfc189;
-  --good:       #9dd47c;
+  --enemy:      #f6b9a9;
+  --neutral:    #e0c48e;
+  --good:       #a0d681;
   --good-fill:  #8fc96c;
   --on-good:    #12210b;
-  --danger:     #f5b2a1;
-  --danger-fill:#f5b2a1;
+  --danger:     #f6bdae;
+  --danger-fill:#f6bdae;
   --on-danger:  #2a0d06;
 
-  --hp-good:    #9dd47c;
-  --hp-hurt:    #f0b75e;
-  --hp-bad:     #f5b2a1;
+  --hp-good:    #a0d681;
+  --hp-hurt:    #f2c378;
+  --hp-bad:     #f6bdae;
 
-  --shade:      rgba(240, 183, 94, .16);
   --scrim:      rgba(12, 8, 5, .84);
-  --canvas-grid:#3d2f24;
-  --wall:       #6b5b4b;
-  --difficult:  #4e3e24;
+  --canvas-grid:#4e4137;
+  --wall:       #7e7468;
+  --difficult:  #8b6d2c;
 
   --radius: 9px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -73,44 +77,44 @@
 
     --bg:         #efe2ce;
     --bg-panel:   #faf4e9;
-    --bg-sunken:  #e9dcc6;
+    --bg-sunken:  #ecdfcb;
     --bg-raise:   #f2e7d4;
     --bg-active:  #f4e6ca;
+    --bg-speaking:#f6e8c6;
     --bg-scene:   #f3e4c9;
     --glow:       #f7edda;
 
-    --line:       #c9b491;
-    --line-soft:  #d8c7a8;
-    --line-strong:#8b7351;
+    --line:       #bda682;
+    --line-soft:  #d0bb98;
+    --line-strong:#756144;
 
     --ink:        #2a1c10;
-    --ink-dim:    #4b3927;
-    --ink-faint:  #5c4a34;
+    --ink-dim:    #403122;
+    --ink-faint:  #54432f;
 
-    --accent:     #6e3703;
-    --accent-line:#9a7130;
-    --accent-fill:#7a3f05;
+    --accent:     #633203;
+    --accent-line:#805e28;
+    --accent-fill:#733a03;
     --on-accent:  #fff7ea;
 
-    --party:      #0d465e;
-    --enemy:      #821d0d;
-    --neutral:    #57400f;
-    --good:       #244c0d;
-    --good-fill:  #2b5b0e;
+    --party:      #0d445b;
+    --enemy:      #7a1b0c;
+    --neutral:    #513b0e;
+    --good:       #22470c;
+    --good-fill:  #275209;
     --on-good:    #fff7ea;
-    --danger:     #86190c;
-    --danger-fill:#8e1f10;
+    --danger:     #7c170b;
+    --danger-fill:#7c170b;
     --on-danger:  #fff6ee;
 
-    --hp-good:    #3c7a18;
-    --hp-hurt:    #a8690a;
+    --hp-good:    #3a7617;
+    --hp-hurt:    #945c09;
     --hp-bad:     #a83521;
 
-    --shade:      rgba(122, 63, 5, .15);
     --scrim:      rgba(46, 32, 18, .58);
-    --canvas-grid:#d2be9c;
-    --wall:       #a08d72;
-    --difficult:  #d9c48f;
+    --canvas-grid:#beab8d;
+    --wall:       #7c7468;
+    --difficult:  #9b7a2b;
   }
 }
 
@@ -119,44 +123,44 @@
 
   --bg:         #efe2ce;
   --bg-panel:   #faf4e9;
-  --bg-sunken:  #e9dcc6;
+  --bg-sunken:  #ecdfcb;
   --bg-raise:   #f2e7d4;
   --bg-active:  #f4e6ca;
+  --bg-speaking:#f6e8c6;
   --bg-scene:   #f3e4c9;
   --glow:       #f7edda;
 
-  --line:       #c9b491;
-  --line-soft:  #d8c7a8;
-  --line-strong:#8b7351;
+  --line:       #bda682;
+  --line-soft:  #d0bb98;
+  --line-strong:#756144;
 
   --ink:        #2a1c10;
-  --ink-dim:    #4b3927;
-  --ink-faint:  #5c4a34;
+  --ink-dim:    #403122;
+  --ink-faint:  #54432f;
 
-  --accent:     #6e3703;
-  --accent-line:#9a7130;
-  --accent-fill:#7a3f05;
+  --accent:     #633203;
+  --accent-line:#805e28;
+  --accent-fill:#733a03;
   --on-accent:  #fff7ea;
 
-  --party:      #0d465e;
-  --enemy:      #821d0d;
-  --neutral:    #57400f;
-  --good:       #244c0d;
-  --good-fill:  #2b5b0e;
+  --party:      #0d445b;
+  --enemy:      #7a1b0c;
+  --neutral:    #513b0e;
+  --good:       #22470c;
+  --good-fill:  #275209;
   --on-good:    #fff7ea;
-  --danger:     #86190c;
-  --danger-fill:#8e1f10;
+  --danger:     #7c170b;
+  --danger-fill:#7c170b;
   --on-danger:  #fff6ee;
 
-  --hp-good:    #3c7a18;
-  --hp-hurt:    #a8690a;
+  --hp-good:    #3a7617;
+  --hp-hurt:    #945c09;
   --hp-bad:     #a83521;
 
-  --shade:      rgba(122, 63, 5, .15);
   --scrim:      rgba(46, 32, 18, .58);
-  --canvas-grid:#d2be9c;
-  --wall:       #a08d72;
-  --difficult:  #d9c48f;
+  --canvas-grid:#beab8d;
+  --wall:       #7c7468;
+  --difficult:  #9b7a2b;
 }
 
 * { box-sizing: border-box; }
@@ -420,7 +424,13 @@ body {
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn:active:not(:disabled) { background: var(--bg-active); }
-.btn:disabled { opacity: .45; cursor: default; }
+/* Disabled is said with the face and the border, not with opacity: fading the
+   whole button takes its label down with it, and a control that cannot be
+   pressed still has to be readable to explain why the row is greyed. */
+.btn:disabled {
+  color: var(--ink-faint); background: transparent;
+  border-color: var(--line-soft); cursor: default;
+}
 .btn-primary {
   background: var(--accent-fill); border-color: var(--accent-fill);
   color: var(--on-accent); font-weight: 600;
@@ -442,9 +452,12 @@ body {
 }
 .btn-small { min-height: 28px; padding: 2px 10px; font-size: 12px; font-family: var(--mono); }
 .voice.locked .chk { color: var(--accent); }
+/* A solid surface, not a translucent wash: a wash lightens whatever it sits
+   on by an amount that depends on the theme, which put the quietest text below
+   its floor exactly while it was being read aloud. */
 .speaking {
-  background: var(--shade);
-  box-shadow: -6px 0 0 var(--shade), 6px 0 0 var(--shade);
+  background: var(--bg-speaking);
+  box-shadow: -6px 0 0 var(--bg-speaking), 6px 0 0 var(--bg-speaking);
   border-radius: 3px;
 }
 .mech.speaking { color: var(--ink); }
