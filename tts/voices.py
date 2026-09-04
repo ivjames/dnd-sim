@@ -15,10 +15,13 @@ device voice list:
 
   * There are no novelty voices. `speech.js` casts a speaking monster out of
     Bubbles and Zarvox where the device has them; here a monster gets an
-    ordinary voice put through `<amazon:effect vocal-tract-length>`, which
-    changes the timbre rather than the pitch — a longer vocal tract is a bigger
-    creature. That effect is standard-engine only, which is part of why the
-    standard engine is the one this runs on.
+    ordinary voice and a `MonsterFX` — a size shift, and sometimes grit or a
+    room — applied to the audio after Polly hands it over (`tts/dsp.py`). It
+    used to get `<amazon:effect vocal-tract-length>` instead, which is
+    standard-engine only and so held every monster on the engine the rest of
+    the table had left. Doing the size shift ourselves is what lets a monster
+    be cast on the table's engine; `MONSTER_VTL` and the tag are still here for
+    `DND_TTS_MONSTER_FX=0`, which puts the old arrangement back.
   * The pool is the same for everyone. The browser has to keep novelty voices
     away from narration; here every voice can carry a line.
   * Polly has children's voices, and the browser's voice list does not say
@@ -37,9 +40,13 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from tts.dsp import MonsterFX
+from tts.dsp import source_fingerprint as dsp_fingerprint
+
 __all__ = [
     "Voice",
     "Cast",
+    "MonsterFX",
     "STANDARD_ENGLISH",
     "hash_key",
     "cast_for",
@@ -59,6 +66,12 @@ __all__ = [
     "CHILD_VOICE_IDS",
     "CHILD_MAX_AGE",
     "ENGINE_SSML",
+    "allowed_ssml",
+    "MONSTER_VTL",
+    "MONSTER_SIZE",
+    "MONSTER_GROWL",
+    "MONSTER_CAVE",
+    "MONSTER_TEMPO",
     "source_fingerprint",
 ]
 
@@ -66,14 +79,15 @@ _SOURCE_FP: str | None = None
 
 
 def source_fingerprint() -> str:
-    """A digest of this module's own source.
+    """A digest of this module's own source, and of `tts/dsp.py`'s.
 
-    Everything that turns a voice key and a line into audio lives here — the
-    roster, the hash, the pitch and timbre spreads, the SSML. A deployment that
-    changes any of it changes the audio while the engine, the language, the DM
-    voice and the voice ids all stay put, so a fingerprint built only from
-    those would not move and every browser would go on replaying its
-    year-long-immutable copies of the old casting.
+    Everything that turns a voice key and a line into audio lives in the two —
+    the roster, the hash, the pitch and timbre spreads, the SSML here, and the
+    monster treatment there. A deployment that changes any of it changes the
+    audio while the engine, the language, the DM voice and the voice ids all
+    stay put, so a fingerprint built only from those would not move and every
+    browser would go on replaying its year-long-immutable copies of the old
+    casting.
 
     Hashed rather than a hand-bumped constant because a constant is only
     correct for as long as someone remembers it. Reading the source can fail
@@ -84,9 +98,12 @@ def source_fingerprint() -> str:
     if _SOURCE_FP is None:
         try:
             with open(__file__, "rb") as fh:
-                _SOURCE_FP = hashlib.sha256(fh.read()).hexdigest()[:8]
+                digest = hashlib.sha256(fh.read())
         except OSError:  # pragma: no cover - unreadable source
             _SOURCE_FP = "unknown"
+        else:
+            digest.update(dsp_fingerprint().encode())
+            _SOURCE_FP = digest.hexdigest()[:8]
     return _SOURCE_FP
 
 
@@ -213,7 +230,43 @@ _NUMERIC_AGE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\Z")
 
 # Timbre shifts dealt to monsters: never 0, because a monster whose only
 # treatment rounded to "no treatment" is a goblin that sounds like the barmaid.
+# Only reachable with `DND_TTS_MONSTER_FX=0`; `MONSTER_SIZE` is what a monster
+# is dealt by default. Kept because that switch keeps the standard-engine
+# arrangement available, and because it is the thing to compare against.
 MONSTER_VTL: tuple[int, ...] = (-20, -10, 10, 20, 30, 40)
+
+#: How big the creature is: `MonsterFX.size_pct`, signed the way VTL is —
+#: positive is a longer vocal tract, a bigger creature, a lower voice. Never 0,
+#: for `MONSTER_VTL`'s reason.
+#:
+#: Narrower than VTL's spread on the negative side and wider on the positive,
+#: because this is a resample and VTL was not: it takes pitch with it, so -20%
+#: here is a squeak where -20% there was only a small skull. The ceiling is
+#: taste rather than arithmetic — +34% is about five semitones down, which is
+#: an ogre, and past it the consonants start to smear.
+MONSTER_SIZE: tuple[int, ...] = (-16, -9, 9, 16, 24, 34)
+
+#: Saturation, per monster. Two of the five are 0: grit is a characteristic,
+#: not a uniform, and a table where every monster rasps has no rasping monster
+#: in it. The size shift is what guarantees every monster is treated.
+MONSTER_GROWL: tuple[int, ...] = (0, 0, 30, 55, 80)
+
+#: A room, per monster. Mostly absent for the same reason, and more so: a comb
+#: filter on a line the DM has just narrated dry is the one effect here a
+#: listener can mistake for a fault.
+MONSTER_CAVE: tuple[int, ...] = (0, 0, 0, 35, 55)
+
+#: How fast a monster talks, as a percentage of normal, ON TOP of the
+#: compensation `MonsterFX.rate_pct` asks for. Same spread the VTL arrangement
+#: dealt.
+MONSTER_TEMPO: tuple[int, ...] = (90, 95, 100, 105)
+
+#: `<prosody rate>` "has a range of 20-200%"
+#: (https://docs.aws.amazon.com/polly/latest/dg/prosody-tag.html, read
+#: 2026-09-04). The dealt spreads land far inside it; the clamp is here because
+#: a rate outside it is an `InvalidSsmlException`, which is a silent fallback
+#: to the browser's voice for that seat and nothing else.
+RATE_MIN_PCT, RATE_MAX_PCT = 20, 200
 
 
 @dataclass(frozen=True)
@@ -234,9 +287,18 @@ class Cast:
     pitch_pct: int = 0     # <prosody pitch>, percent, 0 = the voice as recorded
     rate_pct: int = 100    # <prosody rate>, percent of normal
     vtl_pct: int = 0       # <amazon:effect vocal-tract-length>, percent; monsters only
+    #: What is done to the audio AFTER Polly (`tts/dsp.py`); monsters only, and
+    #: None for every other seat. A cast that carries one is rendered from
+    #: `pcm` and served as a WAV, because the treatment has to happen between
+    #: the two — see `PollyTTS._synthesize_now`.
+    fx: MonsterFX | None = None
 
     def cache_key(self) -> str:
-        return f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
+        base = f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
+        # Appended only when there is one, so an untreated cast spells exactly
+        # what it always did — the same rule, and the same reason, as
+        # `PollyTTS.cache_key_for`.
+        return base + ("|" + self.fx.token() if self.fx else "")
 
 
 def hash_key(s: str) -> int:
@@ -365,7 +427,7 @@ def normalize_age(age) -> str:
 
 
 def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
-             engine: str = "standard", age="") -> Cast:
+             engine: str = "standard", age="", monster_fx: bool = True) -> Cast:
     """Deal `key` a voice out of `pool`, deterministically.
 
     `pool` is any iterable of `Voice`; it is sorted by id here so the casting
@@ -376,6 +438,12 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
     `gender` narrows the pool to voices Polly reports as that gender, and `age`
     decides whether the character is dealt a child's voice. Both come from the
     character, not from whoever asked for the clip.
+
+    `monster_fx` says how a monster is made to sound like one: with a
+    `MonsterFX` applied after synthesis (the default, and what lets a monster
+    be cast on the table's engine), or with the standard-only SSML that used to
+    be the only way — `DND_TTS_MONSTER_FX=0`. It changes nothing for any other
+    seat.
     """
     voices = sorted({v.id: v for v in pool}.values(), key=lambda v: v.id)
     if not voices:
@@ -430,18 +498,47 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
     voice = _pick(others, h)
 
     if is_monster_key(key):
-        # A monster is the one seat where sounding wrong is the point. Timbre
-        # does the work — a longer vocal tract is a bigger creature — with
-        # pitch and rate behind it, so the ogre and the goblin are told apart
-        # even when they are dealt the same voice.
+        # A monster is the one seat where sounding wrong is the point. Size
+        # does the work — a longer vocal tract is a bigger creature — with grit
+        # and a room behind it, so the ogre and the goblin are told apart even
+        # when they are dealt the same voice.
+        #
+        # Each treatment comes off its own slice of the one hash, so a monster
+        # keeps everything about how it sounds for as long as its id does.
+        if not monster_fx:
+            # The standard-engine arrangement, kept whole behind the switch.
+            return Cast(
+                key,
+                voice.id,
+                voice.language,
+                engine,
+                pitch_pct=-20 + ((h >> 8) % 7) * 5,      # -20 … +10
+                vtl_pct=MONSTER_VTL[(h >> 12) % len(MONSTER_VTL)],
+                rate_pct=90 + ((h >> 16) % 4) * 5,       # 90 … 105
+            )
+        fx = MonsterFX(
+            size_pct=MONSTER_SIZE[(h >> 12) % len(MONSTER_SIZE)],
+            growl_pct=MONSTER_GROWL[(h >> 8) % len(MONSTER_GROWL)],
+            cave_pct=MONSTER_CAVE[(h >> 20) % len(MONSTER_CAVE)],
+        )
+        # Two things ride on one rate: undoing what the size shift does to
+        # duration (`rate_pct`, exactly `100 + size_pct`) and how fast this
+        # monster talks. They multiply — a creature dealt 90% tempo and a 24%
+        # size shift is spoken at 112% and heard, after the shift, at 90%.
+        #
+        # On an engine that will not take `<prosody rate>` at all — generative,
+        # per ENGINE_SSML — the compensation is dropped with the tag and the
+        # line runs long or short by the size shift. Nothing here defaults to
+        # that engine and no roster falls back to it.
+        tempo = MONSTER_TEMPO[(h >> 16) % len(MONSTER_TEMPO)]
+        rate = round(fx.rate_pct() * tempo / 100)
         return Cast(
             key,
             voice.id,
             voice.language,
             engine,
-            pitch_pct=-20 + ((h >> 8) % 7) * 5,      # -20 … +10
-            vtl_pct=MONSTER_VTL[(h >> 12) % len(MONSTER_VTL)],
-            rate_pct=90 + ((h >> 16) % 4) * 5,       # 90 … 105
+            rate_pct=max(RATE_MIN_PCT, min(RATE_MAX_PCT, rate)),
+            fx=fx,
         )
 
     # A small per-actor pitch offset always: two actors can be dealt one voice.
@@ -497,6 +594,24 @@ ENGINE_SSML: dict[str, frozenset[str]] = {
 }
 
 
+def allowed_ssml(engine: str) -> frozenset[str]:
+    """Which of pitch/rate/vtl this engine will accept.
+
+    The one place the `ENGINE_SSML` lookup happens, including its default: an
+    engine nobody has heard of is written for the one this app is built around
+    rather than sent bare, because being wrong loudly (an error naming the
+    engine) beats being wrong quietly (a flat reading nothing reports).
+
+    A function rather than a bare `.get` because more than one caller needs the
+    answer — `ssml_for` writes the document, `tools/polly_check.py` reports what
+    the document will contain — and a second copy of the rule is a second copy
+    of the default to get wrong. It was: the tool spelled the fallback as "no
+    tags", so an unrecognised engine was reported as carrying no
+    vocal-tract-length while `ssml_for` went on writing one.
+    """
+    return ENGINE_SSML.get(str(engine or "standard").strip().lower(), ENGINE_SSML["standard"])
+
+
 def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
     """The `<speak>` document for a line in its seat's voice.
 
@@ -508,8 +623,7 @@ def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
     pitch and no vocal-tract-length, two characters dealt the same voice cannot
     be told apart, and a monster is only a voice rather than a big one.
     """
-    name = str(engine or cast.engine or "standard").strip().lower()
-    allowed = ENGINE_SSML.get(name, ENGINE_SSML["standard"])
+    allowed = allowed_ssml(engine or cast.engine)
     body = escape(text)
     prosody = []
     if cast.pitch_pct and "pitch" in allowed:

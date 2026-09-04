@@ -124,9 +124,9 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   `/api/games/<id>/tts` for each line and plays the audio; where the server has
   no Polly (no AWS credentials, a mock game, the budget spent) the page speaks
   it with the browser's own `speechSynthesis`, which is what it did before and
-  is still the fallback for a single failed line. Standard engine, $4/1M
-  characters on neural — the table's engine — and $4/1M on standard, which is
-  where speaking monsters stay because `vocal-tract-length` exists nowhere else.
+  is still the fallback for a single failed line. $16/1M characters on neural —
+  the table's engine, and the monsters' too since the treatment below — against
+  $4/1M on standard, which is where a monster used to be held.
   Charged to the game's `budget_usd` as `by_role.narrator`, every clip
   cached in `data/tts` so a line is paid for once, and stopped at the lower of
   the game's `budget_usd` and the server-owned `DND_TTS_MAX_USD` (default $10),
@@ -134,14 +134,27 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   game; how many games can be started is capped by `DND_WRITE_TOKEN` — see
   **Write access** below. `DND_TTS=0` turns it off; mock games never
   touch it unless `DND_TTS=1`. `TTS-COSTS.md` is the costing this came from —
-  its §6 records what Polly changed and what is still open. The monster seats
-  are the only ones that write `<amazon:effect vocal-tract-length>` and the
-  only ones routed to a second engine (standard) to do it, so a working table
-  proves nothing about them and a refused monster line is a 502 the page hides
-  by speaking that line itself: `tests/tts/test_polly_contract.py` holds every
-  document the app can emit against Amazon's published matrix, and
-  `python -m tools.polly_check` sends two real lines from the droplet, with
-  `.env` sourced first the way `run.sh` does (`--dry-run` anywhere else).
+  its §6 records what Polly changed and what is still open.
+  **A speaking monster is made after Polly, not by it** (`tts/dsp.py`): its
+  clip is asked for as `pcm`, played back at a different sample rate — pitch
+  and formants together, which is a bigger creature — with grit or a stone
+  room dealt to some of them, and served as `audio/wav`. The duration that
+  shift would cost is bought back with `<prosody rate>`, and the level the grit
+  would add is taken back off, so a monster is a different voice rather than a
+  slower or louder one. That is why monsters are no longer held on the standard
+  engine: `<amazon:effect vocal-tract-length>` was the only vendor way to do it
+  and exists nowhere else, and the price was every monster line being read by
+  the flatter engine. `DND_TTS_MONSTER_FX=0` puts that arrangement back whole,
+  and is the way out if the treatment sounds worse. Either way the monster
+  seats are the only ones asking Polly for something no other seat asks for, so
+  a working table proves nothing about them and a refused monster line is a 502
+  the page hides by speaking that line itself:
+  `tests/tts/test_polly_contract.py` holds every document **both** arrangements
+  can emit against Amazon's published matrix, `tests/tts/test_dsp.py` the
+  arithmetic of the treatment, and `python -m tools.polly_check` sends two real
+  lines from the droplet, with `.env` sourced first the way `run.sh` does
+  (`--dry-run` anywhere else; `--ab --out DIR` renders the monster line both
+  ways to listen to, which is the only way to judge it).
   **A party spec states `pronouns`, not a gender.** `he/him` narrows the pool
   to Polly's male voices, `she/her` to its female ones, and `they/them` — or
   any other set, or nothing said — is dealt from the whole roster, because the
