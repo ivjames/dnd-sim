@@ -25,15 +25,10 @@
     <div id="voice" class="voice" hidden>
       <label class="chk" title="Read the game aloud with the browser's own voices">
         <input type="checkbox" id="voice-on"> voice</label>
-      <select id="voice-rate" aria-label="Speech rate" title="Speech rate">
-        <option value="slow">slow</option>
-        <option value="normal" selected>normal</option>
-        <option value="fast">fast</option>
-      </select>
-      <label class="chk" title="Speak only narration and dialogue">
-        <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
-      <button id="voice-skip" class="btn btn-small" type="button" disabled
-              title="Skip the line being read">skip</button>
+      <button id="vt-play" class="btn btn-small btn-transport" type="button" disabled
+              aria-label="Play the narration" title="Play / pause the narration">&#9654;</button>
+      <button id="vt-behind" class="pill pill-behind" type="button" hidden
+              title="Jump the narrator to the newest line">&mdash;</button>
       <span id="voice-hint" class="pill pill-quiet" hidden>tap to start</span>
     </div>
     <div id="cost-meter" class="cost" title="Spend against budget">
@@ -94,6 +89,32 @@
         <span><i class="sw wall"></i>wall</span>
       </div>
     </div>
+    <div id="voice-panel" class="panel" hidden>
+      <h2 class="panel-title">Narration</h2>
+      <div class="transport">
+        <button id="vt-back" class="btn btn-transport" type="button" disabled
+                aria-label="Read the previous line again" title="Back one line">&#9198;</button>
+        <button id="vt-play2" class="btn btn-transport" type="button" disabled
+                aria-label="Play the narration" title="Play / pause">&#9654;</button>
+        <button id="vt-skip" class="btn btn-transport" type="button" disabled
+                aria-label="Skip this line" title="Skip this line">&#9197;</button>
+        <button id="vt-live" class="btn btn-transport btn-live" type="button" disabled
+                aria-label="Jump to the newest line" title="Jump to the newest line">live</button>
+      </div>
+      <p id="vt-now" class="vt-now">voice off</p>
+      <div class="vt-settings">
+        <label class="chk" for="voice-rate">rate</label>
+        <select id="voice-rate" aria-label="Speech rate" title="Speech rate">
+          <option value="slow">slow</option>
+          <option value="normal" selected>normal</option>
+          <option value="fast">fast</option>
+        </select>
+        <label class="chk" title="Speak only narration and dialogue">
+          <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
+        <label class="chk" title="Make the game wait when the narrator falls behind, so what you hear is what is happening">
+          <input type="checkbox" id="voice-hold" checked> hold the game for the narrator</label>
+      </div>
+    </div>
     <div class="panel">
       <h2 class="panel-title">Controls</h2>
       <div class="controls">
@@ -101,6 +122,7 @@
         <button id="btn-resume" class="btn" type="button" disabled>Resume</button>
         <button id="btn-stop" class="btn btn-danger" type="button" disabled>Stop</button>
       </div>
+      <p id="ctl-note" class="ctl-note" hidden></p>
       <form id="note-form" class="note-form">
         <label class="lbl" for="note-text">DM note from the table</label>
         <textarea id="note-text" rows="2" maxlength="2000"

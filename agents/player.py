@@ -22,6 +22,7 @@ __all__ = ["PlayerAgent", "AgentOutputError"]
 
 SPEECH_WORDS = 20
 SCENE_SPEECH_WORDS = 25
+FREE_SPEECH_WORDS = 35   # a social beat; spoken aloud, so kept short
 REASONING_WORDS = 25
 MAX_TOKENS_ACTION = 200
 MAX_TOKENS_SPEECH = 160
@@ -168,14 +169,14 @@ class PlayerAgent:
     # -- non-combat --------------------------------------------------------
 
     def speak(self, view: str, prompt: str) -> str:
-        """A short in-character line for social/exploration beats (≤60 words)."""
+        """A short in-character line for social/exploration beats (≤35 words)."""
         user = render("player_speech.txt", view=view, prompt=prompt)
         text = self._call(user, MAX_TOKENS_SPEECH)
         try:
             obj = extract_json(text)
         except AgentOutputError:
-            return clamp_words(text, 60) or ""
-        return clamp_words(obj.get("speech") or obj.get("text"), 60) or ""
+            return clamp_words(text, FREE_SPEECH_WORDS) or ""
+        return clamp_words(obj.get("speech") or obj.get("text"), FREE_SPEECH_WORDS) or ""
 
     def choose_scene_action(
         self, view: str, options: list[str], said: list[str] | None = None

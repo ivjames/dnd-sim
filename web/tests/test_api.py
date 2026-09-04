@@ -108,6 +108,47 @@ def test_controls_pause_resume_stop(client, sample_config):
     )
 
 
+def test_hold_is_a_lease_not_a_pause(client, sample_config):
+    gid = create(client, sample_config)["id"]
+    game = client.application.config["DND_REGISTRY"].get(gid).game
+
+    rv = client.post("/api/games/%s/hold" % gid, json={"seconds": 12})
+    assert rv.status_code == 202
+    body = rv.get_json()
+    assert body["holding"] == 12.0
+    # a hold must not disturb the table's own pause/resume state
+    assert body["status"] == game.status != "paused"
+    assert game.hold_remaining() > 0
+
+    assert client.post("/api/games/%s/hold" % gid, json={"seconds": 0}).get_json()["holding"] == 0
+    assert game.hold_remaining() == 0
+
+
+def test_hold_validates_and_caps(client, sample_config):
+    gid = create(client, sample_config)["id"]
+    assert client.post("/api/games/%s/hold" % gid, json={"seconds": "soon"}).status_code == 400
+    # no body at all is a release, not an error
+    assert client.post("/api/games/%s/hold" % gid).get_json()["holding"] == 0
+    assert client.post("/api/games/%s/hold" % gid, json={"seconds": 9999}).get_json()["holding"] == 30.0
+
+
+def test_hold_leases_are_per_client(client, sample_config):
+    gid = create(client, sample_config)["id"]
+    game = client.application.config["DND_REGISTRY"].get(gid).game
+    url = "/api/games/%s/hold" % gid
+
+    client.post(url, json={"seconds": 20, "client": "tab-a"})
+    client.post(url, json={"seconds": 20, "client": "tab-b"})
+    client.post(url, json={"seconds": 0, "client": "tab-b"})   # b caught up
+    assert game.hold_remaining() > 0                            # a is still behind
+    client.post(url, json={"seconds": 0, "client": "tab-a"})
+    assert game.hold_remaining() == 0
+
+
+def test_hold_on_an_unknown_or_dead_game(client, sample_config):
+    assert client.post("/api/games/nope/hold", json={"seconds": 5}).status_code == 404
+
+
 def test_dm_note(client, sample_config):
     gid = create(client, sample_config)["id"]
     assert client.post("/api/games/%s/note" % gid, json={"text": ""}).status_code == 400
@@ -139,6 +180,7 @@ def test_restart_marks_stale_games_stopped(db_file, sample_config):
 
     # controls on a dead game are a 409, not a crash
     assert c2.post("/api/games/%s/pause" % gid).status_code == 409
+    assert c2.post("/api/games/%s/hold" % gid, json={"seconds": 5}).status_code == 409
     # ...but its history is still readable
     assert c2.get("/api/games/%s/events?after=-1" % gid).status_code == 200
     detail = c2.get("/api/games/" + gid).get_json()

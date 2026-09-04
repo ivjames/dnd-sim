@@ -2,7 +2,7 @@
 
 The fakes implement exactly the slice of CONTRACTS.md 2/4 that web touches:
 ``EventBus.subscribe/unsubscribe/publish/history``, ``Event`` fields, and
-``Game.id/status/start/pause/resume/stop/inject_dm_note/snapshot/ledger``.
+``Game.id/status/start/pause/resume/stop/hold/release/release_all/inject_dm_note/snapshot/ledger``.
 """
 
 from __future__ import annotations
@@ -92,6 +92,9 @@ class FakeGame:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
+        self.held = 0.0
+        self.hold_clients: dict[str, float] = {}
+        self._holds: dict[str, float] = {}
         self.step_delay = float(os.environ.get("FAKE_STEP_DELAY", "0.02"))
 
     # -- helpers
@@ -137,7 +140,29 @@ class FakeGame:
     def stop(self) -> None:
         self._stop.set()
         self._paused.clear()
+        self.release_all()
         self.status = "stopped"
+
+    def hold(self, seconds: float = 0.0, client: str = "") -> float:
+        secs = max(0.0, min(float(seconds), 30.0))
+        self.held = secs
+        self.hold_clients[str(client or "")] = secs
+        now = time.monotonic()
+        if secs:
+            self._holds[str(client or "")] = now + secs
+        else:
+            self._holds.pop(str(client or ""), None)
+        return secs
+
+    def release(self, client: str = "") -> None:
+        self.hold(0.0, client)
+
+    def release_all(self) -> None:
+        self._holds.clear()
+
+    def hold_remaining(self) -> float:
+        now = time.monotonic()
+        return max([d - now for d in self._holds.values()] + [0.0])
 
     def inject_dm_note(self, text: str) -> None:
         self.notes.append(text)
@@ -146,6 +171,7 @@ class FakeGame:
     def snapshot(self) -> dict:
         return {
             "status": self.status,
+            "holding": self.hold_remaining() > 0,
             "round": 1,
             "summary": "The party ambushed on the trail.",
             "ledger": self.ledger,

@@ -194,7 +194,7 @@ class PlayerAgent:
 class DMAgent:
     def __init__(self, client, model, ledger, setting: str, tone: str)
     def open_scene(self, scene: dict, party_summary: str) -> str                     # ≤600 tokens narration
-    def narrate(self, view: str, events: list[Event]) -> str                          # ≤120 words, describes the last turn's resolved events in-world; MUST NOT contradict numbers
+    def narrate(self, view: str, events: list[Event]) -> str                          # ≤60 words (a listening budget — see Amendments), describes the last turn's resolved events in-world; MUST NOT contradict numbers
     def monster_action(self, view: str, templates: list[ActionTemplate], monster_id: str) -> Action   # RESPONSE_SHAPE: dm_monster_action, same JSON as player
     def adjudicate(self, view: str, request: str) -> dict                             # RESPONSE_SHAPE: dm_adjudication → {"resolution": "skill_check"|"narrative"|"start_combat", "skill": "Stealth", "dc": 13, "actor": "pc_2", "narration": str, "encounter": {"monsters": [{"name": "Goblin","count": 4}], "grid": {...}} | null}
     def scene_options(self, view: str) -> list[str]                                   # 3–4 short options for the party in exploration/social mode
@@ -269,6 +269,7 @@ GET  /api/games/<id>                    snapshot + config + ledger
 GET  /api/games/<id>/events?after=seq   history (from SQLite)
 GET  /api/games/<id>/stream             SSE: `event: <kind>` `data: <Event JSON>`; on connect replays history after ?after=, then live; heartbeat comment every 15s; on finish sends `event: end`
 POST /api/games/<id>/pause | /resume | /stop
+POST /api/games/<id>/hold   {"seconds","client"} → 202 {"holding": <granted>}  per-client narration lease; expires by itself, leaves status alone
 POST /api/games/<id>/note   {"text"}    → 202
 ```
 SQLite `web/db.py` (file at `DND_SIM_DB`, default `./data/dndsim.sqlite3`): tables `games(id TEXT PK, created_at, config_json, status, title, cost_usd, snapshot_json)` and `events(game_id, seq, kind, json, PRIMARY KEY(game_id, seq))`. Persist via `Game(on_event=...)`. Snapshot saved on status change and every 25 events.
@@ -767,3 +768,62 @@ emitted — but a turn is a beat at the table, not a speech per die roll.
    model would. Its canned speech pool is 8 lines, so in a mock game the
    repetition guard suppresses nearly every line after the first eight — an
    artifact of the fixture, not of a live game.
+
+### 2026-09-04 — orchestrator/ + web/ + agents/ — narration hold, and word caps as a listening budget
+
+The spectator page reads the game aloud, and text arrives far faster than a
+voice speaks it, so the simulation ran minutes ahead of what a listener heard.
+Two changes, at the two ends of that gap.
+
+1. **`Game.hold(seconds) -> float` / `Game.release()` / `Game.hold_remaining()`**
+   — a renewable lease that makes `_gate()` wait. Not `pause()`, on purpose:
+
+   - It **expires by itself** (capped at `MAX_HOLD_SECONDS = 30`, a module
+     constant in `orchestrator/game.py`). A spectator whose browser dies
+     mid-hold costs the game seconds, where a pause would freeze it for good.
+     The client renews every 4 s; `hold(0)`/`release()` lifts it at once.
+   - It **does not touch `status`.** Holding is the narration keeping step;
+     pausing is the table stopping. They are separately controllable, and a
+     held game still reads as `running`, so the UI's pause/resume stay
+     meaningful and the two never fight.
+   - `stop()` releases it, so a held loop notices the stop immediately.
+
+   - Leases are **per client** (`hold(seconds, client="")`), and the loop waits
+     for the longest outstanding. One global deadline would make every
+     spectator the last writer of everyone else's: a second tab catching up
+     and releasing would cut short a first tab that is still behind, and a
+     renewal in flight when another released would reinstate the hold.
+     `release(client)` drops one; `release_all()` drops every one, and is what
+     `stop()` calls. The table is bounded at `MAX_HOLD_CLIENTS = 64` — ids come
+     from callers, and leases expire, so evicting the soonest to go costs at
+     most that one lease.
+
+   Exposed as `POST /api/games/<id>/hold {"seconds": n, "client": id}` → `202
+   {"id", "status", "holding": <seconds granted>}`. Non-numeric `seconds` is a
+   400; a game not running in this process is a 409, as for the other controls.
+   Unlike them it writes no snapshot — it is called every few seconds.
+   `Game.snapshot()` gains `"holding": bool` so other spectators can see why a
+   game is quiet.
+
+2. **`Game.pause()` before `run()` now reads back as `paused`.** `run()` set
+   `status = "running"` unconditionally, so a pause landing in the gap between
+   `start()` and `run()` left the loop blocked at its first gate while
+   reporting itself running — and a UI that offers Resume only for `"paused"`
+   had no way to let it go. `pause()` now also marks `"created"` games paused,
+   `run()` takes the status from the resume flag, and `resume()` restores
+   `"running"` or `"created"` depending on whether `run()` has taken over
+   (`Game._live`).
+
+3. **The DM's word caps are a listening budget.** §3's `narrate` is now **≤60
+   words**, not 120: at ~150 words a minute of speech, 120 words per resolved
+   turn is a minute of narration per six seconds of combat and the voice can
+   never catch up. Also `SCENE_WORDS` 150→90, a new `EPILOGUE_WORDS` 100 (the
+   epilogue no longer borrows `SCENE_WORDS`), a new `ADJUDICATION_WORDS` 45 for
+   the setup line in `adjudicate` (it used to borrow `NARRATION_WORDS`), and
+   `player.speak` 60→35 (`FREE_SPEECH_WORDS`). Max-token ceilings came down to
+   match. The prompts ask for the same numbers and say why: every line is read
+   aloud while the game waits.
+
+The web client's half of this — narration as a playhead over the transcript
+rather than a queue, so pausing, backgrounding the tab and reloading all leave
+a resumable mark — is UI, not contract; it is described in the README.

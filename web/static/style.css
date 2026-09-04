@@ -261,6 +261,48 @@ body {
 }
 .mech.speaking { color: var(--ink); }
 
+/* What the narrator has already read is dimmed, so a spectator coming back to
+   the tab can see where they were. Only while it is actually behind: caught up,
+   every line is read and dimming them all would say nothing. app.js marks the
+   nodes (`read`) as the playhead passes them. */
+.transcript.has-playhead .read.narration,
+.transcript.has-playhead .read.dialogue,
+.transcript.has-playhead .read.scene,
+.transcript.has-playhead .read.dmnote,
+.transcript.has-playhead .read.turn-head { opacity: .5; }
+.transcript.voice-clickable .narration,
+.transcript.voice-clickable .dialogue,
+.transcript.voice-clickable .scene,
+.transcript.voice-clickable .dmnote { cursor: pointer; }
+
+/* ---------- narration transport ---------- */
+.transport { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-transport {
+  min-width: 44px; padding: 8px 10px; font-size: 15px; line-height: 1;
+  font-variant-emoji: text;
+}
+.btn-live { font-size: 12px; font-family: var(--mono); }
+.btn-transport.on { border-color: var(--amber); color: var(--amber); }
+.vt-now {
+  margin: 8px 0 0; min-height: 2.4em;
+  font-size: 12px; font-family: var(--mono); color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.vt-now .vt-tag { color: var(--ink-faint); text-transform: uppercase; letter-spacing: .07em; margin-right: 6px; }
+.vt-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.vt-settings select { width: auto; }
+.pill-behind {
+  font: inherit; font-size: 11px; font-family: var(--mono);
+  cursor: pointer; border: 1px solid var(--amber-dim); color: var(--amber);
+  background: transparent; padding: 2px 8px; border-radius: 999px;
+  min-height: 24px; -webkit-appearance: none; appearance: none;
+  touch-action: manipulation;
+}
+.pill-behind[hidden] { display: none; }
+.ctl-note { margin: 8px 0 0; font-size: 12px; font-family: var(--mono); color: var(--ink-dim); }
+.ctl-note.bad { color: #e0a294; }
+.ctl-note[hidden] { display: none; }
+
 input, select, textarea {
   font: inherit; font-size: 16px; /* 16px avoids iOS zoom-on-focus */
   width: 100%;

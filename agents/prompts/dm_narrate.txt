@@ -5,5 +5,6 @@ THE ENGINE JUST RESOLVED THESE EVENTS (authoritative, already final):
 {dm_note}
 RESPONSE_SHAPE: dm_narration
 Reply with JSON only:
-{{"narration": "<describe those exact events in-world, 120 words max>"}}
+{{"narration": "<describe those exact events in-world, 60 words max>"}}
 Cover what happened, in order, without contradicting a single number, hit, miss, or death above. Add no new events. Do not roll. Do not act for player characters.
+This is read aloud at the table as it arrives, so it has to be shorter than the turn it describes. Two or three sentences. Lead with the blow that landed; skip anything the engine already stated plainly. No preamble, no summing up, no restating the situation the table can see.

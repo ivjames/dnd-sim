@@ -205,17 +205,15 @@ prompt-cached, and summaries are written by the cheap model.
 
 ## Spoken narration
 
-The spectator page can read the game aloud. Tick **voice** in the top bar
-(the tick is the tap that browsers require before a page may speak) and the
-DM's narration, scene openings, the epilogue, every line of dialogue and any DM
-note from the table are spoken as they arrive — never the replayed transcript.
-Mechanics are spoken too, but shaped into a short line ("Goblin 2 hits Thorin
-for 6", "Round 3", "Vessa moves 30 feet") rather than the dice string, and
-**mute mechanics** silences them entirely. The DM has one voice; each PC gets
-its own, picked deterministically from the voices the browser has, with a
-pitch/rate nudge when there are too few to go round (an iPad often has one or
-two). The rate has three steps, **skip** drops the line being read, and the
-transcript line being spoken is highlighted.
+The spectator page can read the game aloud. Tick **voice** in the top bar (the
+tick is the tap that browsers require before a page may speak) and the DM's
+narration, scene openings, the epilogue, every line of dialogue and any DM note
+from the table are spoken. Mechanics are spoken too, but shaped into a short
+line ("Goblin 2 hits Thorin for 6", "Round 3", "Vessa moves 30 feet") rather
+than the dice string, and **mute mechanics** silences them entirely. The DM has
+one voice; each PC gets its own, picked deterministically from the voices the
+browser has, with a pitch/rate nudge when there are too few to go round (an
+iPad often has one or two).
 
 A monster that can speak — one whose SRD stat block names a language it uses
 aloud, so a goblin or an ogre but not a wolf or a zombie — is cast instead from
@@ -226,12 +224,64 @@ ever dealt one: not the DM, not a PC, not an NPC that isn't a monster. A device
 that ships none — Windows, Android, most of Linux — leaves speaking monsters on
 the shared NPC voice, as before.
 
+### The playhead
+
+Narration is a **playhead over the transcript**, not a queue of things to say:
+`V.cursor` indexes every event the page has seen, and the narrator reads
+forward from it. Nothing is dropped and nothing is skipped behind your back.
+The consequences are the point:
+
+- **Pause leaves a mark.** ⏸ stops mid-line and the playhead stays on that
+  line; ▶ picks it up where it stopped. So does backgrounding the tab —
+  synthesis is suspended there and comes back garbled, so the narrator stops,
+  but it stops *in place*. Coming back resumes the line you were on rather
+  than jumping to whatever the game reached meanwhile.
+- **You can go back.** ⏮ re-reads the line before, ⏭ drops the current one,
+  **live** jumps to the newest, and clicking any line in the transcript starts
+  reading from there.
+- **It survives a reload.** The playhead is saved per game in `localStorage`,
+  so reopening the page offers the line you were on, not the top of the game.
+- **A "N behind" badge** in the top bar says how far the narrator is from the
+  live edge, and doubles as the jump-to-live button. While the narrator is
+  behind, **follow** follows the narrator rather than the tail — otherwise it
+  would scroll away from the line you can hear.
+- **The transport outlives the game.** A finished, stopped or budget-exhausted
+  game still has a full transcript, so play/back/skip keep working on it; only
+  the game controls (pause/resume/stop) go dead, and they say why.
+
+### Holding the game for the narrator
+
+Text arrives far faster than a voice can speak it, so left alone the game runs
+minutes ahead of what you are hearing. **hold the game for the narrator** (on
+by default) fixes that from the listening end: while the narrator is more than
+a few lines behind, the page asks the game to wait.
+
+That ask is `POST /api/games/<id>/hold {"seconds": n, "client": id}` — a
+renewable *lease*, not a pause. It expires by itself, so a tab that is closed
+mid-hold costs the game a few seconds rather than freezing it for good; the
+page renews it every 4 s while it is behind and drops it the moment it catches
+up, when the tab goes to the background, or when the game ends. It deliberately
+leaves `status` alone: holding is the narration keeping step, the table's own
+pause is something else, and the two stay separately controllable.
+
+Leases are per spectator, and the game waits for the longest one outstanding.
+One shared deadline would make every spectator the last writer of everyone
+else's: a second tab catching up and releasing would cut short a first tab that
+is still behind, and a renewal in flight when another released would put the
+hold back on. Whoever is furthest behind sets the pace, which is what a shared
+table means. The id is per *tab*, kept in `sessionStorage`, so a reload renews
+its own lease rather than stranding one to expire.
+
+The other half of the fix is upstream — the DM's word ceilings
+(`agents/dm.py`) are a *listening* budget, roughly 150 words a minute of
+speech, not just a token budget.
+
 This is the browser's own Web Speech API (`speechSynthesis`) — nothing leaves
 the device and it costs nothing, so voice quality is whatever the OS ships.
 Server-rendered voices (Amazon Polly, Cartesia and the like) would be a later,
 paid option. Selection and wording live in `web/static/speech.js`, a
-dependency-free module that `node` can exercise directly; the queue and the
-speech calls are in `app.js`.
+dependency-free module that `node` can exercise directly; the playhead, the
+transport and the speech calls are in `app.js`.
 
 ## Deployment
 
