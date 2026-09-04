@@ -976,6 +976,12 @@ with the browser's voices kept as a real fallback rather than deleted.
    a game whose narration has spent it. Only an actual synthesis is charged — a
    cache hit costs nothing and is charged nothing.
 
+   The end-of-game cost line is built from `to_dict()` rather than by
+   iterating `by_role`: a charge from a request thread inserts a key, and an
+   unlocked iteration raises "dictionary changed size during iteration" — which
+   in `Game`'s `finally` would take both the final cost event and `bus.close()`
+   with it.
+
    `add_usd` does **not** touch `calls`. `to_dict()["calls"]` and the line
    `Game` emits at the end of a game (`"... over N model calls"`) both report
    that figure as model calls, and a clip is by definition not one; the caller
@@ -1018,11 +1024,15 @@ with the browser's voices kept as a real fallback rather than deleted.
    registry for the life of the process but its monitor thread returns at the
    first terminal status — so for a finished game, which is exactly the game
    people replay, nothing else would write after that and the charge would sit
-   in memory until a restart handed the budget back. `_charge` calls
-   `entry.persist_snapshot()` on the ledger path, and does both **under one
-   lock per game**: that call reads the ledger total and writes it ABSOLUTELY,
-   so two charges landing at once can commit out of order and the older figure
-   land last.
+   in memory until a restart handed the budget back.
+
+   **`persist_snapshot` writes an absolute total, so every writer of it
+   serializes** — on a lock that belongs to `GameEntry`, not to the narration
+   route, because there are four writers: the game thread every 25 events, the
+   monitor on a status change, the control routes, and a charge. New
+   `GameEntry.record_cost(charge)` applies a charge to the live ledger and
+   persists it as one step under that lock; anything else overlapping would
+   otherwise persist a total read from before the charge landed.
 
    A game this process is no longer running has no `Ledger` to charge, so its
    spend goes to the row instead through the new `web/db.py: Database.add_cost(
@@ -1121,7 +1131,11 @@ with the browser's voices kept as a real fallback rather than deleted.
    `DescribeVoices` leaves no roster to vouch for:
    `voices()` comes back empty, `/api/tts` reports unavailable, and the page
    uses the browser's voices — rather than casting a standard-only voice with
-   `Engine=neural` and reaching the same 502 loop by another route.
+   `Engine=neural` and reaching the same 502 loop by another route. An empty
+   pool is cached only for `EMPTY_ROSTER_TTL` (60 s): a `DescribeVoices` that
+   fails transiently is the absence of an answer rather than an answer, and
+   caching it for the life of the process would leave narration off long after
+   the outage cleared. A roster that does come back is kept for good.
 
    Putting the whole table on one engine is a supported choice, not a special
    case, and the cost of doing so on anything but standard is a blunter table:

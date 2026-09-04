@@ -975,8 +975,13 @@
       V.tts.reason = '';
       var audio = V.audio;
       var done = function () { voiceChunkDone(cur, token); };
+      // A media failure can fire `error` AND reject the play() promise for the
+      // same clip, so both paths carry the token and the handler ignores a
+      // stale one. Without that the second arrival counts a second failure,
+      // clears the fallback's watchdog and speaks the line twice.
+      var failed = function () { voiceServerFailed(cur, null, token); };
       audio.onended = done;
-      audio.onerror = function () { voiceServerFailed(cur, null); };
+      audio.onerror = failed;
       // The per-actor rate is baked into the clip's SSML; this is the
       // spectator's own slow/normal/fast, which must not cost a re-synthesis.
       try { audio.playbackRate = VOICE_RATES[V.settings.rate] || 1; } catch (e) { /* ignore */ }
@@ -985,18 +990,20 @@
       // never fires `ended` would park the playhead forever.
       cur.timer = setTimeout(done, Math.max(4000, text.length * 110) + 4000);
       var p = audio.play();
-      if (p && p['catch']) p['catch'](function () { voiceServerFailed(cur, null); });
+      if (p && p['catch']) p['catch'](failed);
       ttsPrefetch(cur);
     })['catch'](function (err) {
-      if (V.current !== cur || cur.token !== token) return;
-      voiceServerFailed(cur, err);
+      voiceServerFailed(cur, err, token);
     });
   }
 
   // A line the server would not or could not say. Say it in this browser's own
   // voice rather than dropping it — a missed line is the one outcome the
   // playhead exists to prevent — and decide whether to keep asking.
-  function voiceServerFailed(cur, err) {
+  function voiceServerFailed(cur, err, token) {
+    // Idempotent per attempt: the second report of one failure must not count
+    // twice, nor restart a line the first report already handed to the browser.
+    if (token !== undefined && (V.current !== cur || cur.token !== token)) return;
     audioDetach();
     if (cur) clearTimeout(cur.timer);
     var status = err && err.status;

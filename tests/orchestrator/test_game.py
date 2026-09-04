@@ -710,3 +710,44 @@ def test_seat_temperatures_reach_the_agents(cfg):
     g._setup()
     assert g.players["pc_1"].temperature == 0.7
     assert g.players["pc_2"].temperature == 0.1
+
+
+def test_the_ledger_report_is_a_snapshot_not_a_live_view():
+    """The end-of-game cost line is built from `to_dict()`.
+
+    Narration is charged from Flask request threads, so `Ledger._row` can
+    insert a key at any moment. Iterating `by_role` directly — which the line
+    used to do — raises "dictionary changed size during iteration" and takes
+    the cost event and `bus.close()` down with it. `to_dict()` takes the lock
+    and returns copies, so what the report walks cannot change under it.
+    """
+    import threading
+
+    from llm.cost import Ledger
+
+    led = Ledger()
+    led.add_usd("narrator", 0.001, clips=1, chars=100)
+    spend = led.to_dict()
+
+    led.add_usd("narrator", 0.001, clips=1, chars=100)
+    assert spend["by_role"]["narrator"]["clips"] == 1      # the copy did not move
+    assert led.by_role["narrator"]["clips"] == 2
+
+    # And it never raises while the ledger is being written to.
+    stop = threading.Event()
+
+    def churn():
+        i = 0
+        while not stop.is_set():
+            led.add_usd(f"narrator:{i}", 0.0001, clips=1)
+            i += 1
+
+    t = threading.Thread(target=churn, daemon=True)
+    t.start()
+    try:
+        for _ in range(500):
+            spend = led.to_dict()
+            assert spend["calls"] == 0        # narration is not a model call
+    finally:
+        stop.set()
+        t.join(timeout=5)

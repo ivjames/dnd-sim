@@ -441,3 +441,27 @@ def test_the_gate_outlives_everyone_queued_on_it(tmp_path):
 
     assert overlaps == [], f"two holders at once: {overlaps}"
     assert svc._inflight == {}     # and nothing is left behind
+
+
+def test_an_empty_roster_is_not_believed_forever(tmp_path):
+    """A transiently failed `DescribeVoices` must not switch narration off for
+    the life of the process. A roster that answers is cached for good."""
+    fake = FakePolly(voices=RuntimeError("ThrottlingException"))
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=fake, engine="neural")
+
+    assert svc.voices() == ()
+    assert svc.voices() == ()
+    assert fake.described == 1                  # believed, for a while
+
+    pool, until = svc._voices["neural"]
+    assert until is not None                    # ...but with a deadline on it
+    svc._voices["neural"] = (pool, time.monotonic() - 1)     # which now passes
+
+    fake._voices = [{"Id": "Arthur", "LanguageCode": "en-GB", "Gender": "Male",
+                     "SupportedEngines": ["neural"]}]
+    assert [v.id for v in svc.voices()] == ["Arthur"]
+    assert fake.described == 2                  # asked again, and got an answer
+
+    assert svc._voices["neural"][1] is None     # a real roster has no deadline
+    svc.voices()
+    assert fake.described == 2

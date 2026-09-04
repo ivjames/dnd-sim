@@ -345,7 +345,7 @@ def test_reconfiguring_the_server_retires_the_browsers_copies(tts_client, tts):
 
     def svc(**kw):
         s = PollyTTS(AudioCache("/nonexistent", 0), client=object(), **kw)
-        s._voices = {e: tuple(STANDARD_ENGLISH)
+        s._voices = {e: (tuple(STANDARD_ENGLISH), None)          # (pool, believe-until)
                      for e in ("standard", "neural", "long-form", "generative")}
         return s
 
@@ -609,3 +609,43 @@ def test_the_probe_checks_every_engine_the_table_uses(tts_client, tts):
 
     rosters["neural"] = tuple(STANDARD_ENGLISH)
     assert tts_client.get("/api/tts").get_json()["available"] is True
+
+
+def test_a_charge_is_not_overwritten_by_another_snapshot_writer(tts_app, tts_client, tts,
+                                                                sample_config):
+    """`persist_snapshot` has four callers — the game thread, the monitor, the
+    control routes and a narration charge — and it writes an ABSOLUTE total.
+    Serializing charge against charge left the other three able to persist a
+    ledger read from before the charge landed."""
+    game = create(tts_client, dict(sample_config, budget_usd=10.0))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+    db = tts_app.config["DND_DB"]
+
+    # Another writer — here the control route's — reads the ledger, stalls, and
+    # commits after the charge has persisted.
+    real_save = db.save_snapshot
+    reading = threading.Event()
+    charged = threading.Event()
+
+    def slow_save(game_id, snapshot, status=None, cost_usd=None):
+        if not reading.is_set():
+            reading.set()
+            charged.wait(timeout=2)
+        real_save(game_id, snapshot, status=status, cost_usd=cost_usd)
+
+    db.save_snapshot = slow_save
+    try:
+        other = threading.Thread(target=entry.persist_snapshot)
+        other.start()
+        assert reading.wait(timeout=5)
+        text = "The fire gutters."
+        assert tts_client.get(speak_url(game, text=text)).status_code == 200
+        charged.set()
+        other.join(timeout=10)
+    finally:
+        db.save_snapshot = real_save
+
+    expected = len(text) * 4.0 / 1_000_000
+    assert entry.game.ledger.total_usd == pytest.approx(expected, rel=1e-6)
+    assert db.get_game(game)["cost_usd"] == pytest.approx(expected, rel=1e-6)

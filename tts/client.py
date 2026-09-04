@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -68,6 +69,11 @@ DEFAULT_LANGUAGE = "en-US"
 DEFAULT_DM_VOICE = "Brian"
 DEFAULT_MAX_CHARS = 400          # a `speech.js` chunk is capped at 220
 DEFAULT_CACHE_MB = 512
+#: How long an EMPTY roster is believed. A `DescribeVoices` that fails
+#: transiently — a blip, an IAM change being rolled out — would otherwise be
+#: cached for the life of the process and leave narration off long after the
+#: outage cleared. A roster that comes back is cached for good.
+EMPTY_ROSTER_TTL = 60.0
 
 
 class TTSError(RuntimeError):
@@ -122,7 +128,9 @@ class PollyTTS:
         self.region = (region or "").strip()
         self._client = client
         self._client_tried = client is not None
-        self._voices: dict[str, tuple[Voice, ...]] = {}   # per engine
+        # per engine: the pool, and when to stop believing it (None = never,
+        # which is what a non-empty roster gets)
+        self._voices: dict[str, tuple[tuple[Voice, ...], float | None]] = {}
         self._lock = threading.Lock()
         self._inflight: dict[str, tuple[threading.Lock, int]] = {}   # gate, holders+waiters
 
@@ -190,13 +198,19 @@ class PollyTTS:
         than a silent narrator.
         """
         engine = str(engine or self.engine).strip().lower()
+        now = time.monotonic()
         with self._lock:
             hit = self._voices.get(engine)
-        if hit is not None:
-            return hit
+            if hit is not None:
+                pool, until = hit
+                if until is None or now < until:
+                    return pool
         pool = self._describe(engine) or self._fallback_pool(engine)
         with self._lock:
-            self._voices[engine] = pool
+            # An empty pool is not an answer, it is the absence of one: believe
+            # it only briefly, so the next probe after the outage clears finds
+            # the voices rather than the memory of not finding them.
+            self._voices[engine] = (pool, None if pool else now + EMPTY_ROSTER_TTL)
         return pool
 
     def _fallback_pool(self, engine: str = "") -> tuple[Voice, ...]:
