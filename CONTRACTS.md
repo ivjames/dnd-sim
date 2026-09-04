@@ -1198,9 +1198,19 @@ instead, as its own clip.
 4. **`web/static/app.js` casts per chunk, not per line.** `cur.chunks` is now
    `[{key, text}]` rather than `[text]` and `cur.vkey` is gone; `chunkKey(cur)`
    /`chunkText(cur)` are what the server path, the browser-fallback path and
-   the prefetch all read. A line that falls back mid-way still falls back
-   whole, so the two voices are both the browser's or both Polly's, never one
-   of each.
+   the prefetch all read.
+
+   **One line, one engine, where the line is more than one voice.**
+   `voiceStartLine` asks for every remaining clip of such a line before any of
+   it plays, and hands the whole line to the browser's voices if any is
+   refused. `cur.local` cannot do this on its own: it is set by a failure that
+   has already happened, and the attribution is the half most likely to be a
+   free cache hit — the same name every time that character speaks. So the
+   name would play through Polly and the words behind it still be refused,
+   which is precisely what a game running out of budget mid-scene does. A
+   single-voice line is unchanged and still starts on its first chunk while
+   the rest fetch: that is what makes a long narration start promptly, and one
+   speaker crossing engines between chunks is a seam nobody can hear.
 
 **Why the recorded rationale was overridden.** The comment this replaces
 argued that a speaking monster's novelty voice was "a costume rather than a

@@ -929,7 +929,7 @@
       V.current = cur;
       if (node) { node.classList.add('speaking'); voiceFollow(node); }
       voiceSavePos();
-      voiceSpeakChunk(cur);
+      voiceStartLine(cur);
       voiceRenderControls();
       return;
     }
@@ -952,13 +952,56 @@
     return cur.chunks.map(function (c) { return c.text; }).join(' ');
   }
 
+  // How many voices are left in this line from the playhead on. Two means an
+  // attributed line: the narrator naming the speaker, then the speaker.
+  function voicesLeft(cur) {
+    var keys = {};
+    for (var i = cur.idx; i < cur.chunks.length; i++) keys[cur.chunks[i].key] = 1;
+    return Object.keys(keys).length;
+  }
+
+  // Begin a line — or resume it, which is the same question asked from a later
+  // chunk. A line that is more than one voice is settled onto ONE engine before
+  // any of it is heard: its clips are asked for together, and a refusal of any
+  // takes the whole line to the browser's voices. `cur.local` alone cannot do
+  // that, because it is set by a failure that has already happened — a name
+  // clip that is cached (they nearly all are, the same name every time) plays
+  // through Polly for free, and the words behind it can still be refused. A
+  // game running out of budget mid-scene is exactly when that happens, and it
+  // arrives as one line in two engines: the narrator on Polly, the goblin on
+  // the device.
+  //
+  // A single-voice line still starts on its first chunk and fetches the rest
+  // as it plays. That is what makes a long narration start promptly, and one
+  // speaker crossing engines between two chunks is a seam nobody can hear.
+  function voiceStartLine(cur) {
+    if (!ttsOn() || cur.local || voicesLeft(cur) < 2) { voiceSpeakChunk(cur); return; }
+    var rest = cur.chunks.slice(cur.idx);
+    // Over the server's cap is not a refusal — it is never asked — so it costs
+    // the line its server voices without counting toward giving up on them.
+    if (rest.some(function (c) { return c.text.length > V.tts.maxChars; })) {
+      cur.local = true;
+      voiceSpeakChunk(cur);
+      return;
+    }
+    var token = cur.token = 'line#' + cur.ev.seq + '#' + cur.idx;
+    Promise.all(rest.map(function (c) { return clipFetch(ttsUrl(c.key, c.text)); }))
+      .then(function () {
+        if (V.current !== cur || cur.token !== token) return;   // skipped while in flight
+        voiceSpeakChunk(cur);      // every clip is in hand; each is a cache hit now
+      })['catch'](function (err) {
+        voiceServerFailed(cur, err, token);
+      });
+  }
+
   // Speak the chunk the playhead is on, in whichever engine is answering.
   // Both paths end at the same `voiceChunkDone`, so everything above here —
   // the playhead, the transport, the holds, the read marks — is untouched by
   // which one it was.
   function voiceSpeakChunk(cur) {
-    // `cur.local` is set when a line has already fallen back: a line that
-    // changes voice halfway through sounds like two people reading it.
+    // `cur.local` is set when a line has already fallen back, and by
+    // `voiceStartLine` before an attributed line starts at all: a line that
+    // changes engine halfway through sounds like two people reading it.
     // A chunk over the server's cap would be refused, and a refusal counts
     // toward giving up on the server entirely — so it is not even asked. The
     // chunker caps at 220 and the server at 400, so this is only reachable on

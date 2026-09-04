@@ -47,8 +47,32 @@ def test_the_reader_takes_a_voice_per_chunk():
     assert "Speech.segmentsFor(" in js, "the reader no longer asks for the voiced parts"
     # One key per line would put the narrator's name clip in the monster's voice.
     assert "cur.vkey" not in js
+    # Every clip is asked for under a chunk's own key; nothing passes a
+    # line-wide one, which is what would put the name in the monster's voice.
     for call in re.findall(r"ttsUrl\(([^,]+),", js):
-        assert call.strip() in ("key", "ahead.key", "chunkKey(cur)"), call
+        assert call.strip() in ("key", "c.key", "ahead.key", "chunkKey(cur)"), call
+
+
+def test_a_line_in_two_voices_settles_on_one_engine_before_it_starts():
+    """The narrator's half and the speaker's half never split across engines.
+
+    A cached name clip costs nothing and plays; the words behind it can still
+    be refused — a game running out of budget mid-scene is exactly that case —
+    and the line would arrive as Polly then the device. `cur.local` cannot
+    prevent it: it is set by a failure that has already happened. So a line
+    with more than one voice left in it fetches all of its clips first and
+    hands the whole line to the browser if any is refused.
+    """
+    js = read().split("// ---- the reader ----")[-1]
+    m = re.search(r"function voiceStartLine\(cur\) \{(.+?)\n  \}", js, re.S)
+    assert m, "the line no longer starts through voiceStartLine"
+    body = m.group(1)
+    assert "voicesLeft(cur) < 2" in body            # only multi-voice lines wait
+    assert "Promise.all(" in body                   # all of them, before any of them
+    assert "voiceServerFailed(cur, err, token)" in body   # a refusal takes the line
+    assert "cur.local = true" in body               # over the cap: never asked, still whole
+    assert re.search(r"voiceSavePos\(\);\n      voiceStartLine\(cur\);", js), \
+        "the pump no longer starts lines through it"
 
 
 def test_the_line_in_flight_is_only_read_for_fields_it_carries():
