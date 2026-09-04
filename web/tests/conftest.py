@@ -239,13 +239,25 @@ class FakeTTS:
     def config_id(self) -> str:
         return "fake-config"
 
-    def price_of(self, chars: int) -> float:
-        return max(0, int(chars)) * self.price_per_million / 1_000_000.0
+    def rate_for(self, engine: str) -> float:
+        from tts.client import PRICE_USD_PER_MILLION_CHARS  # noqa: PLC0415
+
+        if str(engine or self.engine) == self.engine:
+            return self.price_per_million
+        return PRICE_USD_PER_MILLION_CHARS.get(str(engine), self.price_per_million)
+
+    def price_of(self, chars: int, engine: str = "") -> float:
+        return max(0, int(chars)) * self.rate_for(engine or self.engine) / 1_000_000.0
+
+    def engine_for(self, key: str) -> str:
+        from tts.voices import is_monster_key  # noqa: PLC0415
+
+        return self.monster_engine if is_monster_key(key) else self.engine
 
     def cast(self, key: str, gender: str = ""):
         from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
 
-        return cast_for(key, STANDARD_ENGLISH, "Brian", gender)
+        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key))
 
     def cache_key_for(self, key: str, text: str, gender: str = ""):
         from tts.cache import cache_key  # noqa: PLC0415
@@ -256,7 +268,7 @@ class FakeTTS:
     def cached(self, ckey: str):
         return self.clips.get(ckey)
 
-    def voices(self):
+    def voices(self, engine: str = ""):
         from tts.voices import STANDARD_ENGLISH  # noqa: PLC0415
 
         return STANDARD_ENGLISH if self.up else ()
@@ -287,7 +299,9 @@ class FakeTTS:
             return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey)
         audio = b"\xff\xfb" + text.encode("utf-8")
         self.clips[ckey] = audio
-        return TTSResult(audio, cast, len(text), self.price_of(len(text)), False, ckey)
+        # At the seat's own engine's rate, as `PollyTTS.render` does.
+        usd = self.price_of(len(text), cast.engine)
+        return TTSResult(audio, cast, len(text), usd, False, ckey)
 
 
 @pytest.fixture()

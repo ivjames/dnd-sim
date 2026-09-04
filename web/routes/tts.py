@@ -272,15 +272,18 @@ def capability():
                 "reason": "no Polly client — boto3 is missing, or AWS credentials are not set",
             }
         )
-    if not svc.voices():
-        # A non-standard engine whose DescribeVoices failed: the built-in
-        # roster is standard-only, so there is nothing to cast from.
-        return jsonify(
-            {
-                "available": False,
-                "reason": f"no {svc.engine} voices for {svc.language} could be listed",
-            }
-        )
+    # Every engine the table uses, not just the seats' — a monster renders on
+    # its own. An engine with no roster is a 503 on its first line, which the
+    # page reads as settled and uses to switch server voices off for the whole
+    # game, taking the seats that were working with it.
+    for engine in dict.fromkeys((svc.engine, svc.monster_engine)):
+        if not svc.voices(engine):
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": f"no {engine} voices for {svc.language} could be listed",
+                }
+            )
     return jsonify(
         {
             "available": True,
@@ -367,7 +370,10 @@ def speak(game_id: str):
             # making the other leaves a gap in which a waiting request reads a
             # ledger that does not yet know about this clip, and reserves money
             # that is already spent.
-            with _admission(game_id, entry, svc.price_of(len(text)), budget):
+            # At the rate of the engine THIS seat renders on, which for a
+            # monster is not the table's: reserving at the wrong rate either
+            # refuses a clip the game can afford or admits one it cannot.
+            with _admission(game_id, entry, svc.price_of(len(text), cast.engine), budget):
                 result = svc.render(key, text, gender)
                 if result.usd:
                     _charge(game_id, entry, result.chars, result.usd)

@@ -491,7 +491,7 @@ def test_the_charge_lands_before_the_reservation_is_released(tts_app, tts_client
 def test_a_nonstandard_engine_with_no_roster_says_so(tts_app, tts_client, tts):
     """The built-in roster is standard-only. Casting one of those voices with
     `Engine=neural` is the 502 loop engine-aware SSML exists to avoid."""
-    tts.voices = lambda: ()
+    tts.voices = lambda engine="": ()
     body = tts_client.get("/api/tts").get_json()
     assert body["available"] is False and "could be listed" in body["reason"]
 
@@ -566,3 +566,39 @@ def test_concurrent_charges_do_not_lose_each_other(tts_app, tts_client, tts, sam
     assert entry.game.ledger.total_usd == pytest.approx(expected, rel=1e-6)
     # The row must agree with the ledger, not with whichever write landed last.
     assert db.get_game(game)["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_seat_is_reserved_at_its_own_engines_rate(tts_app, tts_client, tts, sample_config):
+    """A monster renders on a different engine from the table, so it is billed
+    at a different rate. Reserving at the table's rate either refuses a clip
+    the game can afford or admits one it cannot."""
+    tts.engine, tts.monster_engine = "neural", "standard"
+    tts.price_per_million = 16.0                       # the table's rate
+
+    text = "Fee fi fo fum."
+    monster_cost = len(text) * 4.0 / 1_000_000         # what a monster actually costs
+    game = create(tts_client, dict(sample_config, budget_usd=monster_cost * 1.5))["id"]
+    entry = tts_app.config["DND_REGISTRY"].get(game)
+    entry.game.ledger = Ledger()
+
+    # Affordable at the monster's own rate, four times over budget at the
+    # table's — so reserving at the table's rate refuses it.
+    rv = tts_client.get(speak_url(game, key="monster:goblin_1", text=text))
+    assert rv.status_code == 200, rv.get_json()
+    assert entry.game.ledger.total_usd == pytest.approx(monster_cost, rel=1e-6)
+
+
+def test_the_probe_checks_every_engine_the_table_uses(tts_client, tts):
+    """A monster engine with no roster is a 503 on its first monster line,
+    which the page reads as settled and uses to switch server voices off for
+    the whole game — taking the seats that were working with it."""
+    tts.engine, tts.monster_engine = "standard", "neural"
+    rosters = {"standard": tuple(STANDARD_ENGLISH), "neural": ()}
+    tts.voices = lambda engine="": rosters[engine or tts.engine]
+
+    body = tts_client.get("/api/tts").get_json()
+    assert body["available"] is False
+    assert "neural" in body["reason"]                  # names the one that is missing
+
+    rosters["neural"] = tuple(STANDARD_ENGLISH)
+    assert tts_client.get("/api/tts").get_json()["available"] is True

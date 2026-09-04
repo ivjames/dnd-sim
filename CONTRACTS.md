@@ -1094,7 +1094,13 @@ with the browser's voices kept as a real fallback rather than deleted.
    the `Cast` rather than being read from a setting at render time, so a line
    cannot be cast for one engine and rendered on another; each engine has its
    own `DescribeVoices` roster, its own cache namespace and its own rate in the
-   ledger.
+   ledger — and both are load-bearing at the edges: a clip is **reserved** at
+   the rate of the engine its own seat renders on (reserving at the table's
+   refuses a monster clip the game can afford, or admits one it cannot), and
+   `/api/tts` reports unavailable unless **every** configured engine has a
+   roster (an engine without one is a 503 on its first line, which the page
+   reads as settled and uses to switch server voices off for the whole game,
+   taking the seats that were working with it).
 
    The split exists for one tag. `<amazon:effect vocal-tract-length>` changes
    timbre rather than pitch — a longer vocal tract is a bigger creature — and
