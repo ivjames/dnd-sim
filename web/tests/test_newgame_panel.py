@@ -8,8 +8,13 @@ so a game starts with a default the operator did not choose.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
+import subprocess
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP_JS = os.path.join(ROOT, "web", "static", "app.js")
@@ -73,6 +78,52 @@ def test_choosing_adult_states_nothing_at_all():
     body = m.group(1)
     assert "member.age = 'child'" in body
     assert "delete member.age" in body
+
+
+#: Strings the two implementations of "is this a child" have to agree on. The
+#: interesting ones are where `Number()` and Python's `float()` part company —
+#: JavaScript reads `0x`/`0b`/`0o` literals that `float()` rejects, `float()`
+#: reads the underscores that `Number()` rejects — because either disagreement
+#: is a select that shows one thing while the server casts another, and
+#: submitting the panel then rewrites the character's age to match the wrong
+#: one. Reported by review on #25 and the reason `NUMERIC_AGE` exists.
+AGE_CORPUS = [
+    "child", "kid", "boy", "girl", "adult", "elder", "elderly", "old", "grown-up",
+    "", "   ", "Child", " KID ", "ancient-ish", "old enough", "twelve",
+    "0xA", "0xa", "0b1010", "0o14", "1_0", "1_2.5", "inf", "Infinity", "-inf", "nan",
+    "0", "-3", "+12", "12", "12.", "12.0", "12.5", ".5", "13", "1e1", "1e3",
+    "1e-400", "1e999", "4000", " 9 ", "9.999", "1e400",
+]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_panel_and_the_server_read_an_age_the_same_way():
+    """Run both implementations over one corpus rather than trusting the shapes.
+
+    `app.js` is an IIFE that exports nothing, so the block is lifted out of the
+    source and evaluated — which also means a rename or a reorder fails here
+    loudly instead of quietly stopping the comparison.
+    """
+    from tts.voices import normalize_age      # noqa: PLC0415
+
+    js = read(APP_JS)
+    m = re.search(r"(var CHILD_AGES = .*?\n  \})", js, re.S)
+    assert m, "the panel's age reader is no longer where this test can find it"
+    script = (
+        m.group(1)
+        + "\nprocess.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).map(isChildAge)));\n"
+    )
+    proc = subprocess.run(
+        ["node", "-e", script, json.dumps(AGE_CORPUS)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    panel = json.loads(proc.stdout)
+    server = [normalize_age(said) == "child" for said in AGE_CORPUS]
+    disagree = [said for said, a, b in zip(AGE_CORPUS, panel, server) if a != b]
+    assert not disagree, f"panel and server disagree on: {disagree}"
+    # And the corpus is doing work: it has to contain both answers.
+    assert any(server) and not all(server)
 
 
 def test_the_panels_idea_of_a_child_is_the_servers():

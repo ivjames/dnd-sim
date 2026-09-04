@@ -409,7 +409,11 @@ child's voice can be dealt one; everyone with no age stated, and the DM, the
 NPCs and the monsters, are dealt from the adult voices.
 
 `elder` is read and recorded, and casts as an adult: Polly has no elderly voice
-to cast it as. A number that cannot be an age (`0`, `-3`, `"old enough"`) is
+to cast it as. A number is written plainly — an optional sign, digits, at most
+one point, an optional exponent — because the panel and the server have to
+agree about which strings are numbers at all, and `Number()` and Python's
+`float()` do not (`0xA` is ten to one of them, `1_0` to the other). Anything
+else, and any number that cannot be an age (`0`, `-3`, `"old enough"`), is
 read as nothing said rather than rounded into one of the two, and a language
 with no children's voices at all — every language but US English — casts a
 stated child from the adult voices, a worse match rather than a silence. The
