@@ -9,6 +9,7 @@ import sys
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+from agents.common import event_text
 from llm.client import LLMError, MockLLMClient
 from llm.router import RouterClient
 
@@ -89,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(d, ensure_ascii=False), flush=True)
             return
         kind = d["kind"] or ""
-        text = d["text"] or ""
+        text = event_text(d) or d["text"] or ""  # dialogue keeps its speaker
         if kind in _PROSE_KINDS:
             print(f"\n{text}\n", flush=True)
         else:

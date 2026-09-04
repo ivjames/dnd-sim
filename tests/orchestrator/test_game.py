@@ -8,7 +8,8 @@ import pytest
 from llm.client import LLMResponse, MockLLMClient
 from orchestrator.bus import EventBus
 from orchestrator.config import GameConfig
-from orchestrator.game import Game
+from orchestrator import game as game_mod
+from orchestrator.game import SELF_REPEAT, Game
 
 from . import fake_engine as eng
 
@@ -77,6 +78,162 @@ def test_narration_follows_the_mechanics(cfg):
     hist = bus.history()
     first_attack = next(i for i, e in enumerate(hist) if e.kind == "attack")
     assert any(e.kind == "narration" for e in hist[first_attack:])
+
+
+# --- dialogue --------------------------------------------------------------
+
+
+def test_one_spoken_line_per_turn(cfg):
+    """A turn is several actions; it is still one character speaking once."""
+    game, bus = make_game(cfg)
+    game.run()
+    per_turn: dict[str, int] = {}
+    actor = None
+    for ev in bus.history():
+        if ev.kind == "turn_start":
+            actor = ev.actor
+            per_turn.setdefault(actor, 0)
+        elif ev.kind == "turn_end":
+            actor = None
+        elif ev.kind == "dialogue" and actor is not None:
+            per_turn[actor] += 1
+            assert per_turn[actor] <= 1, f"{actor} spoke twice in one turn"
+    assert any(e.kind == "dialogue" for e in bus.history())
+
+
+def test_dialogue_carries_the_speaker_out_of_band(cfg):
+    game, bus = make_game(cfg)
+    game.run()
+    lines = [e for e in bus.history() if e.kind == "dialogue"]
+    assert lines
+    for ev in lines:
+        speaker = ev.data.get("speaker")
+        assert speaker, "dialogue must name its speaker in data"
+        # ... and must not repeat it inside the text, or the UI prints it twice
+        assert not ev.text.startswith(f"{speaker}:")
+
+
+def test_a_speaker_does_not_repeat_itself(cfg):
+    game, bus = make_game(cfg)
+    game.run()
+    seen: dict[str, set] = {}
+    for ev in bus.history():
+        if ev.kind != "dialogue":
+            continue
+        said = seen.setdefault(ev.actor, set())
+        assert ev.text not in said, f"{ev.actor} said {ev.text!r} twice"
+        said.add(ev.text)
+
+
+def test_say_drops_near_repeats_and_echoes(cfg):
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append((actor, text))
+
+    assert game._say("pc_1", "Ysolde", "Sir Zombie, your desecration ends here! By my oath, I commit you back to earth!")
+    # the same speaker, rephrased: dropped
+    assert not game._say("pc_1", "Ysolde", "Sir Zombie, your desecration ends NOW. By my oath, I commit you to proper rest!")
+    # another character parroting it back: dropped
+    assert not game._say("pc_2", "Crick", "Sir Zombie, your desecration ends here! By my oath, I commit you back to earth!")
+    # something new: kept
+    assert game._say("pc_2", "Crick", "Tracks in the gravel — somebody walked out of here carrying the reliquary.")
+    assert not game._say("pc_2", "Crick", "   ")
+    assert [a for a, _ in said] == ["pc_1", "pc_2"]
+
+
+def test_say_keeps_a_line_that_contradicts_the_one_before_it(cfg):
+    """"Not the seal" is the opposite of "the seal", not a repeat of it."""
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append(text)
+
+    assert game._say("pc_1", "Ysolde", "Open the door.")
+    assert game._say("pc_1", "Ysolde", "Do not open the door.")     # same speaker, reversing
+    assert game._say("pc_2", "Crick", "Don't open the door!")       # and disagreeing
+    assert not game._say("pc_2", "Crick", "Open the door.")         # but this is the echo
+    assert len(said) == 3
+
+
+@pytest.mark.parametrize(
+    "negative",
+    [
+        "We do not open the door.",
+        "We don't open the door.",
+        "We don\u2019t open the door.",          # a curly apostrophe, as a model writes it
+        "We cannot open the door.",
+        "We can't open the door.",
+        "We never open the door.",
+        "We won't open the door.",
+        "We shouldn't open the door.",
+        "Nobody opens the door.",
+        "No — we open the door another way.",
+    ],
+)
+def test_negation_survives_the_word_filter(negative):
+    """Every one of these means the opposite of "We open the door.\""""
+    assert not game_mod._line_key("We open the door.")[1]
+    assert game_mod._line_key(negative)[1], f"{negative!r} did not register as a negation"
+
+
+@pytest.mark.parametrize("negative", ["We do not open the door.", "We cannot open the door."])
+def test_the_words_alone_would_not_have_saved_a_negation(negative):
+    """Which is why _say compares the flag before it compares the overlap."""
+    positive, _ = game_mod._line_key("We open the door.")
+    words, _ = game_mod._line_key(negative)
+    assert game_mod._overlap(words, positive) >= SELF_REPEAT
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("Heal me!", "Heal him!"),                       # different patient
+        ("Attack the goblin", "Attack the orc"),         # different target
+        ("I go left.", "I go right."),                   # different direction
+        ("Give it to Crick.", "Give it to Nyra."),       # different hands
+    ],
+)
+def test_say_keeps_a_line_that_changes_the_target(cfg, first, second):
+    """Two-letter words carry the instruction; length is no test of meaning."""
+    for speaker in ("pc_1", "pc_2"):  # the same mouth correcting itself, or another
+        game, _ = make_game(cfg)
+        game._emit_new = lambda *a, **k: None
+        assert game._say("pc_1", "Ysolde", first)
+        assert game._say(speaker, "Crick", second), f"{second!r} suppressed by {first!r}"
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("\u041e\u0442\u0441\u0442\u0443\u043f\u0430\u0435\u043c!", "\u0412\u043f\u0435\u0440\u0451\u0434!"),   # Cyrillic: "fall back" / "forward"
+        ("\u64a4\u9000\uff01", "\u524d\u3078\uff01"),                       # Japanese, and a full-width bang
+        ("\u00c9coutez\u00a0: le sceau est bris\u00e9.", "Ouvrez la porte."),  # accents and a nbsp
+    ],
+)
+def test_say_judges_lines_that_are_not_ascii(cfg, first, second):
+    """An ASCII-only tokenizer empties every line and silences the whole game."""
+    game, _ = make_game(cfg)
+    game._emit_new = lambda *a, **k: None
+    assert game._say("pc_1", "Ysolde", first)
+    assert game._say("pc_2", "Crick", second), f"{second!r} suppressed by {first!r}"
+    # ... and the guard still works in that script: a real repeat is still dropped
+    assert not game._say("pc_2", "Crick", first)
+
+
+def test_say_never_suppresses_a_line_it_cannot_read(cfg):
+    """No words to compare is no evidence of repetition."""
+    game, _ = make_game(cfg)
+    said = []
+    game._emit_new = lambda kind, text, actor=None, data=None: said.append(text)
+    assert game._say("pc_1", "Ysolde", "\u2026!")
+    assert game._say("pc_2", "Crick", "?!")
+    assert len(said) == 2
+
+
+def test_say_drops_an_identical_bark_from_another_monster(cfg):
+    game, _ = make_game(cfg)
+    game._emit_new = lambda *a, **k: None
+    assert game._say("mon_1", "Skeleton 1", "Click.")
+    assert not game._say("mon_2", "Skeleton 2", "click... click...")
 
 
 # --- determinism -----------------------------------------------------------
@@ -323,6 +480,27 @@ def test_cli_runs_a_mock_game(tmp_path, monkeypatch, capsys):
     assert len(out) > 5
     first = json.loads(out[0])
     assert set(first) == {"seq", "round", "kind", "actor", "text", "data"}
+
+
+def test_cli_prose_output_names_who_is_speaking(tmp_path, monkeypatch, capsys):
+    import json
+
+    from orchestrator import cli
+
+    raw = json.loads(open("examples/goblin_ambush.json").read())
+    raw["scenario"]["max_scenes"] = 1
+    raw["scenario"]["beats_per_scene"] = 1
+    raw["max_rounds_per_combat"] = 3
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(raw))
+
+    monkeypatch.setattr(cli.Game, "__init__", _patched_game_init(cli.Game.__init__))
+    cli.main(["--config", str(path), "--mock", "--tempo", "0"])
+    out = capsys.readouterr().out
+    names = [p["name"] for p in raw["party"]]
+    # a prose line, not "  [attack] Goblin 4 attacks Thorin Cragmantle: ..."
+    spoken = [ln for ln in out.splitlines() if any(ln.startswith(f"{n}: ") for n in names)]
+    assert spoken, "no dialogue line named its speaker"
 
 
 def _patched_game_init(orig):

@@ -81,7 +81,9 @@
         return text.trim() || null;
 
       case 'dialogue': {
-        var sp = splitSpeaker(text);
+        // The speaker rides in data; splitting the text is the fallback for
+        // events stored before it did (replayed history), and for those only.
+        var sp = d.speaker ? { who: String(d.speaker), said: text.trim() } : splitSpeaker(text);
         if (!sp.said) return null;
         var who = sp.who || nameFrom(names, ev.actor);
         // PCs have their own voice; the voice is the attribution. Everyone

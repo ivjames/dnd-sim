@@ -4,6 +4,7 @@ import pytest
 
 from agents.common import AgentOutputError, rules_digest
 from agents.dm import DMAgent
+from agents import player
 from agents.player import PlayerAgent
 from agents.summarizer import summarize
 from agents.views import dm_view, player_view, render_actions
@@ -121,6 +122,18 @@ def test_render_actions_format():
     assert "needs=['path']" in text and "suggested=" in text
 
 
+def test_event_lines_name_the_speaker_of_a_dialogue_event():
+    state = make_state()
+    recent = [
+        eng.Event(seq=1, round=1, kind="dialogue", actor="pc_1", text="Hold the line.",
+                  data={"speaker": "Thorin"}),
+        eng.Event(seq=2, round=1, kind="attack", actor="pc_1", text="Thorin attacks.", data={}),
+    ]
+    view = dm_view(state, recent, "")
+    assert "Thorin: Hold the line." in view
+    assert "Thorin attacks." in view
+
+
 # --- player agent ----------------------------------------------------------
 
 
@@ -131,11 +144,26 @@ def test_choose_action_parses_fenced_json():
     assert isinstance(action, eng.Action)
 
 
-def test_choose_action_clamps_speech_to_40_words():
+def test_choose_action_clamps_speech_to_the_word_cap():
     speech = " ".join(["word"] * 80)
     client = ScriptedClient('{"action": "a1", "params": {}, "speech": "%s"}' % speech)
     action = agent(client).choose_action("view", templates())
-    assert len(action.speech.split()) <= 41  # 40 words plus the ellipsis marker
+    assert len(action.speech.split()) <= player.SPEECH_WORDS + 1  # plus the ellipsis marker
+
+
+def test_choose_action_without_speech_asks_for_none_and_keeps_none():
+    client = ScriptedClient('{"action": "a1", "params": {}, "speech": "Again, villain!"}')
+    action = agent(client).choose_action("view", templates(), speak=False)
+    assert action.speech is None
+    assert '"speech": null' in client.prompts[0]
+    assert "already spoken this turn" in client.prompts[0]
+
+
+def test_choose_action_with_speech_offers_the_word_cap():
+    client = ScriptedClient('{"action": "a1", "params": {}, "speech": "Ware the flank!"}')
+    action = agent(client).choose_action("view", templates())
+    assert action.speech == "Ware the flank!"
+    assert f"{player.SPEECH_WORDS} words max" in client.prompts[0]
 
 
 def test_choose_action_retries_once_on_bad_id_then_succeeds():
@@ -189,6 +217,18 @@ def test_scene_choice_is_clamped_into_range():
     assert out == {"choice": 0, "speech": "Onward."}
 
 
+def test_scene_choice_shows_what_the_party_already_said():
+    client = ScriptedClient('{"choice": 1, "speech": ""}')
+    agent(client).choose_scene_action("view", ["a", "b"], ["Ysolde: The seal first."])
+    assert "Ysolde: The seal first." in client.prompts[0]
+
+
+def test_scene_choice_says_so_when_nobody_has_spoken():
+    client = ScriptedClient('{"choice": 0, "speech": "After me."}')
+    agent(client).choose_scene_action("view", ["a", "b"])
+    assert "nobody has spoken yet" in client.prompts[0]
+
+
 def test_speak_falls_back_to_raw_text():
     client = ScriptedClient("Just prose, no JSON.")
     assert agent(client).speak("view", "What do you do?") == "Just prose, no JSON."
@@ -218,6 +258,13 @@ def test_dm_monster_action_returns_engine_action():
     action = dm(client).monster_action("VIEW", templates(), "mon_1", "Goblin")
     assert (action.actor, action.template_id) == ("mon_1", "a1")
     assert "Goblin" in client.prompts[0]
+
+
+def test_dm_monster_action_can_be_told_it_has_already_barked():
+    client = ScriptedClient('{"action": "a1", "params": {}, "speech": "Kill them!"}')
+    action = dm(client).monster_action("VIEW", templates(), "mon_1", "Goblin", speak=False)
+    assert action.speech is None
+    assert '"speech": null' in client.prompts[0]
 
 
 def test_dm_adjudication_defaults_are_safe():
@@ -266,6 +313,14 @@ def test_summarize_uses_cheap_model_and_clamps():
     assert len(out.split()) <= 151
     assert led.by_role["summarizer"]["calls"] == 1
     assert "RESPONSE_SHAPE: summary" in client.prompts[0]
+
+
+def test_summarize_names_the_speaker_of_a_dialogue_event():
+    """The summary is fed back to every agent; anonymous lines misattribute plans."""
+    client = ScriptedClient('{"summary": "ok"}')
+    line = eng.Event(1, 1, "dialogue", "pc_1", "I take the left fork.", {"speaker": "Thorin"})
+    summarize(client, "m", Ledger(), "", [line])
+    assert "Thorin: I take the left fork." in client.prompts[0]
 
 
 def test_summarize_keeps_previous_on_garbage():

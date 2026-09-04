@@ -20,6 +20,8 @@ __all__ = [
     "rules_digest",
     "clamp_words",
     "action_class",
+    "speech_fields",
+    "event_text",
 ]
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -150,6 +152,47 @@ def action_class(engine: object | None = None):
         return Action
     except Exception:  # noqa: BLE001 - engine may not exist yet
         return _FallbackAction
+
+
+def event_text(ev: object) -> str:
+    """One line of an event for a prompt, with the speaker on dialogue.
+
+    Dialogue events carry the bare spoken line in `text` and the name in
+    `data["speaker"]` (the UI renders the two separately), so attribution has
+    to be put back for a prompt.
+    """
+    get = ev.get if isinstance(ev, dict) else lambda k, d=None: getattr(ev, k, d)
+    text = str(get("text", "") or "").strip()
+    if not text or (get("kind", "") or "") != "dialogue":
+        return text
+    data = get("data", None) or {}
+    speaker = data.get("speaker") if isinstance(data, dict) else None
+    return f"{speaker}: {text}" if speaker else text
+
+
+_SPEECH_RULE_ON = (
+    'SPEECH: at most one short line, and only when it adds something the table has '
+    'not heard. Silence is normal — on most turns set "speech" to null. Never say '
+    "again, in other words, a line you have already said."
+)
+_SPEECH_RULE_OFF = (
+    'SPEECH: you have already spoken this turn. Set "speech" to null and just act.'
+)
+
+
+def speech_fields(speak: bool, words: int) -> dict[str, str]:
+    """The `{speech_shape}`/`{speech_rule}` pair an action prompt expects.
+
+    `speak=False` is how the orchestrator says "you have had your line this
+    turn" — one combatant's turn can span several actions (extra attacks,
+    Action Surge, a move), and a line apiece turns a turn into a monologue.
+    """
+    if not speak:
+        return {"speech_shape": "null", "speech_rule": _SPEECH_RULE_OFF}
+    return {
+        "speech_shape": f'"<in-character, {words} words max, or null>"',
+        "speech_rule": _SPEECH_RULE_ON,
+    }
 
 
 def clamp_words(text: str | None, limit: int) -> str | None:

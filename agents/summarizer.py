@@ -7,7 +7,14 @@ from typing import Any
 from llm.client import LLMClient
 from llm.cost import Ledger
 
-from .common import AgentOutputError, clamp_words, extract_json, load_prompt, render
+from .common import (
+    AgentOutputError,
+    clamp_words,
+    event_text,
+    extract_json,
+    load_prompt,
+    render,
+)
 
 __all__ = ["summarize", "SUMMARY_WORDS"]
 
@@ -20,10 +27,10 @@ def _event_lines(events: list) -> str:
     lines = []
     for ev in events or []:
         kind = getattr(ev, "kind", "") or (ev.get("kind") if isinstance(ev, dict) else "")
-        text = getattr(ev, "text", "") or (ev.get("text") if isinstance(ev, dict) else "")
+        text = event_text(ev)
         if not text or kind in _SKIP_KINDS:
             continue
-        lines.append(f"- {str(text).strip()}")
+        lines.append(f"- {text}")
     return "\n".join(lines[-60:]) or "- (nothing notable)"
 
 
