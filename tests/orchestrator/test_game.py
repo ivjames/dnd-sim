@@ -1,7 +1,10 @@
 """The full loop: run to finished, determinism, controls, budget, DM notes."""
 
+import json
+import pathlib
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -834,3 +837,245 @@ def test_the_ledger_report_is_a_snapshot_not_a_live_view():
     finally:
         stop.set()
         t.join(timeout=5)
+
+
+# --- an action the engine refused ------------------------------------------
+#
+# Sixteen live games threw away a turn every time the engine said no: the loop
+# emitted an error and substituted end_turn without ever telling the agent what
+# was wrong. The re-ask below is one extra call against a whole wasted turn.
+
+
+def _namespace(module, **overrides):
+    """A copy of an engine module as a namespace, with names replaced."""
+    ns = SimpleNamespace(
+        **{k: getattr(module, k) for k in dir(module) if not k.startswith("_")}
+    )
+    for k, v in overrides.items():
+        setattr(ns, k, v)
+    return ns
+
+
+def rejecting_engine(reject_first: int, message="that square is occupied"):
+    """`fake_engine`, but the first `reject_first` non-end_turn actions fail."""
+    left = {"n": reject_first}
+
+    def apply(state, action):
+        if left["n"] > 0:
+            kinds = {t.id: t.type for t in eng.legal_actions(state, action.actor)}
+            if kinds.get(action.template_id) != "end_turn":
+                left["n"] -= 1
+                raise eng.IllegalAction(message)
+        return eng.apply(state, action)
+
+    return _namespace(eng, apply=apply)
+
+
+class Recording(MockLLMClient):
+    """A mock client that keeps every user prompt it was handed."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.prompts = []
+
+    def complete(self, **kw):
+        self.prompts.append(kw["messages"][-1]["content"])
+        return super().complete(**kw)
+
+
+def test_a_rejected_action_is_re_asked_with_the_engines_reason(cfg):
+    client = Recording(seed=cfg.seed)
+    bus = EventBus()
+    game = Game(cfg, client, bus, engine=rejecting_engine(1, "(9,9) is a wall"))
+    game.run()
+    assert game.status == "finished", game.error
+    rejected = [e for e in bus.history() if e.kind == "error" and "rejected" in e.text]
+    assert rejected, "the first rejection is still reported"
+    asked_again = [
+        p for p in client.prompts if p.startswith("The engine rejected your last action:")
+    ]
+    assert len(asked_again) == 1
+    assert "(9,9) is a wall" in asked_again[0]
+
+
+def test_the_retry_is_what_gets_applied_not_end_turn(cfg):
+    """One rejection must not cost the turn: something still happens after it."""
+    bus = EventBus()
+    game = Game(cfg, MockLLMClient(seed=cfg.seed), bus, engine=rejecting_engine(1))
+    game.run()
+    hist = bus.history()
+    first = next(i for i, e in enumerate(hist) if e.kind == "error" and "rejected" in e.text)
+    after = hist[first + 1 :]
+    assert any(e.kind in ("attack", "move") for e in after)
+
+
+def test_a_second_rejection_ends_the_turn(cfg):
+    bus = EventBus()
+    game = Game(cfg, MockLLMClient(seed=cfg.seed), bus, engine=rejecting_engine(2))
+    game.run()
+    assert game.status == "finished", game.error
+    texts = [e.text for e in bus.history() if e.kind == "error"]
+    assert any("second attempt was rejected too" in t for t in texts)
+
+
+def test_the_narrator_is_told_the_action_was_refused(cfg):
+    """Otherwise it narrates the intent — the gnoll "flees" on a rejected move."""
+    seen = []
+
+    class Watching(MockLLMClient):
+        def complete(self, **kw):
+            msg = kw["messages"][-1]["content"]
+            if "THE ENGINE JUST RESOLVED THESE EVENTS" in msg:
+                seen.append(msg)
+            return super().complete(**kw)
+
+    game, _ = make_game(cfg, client=Watching(seed=cfg.seed))
+    game.engine = rejecting_engine(1, "(9,9) is a wall")
+    game.run()
+    assert any("was rejected" in p and "(9,9) is a wall" in p for p in seen)
+
+
+def test_the_retry_does_not_buy_a_second_spoken_line(cfg):
+    """A rejection is not another turn, and must not read like one."""
+    bus = EventBus()
+    game = Game(cfg, MockLLMClient(seed=cfg.seed), bus, engine=rejecting_engine(3))
+    game.run()
+    per_turn: dict[tuple, int] = {}
+    turn = None
+    for e in bus.history():
+        if e.kind == "turn_start":
+            turn = (e.round, e.actor)
+        # Only inside combat: the exploration beats before the first turn are a
+        # conversation, and everyone gets a line there by design.
+        if e.kind == "dialogue" and turn is not None:
+            per_turn[turn] = per_turn.get(turn, 0) + 1
+    assert per_turn, "nobody spoke in the fight at all"
+    assert max(per_turn.values()) == 1
+
+
+# --- surprise ---------------------------------------------------------------
+#
+# The scene's skill checks used to be rolled, printed, and ignored: the
+# scripted encounter fired at the end of the beats whatever anyone rolled.
+
+
+class Checking(MockLLMClient):
+    """A DM that always calls for a skill check rather than narrating."""
+
+    def _payload(self, shape, prompt):
+        if shape == "dm_adjudication":
+            return json.dumps(
+                {
+                    "resolution": "skill_check",
+                    "skill": "Stealth",
+                    "dc": 13,
+                    "actor": None,
+                    "narration": "They ease forward through the gorse.",
+                    "encounter": None,
+                }
+            )
+        return super()._payload(shape, prompt)
+
+
+class Ambushing(MockLLMClient):
+    """A DM that starts a fight itself, which nobody has rolled anything about."""
+
+    def _payload(self, shape, prompt):
+        if shape == "dm_adjudication":
+            return json.dumps(
+                {
+                    "resolution": "start_combat",
+                    "skill": None,
+                    "dc": None,
+                    "actor": None,
+                    "narration": "Shapes rise out of the gorse.",
+                    "encounter": {"monsters": [{"name": "Goblin", "count": 2}]},
+                }
+            )
+        return super()._payload(shape, prompt)
+
+
+def checked_engine(*outcomes):
+    """`fake_engine` with scripted skill-check results, recording surprise."""
+    seq = list(outcomes)
+    calls: list = []
+
+    def skill_check(state, actor_id, skill, dc):
+        ok = seq.pop(0) if seq else True
+        ev = eng.Event(
+            0,
+            state.round,
+            "skill_check",
+            actor_id,
+            f"{actor_id} rolls {skill}: {'success' if ok else 'failure'}",
+            {"skill": skill, "dc": dc, "success": ok},
+        )
+        return state, [ev]
+
+    def start_combat(state, rng_state, surprised=None):
+        calls.append(surprised)
+        return eng.start_combat(state, rng_state, surprised=surprised)
+
+    ns = _namespace(eng, skill_check=skill_check, start_combat=start_combat)
+    ns.surprise_calls = calls
+    return ns
+
+
+def test_a_failed_check_springs_the_encounter_with_the_party_surprised(cfg):
+    engine = checked_engine(False)
+    bus = EventBus()
+    game = Game(cfg, Checking(seed=cfg.seed), bus, engine=engine)
+    game.run()
+    assert engine.surprise_calls == ["party"]
+    assert any(
+        e.kind == "system" and e.data.get("surprised") == "party" for e in bus.history()
+    )
+
+
+def test_a_scene_whose_last_check_succeeded_surprises_the_enemy(cfg):
+    engine = checked_engine(True)
+    game = Game(cfg, Checking(seed=cfg.seed), EventBus(), engine=engine)
+    game.run()
+    assert engine.surprise_calls == ["enemy"]
+
+
+def test_no_check_means_nobody_is_surprised(cfg):
+    engine = checked_engine()
+    game = Game(cfg, MockLLMClient(seed=cfg.seed), EventBus(), engine=engine)
+    game.run()
+    assert engine.surprise_calls == [None]
+
+
+def test_a_combat_the_dm_starts_is_never_surprised(cfg):
+    engine = checked_engine()
+    game = Game(cfg, Ambushing(seed=cfg.seed), EventBus(), engine=engine)
+    game.run()
+    assert engine.surprise_calls == [None]
+
+
+def test_a_failed_check_does_not_wait_out_the_rest_of_the_beats():
+    """The beats stop where the party is heard, not at `beats_per_scene`."""
+    raw = json.loads((pathlib.Path("examples") / "goblin_ambush.json").read_text())
+    raw["tempo_ms"] = 0
+    raw["mock"] = True
+    raw["scenario"]["max_scenes"] = 1
+    raw["scenario"]["beats_per_scene"] = 3
+    raw["max_rounds_per_combat"] = 4
+    many = GameConfig.from_dict(raw)
+    engine = checked_engine(True, False, True)
+    bus = EventBus()
+    game = Game(many, Checking(seed=many.seed), bus, engine=engine)
+    game.run()
+    assert engine.surprise_calls == ["party"]
+    checks = [e for e in bus.history() if e.kind == "skill_check"]
+    assert len(checks) == 2, "the third beat should never have been rolled"
+
+
+def test_a_surprised_side_can_only_end_its_turn(cfg):
+    """What the engine does with the word, as the fake engine models it."""
+    engine = checked_engine(False)
+    bus = EventBus()
+    game = Game(cfg, Checking(seed=cfg.seed), bus, engine=engine)
+    game.run()
+    start = next(e for e in bus.history() if e.kind == "combat_start")
+    assert start.data.get("surprised") == "party"
