@@ -25,14 +25,20 @@
 # /etc/environment, the known-key store on this box. The app reads them from
 # ./.env, which run.sh sources. `deploy` copies each one across once — parses
 # the /etc/environment line, appends KEY=... to .env (mode 600), never prints
-# a value, never puts one in any argv — and launches pm2 under
-# `env -u <every known key> -u GITHUB_TOKEN`, so pm2's dump.pm2 never carries
-# the root shell's copies. The process gets them from run.sh, not from pm2.
+# a value, never puts one in any argv — and starts/restarts pm2 through
+# `env -i` with an allowlist (PATH, HOME, PM2_HOME and TERM when set, LANG).
+# pm2 gives the process the environment of the command that started it and
+# `pm2 save` writes that into dump.pm2, so the allowlist on start/restart is
+# what keeps the root shell's environment — a known key, or whatever else
+# /etc/environment holds — out of both. The process gets its keys from
+# run.sh sourcing .env, not from pm2.
 #
 # The set of keys is KNOWN_KEYS below (one per LLM platform or inference host
 # the app can seat at the table — llm/providers.py PROVIDERS, same names —
 # plus the AWS pair that Amazon Polly reads the game aloud with, and
-# DND_WRITE_TOKEN, the shared secret the write routes require). Any subset is fine: only ANTHROPIC_API_KEY is warned about
+# DND_WRITE_TOKEN, the shared secret the write routes require, which is on
+# the list to be reported and is the one key `deploy` never adopts from the
+# store). Any subset is fine: only ANTHROPIC_API_KEY is warned about
 # when missing, because the default DM needs it; a seat whose platform has
 # no key fails at game creation with a message naming the variable. A new
 # platform needs no code change here — DNDSIM_KEYS overrides the list.
@@ -45,16 +51,19 @@
 #                       (default /etc/environment, this box's known-key store — and only
 #                       that: a deploy here must not read another site's runtime state)
 #   DNDSIM_ENV_FILE     default <app dir>/.env    (where they are adopted to)
-#   DNDSIM_KEYS         space-separated list of key names to adopt/unset
+#   DNDSIM_KEYS         space-separated list of key names to adopt and report
 #                       (default: the KNOWN_KEYS list below)
+#   DNDSIM_PROBE_TRIES  default 10: how many seconds deploy/restart give the app
+#                       to answer /api/health with 200 before calling it down
 #
 # The app dir is wherever this script's checkout lives (/var/www/dndsim) —
 # derived from the script's own path, so the /usr/local/bin symlink resolves
 # back here. Sourcing this file (bash tests) defines the functions and stops
-# before the dispatch.
+# before the dispatch; BASH_SOURCE rather than $0 so the dir is right then too
+# ($0 is the sourcing shell's, and would put ROOT wherever it happens to be).
 set -euo pipefail
 
-SELF="$(readlink -f "$0")"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
@@ -63,10 +72,11 @@ KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
 IFS=: read -r -a KEY_SOURCES <<< "$KEY_SOURCE"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
 # The platform API keys, one per LLM platform, and the AWS credentials Polly
-# narration needs: adopted from KEY_SOURCE into ENV_FILE by deploy, unset for
-# pm2's launch, reported by status/keys. Names only ever appear in output —
-# never values. DNDSIM_KEYS (space-separated) replaces the list, so a new
-# platform needs no code change.
+# narration needs: adopted from KEY_SOURCE into ENV_FILE by deploy and
+# reported by status/keys. Names only ever appear in output — never values.
+# DNDSIM_KEYS (space-separated) replaces the list, so a new platform needs no
+# code change. (pm2's launch does not consult this list: it drops the whole
+# environment, see pm2_clean.)
 #
 # AWS_REGION is on the list and is not a secret; it is here because boto3 has
 # to read it from the same .env as the pair it goes with, and because a
@@ -74,14 +84,23 @@ ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
 # CARTESIA_API_KEY stays off the list: it is text-to-speech this app does not
 # use, and adopting a key nothing reads only spreads it further.
 #
-# DND_WRITE_TOKEN is not a vendor key but is handled exactly like one: it is a
-# secret, it belongs in .env rather than in git, and pm2's launch must not
-# carry it. It is not REQUIRED_KEY — its absence stops writes (503) and leaves
-# reading, the SSE stream and any running game alone, so a deploy without it
-# does not take the site down. See web/auth.py.
+# DND_WRITE_TOKEN is not a vendor key: it is a secret, it belongs in .env
+# rather than in git, and it is reported like the others — but it is the one
+# known key deploy never adopts (NO_ADOPT_KEYS below). It is not REQUIRED_KEY
+# — its absence stops writes (503) and leaves reading, the SSE stream and any
+# running game alone, so a deploy without it does not take the site down. See
+# web/auth.py.
 DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY SILICONFLOW_API_KEY DEEPINFRA_API_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION DND_WRITE_TOKEN"
 read -r -a KNOWN_KEYS <<< "${DNDSIM_KEYS:-$DEFAULT_KNOWN_KEYS}"
 REQUIRED_KEY="ANTHROPIC_API_KEY"   # the default DM's platform; the only key whose absence is a warning
+# Known keys that are never adopted from the store. The write token is this
+# app's own, written by `dndsim token`, and the help text says not to put it
+# in /etc/environment; if a copy ends up there anyway it must not be honoured,
+# or the help text is a lie and the store has quietly become the token's
+# second home. Reported like any other key; adopted never.
+WRITE_TOKEN_KEY="DND_WRITE_TOKEN"
+NO_ADOPT_KEYS="$WRITE_TOKEN_KEY"
+adoptable() { local k; for k in $NO_ADOPT_KEYS; do [ "$1" != "$k" ] || return 1; done; return 0; }
 REPO="ivjames/dnd-sim"
 APP="dnd-sim"                 # pm2 process name, from ecosystem.config.js
 ECOSYSTEM="ecosystem.config.js"
@@ -92,6 +111,17 @@ NGINX_ENABLED="${NGINX_ENABLED:-/etc/nginx/sites-enabled}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups}"
 SSE_BEGIN="# dndsim-sse begin (managed by dndsim setup; do not edit between markers)"
 SSE_END="# dndsim-sse end"
+# The directives the SSE block manages: dropped from every proxied location
+# and re-issued inside the block. One pair of patterns, handed to the rewrite
+# (python) and used by the check on its result (grep -E), so the two cannot
+# disagree about what is allowed to go missing. The whitespace class is a
+# literal space and a literal TAB ($'…' quoting), because that is the only
+# spelling both engines read the same way: in a POSIX bracket expression a
+# backslash is literal, so grep reads `[ \t]` as space-backslash-t and never
+# matches a tab-indented line, while python's re has no `[[:blank:]]`. The
+# header one is matched case-blind.
+SSE_MANAGED=$'^[ \t]*(proxy_http_version|proxy_buffering|proxy_cache|proxy_read_timeout|proxy_send_timeout|chunked_transfer_encoding|gzip)[ \t]'
+SSE_MANAGED_HDR=$'^[ \t]*proxy_set_header[ \t]+Connection[ \t]'
 
 c_blue=$'\033[1;34m'; c_yellow=$'\033[1;33m'; c_red=$'\033[1;31m'; c_off=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
@@ -106,18 +136,22 @@ Usage:
   dndsim deploy [--no-install]   sync to origin/main, venv + pip, .env (adopts
                                  every known platform key from /etc/environment),
                                  vhost if missing (runs setup), pm2 start/restart
-                                 with the keys unset, probe
+                                 under a scrubbed environment (env -i), SSE block
+                                 repaired in the vhost, probe; exit 1 unless
+                                 127.0.0.1:8071/api/health answers 200
   dndsim setup [--dry-run]       once per box, idempotent: DNS + vhost + TLS via
                                  provision-site (or the HTTP-only vhost fallback),
                                  SSE block in the vhost, pm2 boot-hook check
-  dndsim restart                 pm2 restart + probe (re-reads .env)
-  dndsim logs [-n N]             tail pm2 logs
+  dndsim restart                 pm2 restart + probe (re-reads .env); exit 1
+                                 unless the local /api/health answers 200
+  dndsim logs [--lines N]        tail pm2 logs (arguments go to `pm2 logs`)
   dndsim status                  HEAD, pm2, .env + per-key presence, upstream
                                  family, vhost + SSE block, local/public
                                  /api/health, cert
   dndsim keys                    read-only: per-key present/absent in .env and in
-                                 the key store (names only, never values); exit 1
-                                 if ANTHROPIC_API_KEY is missing from .env
+                                 the key store (names only, never values), what
+                                 pm2 is launched with; exit 1 if
+                                 ANTHROPIC_API_KEY is missing from .env
   dndsim token [--show|--stdin]  set the write token and use it: generate one,
                                  write it to .env, restart so the app reads it,
                                  check it against the running app, and print it
@@ -145,16 +179,25 @@ needs, and a seat whose platform has no key fails at game creation naming it):
   DND_WRITE_TOKEN  — not a vendor key and NOT one to put in /etc/environment.
   It is this app's own secret, so `dndsim token` generates it straight into
   .env; a copy in the key store would be one more place to leak it from and one
-  more to forget on a rotation. It is on the known list only so pm2's launch
-  unsets it and `keys`/`status` report it. Without it, creating a game, sending
+  more to forget on a rotation. It is the one known key `deploy` never adopts
+  (a copy found in the store is reported and left there); it is on the known
+  list so `keys`/`status` report it. Without it, creating a game, sending
   a DM note and pause/resume/stop answer 503 while reading, the SSE stream and
   any running game are unaffected — so a deploy that forgets it does not take
   the site down, but nobody can start a game until: dndsim token
 
+pm2 never sees a key. pm2 start/restart (and every other pm2 command) runs
+under `env -i` with only PATH, HOME, PM2_HOME and TERM (when set) and LANG;
+the process gets the environment of the command that started it and
+~/.pm2/dump.pm2 records that, so neither carries anything from the root
+shell's environment. The app reads .env through run.sh instead — which is
+also the only place a TZ, proxy or DND_* setting for it can live now.
+
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
      DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment),
      DNDSIM_ENV_FILE (default ./.env),
-     DNDSIM_KEYS (space-separated key names; replaces the known list above).
+     DNDSIM_KEYS (space-separated key names; replaces the known list above),
+     DNDSIM_PROBE_TRIES (default 10; seconds deploy/restart wait for a 200).
 USAGE
 }
 
@@ -202,7 +245,11 @@ env_file_append() {  # $1=file $2=KEY $3=value — appends KEY=value; single-quo
 }
 
 env_file_seed() {  # $1=file $2=KEY $3=default — write only if absent/empty
-  if ! env_file_has "$1" "$2"; then env_file_append "$1" "$2" "$3"; log "$1: seeded $2=$3"; fi
+  # Logs the name, not the value. Today's seeds (PORT, HOST, the DB path) are
+  # not secrets, but a log line that prints values is one seed away from
+  # printing one, so this function is held to the same rule as the rest of the
+  # file: nothing here echoes a value.
+  if ! env_file_has "$1" "$2"; then env_file_append "$1" "$2" "$3"; log "$1: seeded $2"; fi
 }
 
 env_file_set() {  # $1=file $2=KEY $3=value — replace every existing line for KEY, then append
@@ -270,9 +317,16 @@ ensure_env() {
   env_file_seed "$envf" DND_SIM_DB "$ROOT/data/dndsim.sqlite3"
   # One pass over the known keys: adopt each one that .env lacks (absent or
   # empty) and the store has, under its canonical name. Never overwrites an
-  # existing value; never prints one. A second run adopts nothing.
+  # existing value; never prints one. A second run adopts nothing. The write
+  # token is skipped — and called out if the store holds a copy anyway.
   local key hit srcf src val
   for key in "${KNOWN_KEYS[@]}"; do
+    if ! adoptable "$key"; then
+      if [ -n "$(source_key_name "$key")" ]; then
+        warn "$key is in the key store (${KEY_SOURCES[*]}) and is NOT adopted from there: it belongs in $envf only, via: dndsim token. Remove it from the store."
+      fi
+      continue
+    fi
     env_file_has "$envf" "$key" && continue
     hit="$(source_key_name "$key")"
     [ -n "$hit" ] || continue
@@ -292,34 +346,67 @@ ensure_env() {
 }
 
 # ---------------------------------------------------------------------------
-# pm2. Every start/restart goes through pm2_clean: pm2 snapshots the launching
-# shell's environment into ~/.pm2/dump.pm2, and a root login shell on this box
-# has every platform key from /etc/environment. The app gets them from run.sh
-# sourcing .env instead, so pm2 never needs to see any of them. The unset list
-# is built from KNOWN_KEYS (plus GITHUB_TOKEN), so a key added to the list is
-# adopted and unset in the same change.
+# pm2. Every pm2 command goes through pm2_clean, an allowlist: `env -i` with
+# PATH, HOME (pm2's state is ~/.pm2), PM2_HOME and TERM when set, and LANG.
+#
+# The call that matters is start/restart. pm2 hands the process it spawns
+# the environment of the CLI command that asked for it — not the daemon's —
+# and `pm2 save` writes that process's environment into ~/.pm2/dump.pm2. So
+# the environment of the start/restart command is exactly what reaches the
+# app and the dump. A root login shell on this box carries every line of
+# /etc/environment — the platform keys, and whatever else is kept there
+# (CARTESIA_API_KEY today, anything added tomorrow) — so unsetting a known
+# list is one key behind by construction; an allowlist cannot be. The app
+# gets its keys from run.sh sourcing .env, so pm2 never needs any of them.
+#
+# jlist, save and logs go through the same function as hygiene: the first
+# of them after a reboot is what spawns the daemon, and this keeps the
+# daemon's own /proc environ as clean as the processes it runs. It is not
+# what protects the app or the dump; start/restart is.
 # ---------------------------------------------------------------------------
-pm2_unset_names() { printf '%s ' "${KNOWN_KEYS[@]}" GITHUB_TOKEN | sed 's/ $//'; }
+PM2_ENV_KEEP="PATH HOME PM2_HOME TERM"   # passed through when set; everything else is dropped
+pm2_env_names() { printf 'env -i, keeping only %s (when set) and LANG=C.UTF-8' "${PM2_ENV_KEEP// /, }"; }
 pm2_clean() {
-  local args=() k
-  for k in "${KNOWN_KEYS[@]}" GITHUB_TOKEN; do args+=(-u "$k"); done
-  env "${args[@]}" pm2 "$@"
+  [ -n "${HOME:-}" ] || die "HOME is unset — pm2 keeps its state under \$HOME/.pm2"
+  local keep=() name
+  for name in $PM2_ENV_KEEP; do
+    if [ -n "${!name:-}" ]; then keep+=("$name=${!name}"); fi
+  done
+  env -i "${keep[@]}" LANG=C.UTF-8 pm2 "$@"
 }
 
 # pm2's own exit codes are not reliable for "is it registered", so ask jlist.
+# One line on stdout. When the list cannot be read at all — no pm2, `jlist`
+# failing, output that is not a process list — the line starts with `unknown`
+# and the exit status is 1, so a caller about to start or restart can refuse
+# to guess: `pm2 start` on a process pm2 already holds is a silent no-op that
+# looks exactly like a deploy. A cold daemon prints its `[PM2] Spawning…`
+# lines ahead of the JSON; those are skipped, not mistaken for an empty list.
 pm2_state() {
   local jl
-  jl="$(pm2 jlist 2>/dev/null || true)"      # no pm2 / daemon down -> '' -> "not registered"
+  command -v pm2 >/dev/null || { printf 'unknown (pm2 not on PATH)\n'; return 1; }
+  # stderr is kept, not dropped: it is where pm2's own reason goes, and where
+  # pm2_clean's `die` text goes if the launch itself is refused.
+  local err; err="$(mktemp)"
+  if ! jl="$(pm2_clean jlist 2>"$err")"; then
+    printf 'unknown (pm2 jlist failed: %s)\n' "$(sed 's/\x1b\[[0-9;]*m//g' "$err" | tr '\n' ' ' | head -c 300)"
+    rm -f "$err"; return 1
+  fi
+  rm -f "$err"
   printf '%s' "$jl" \
     | python3 -c "import json,sys
-try: procs=json.load(sys.stdin)
-except Exception: procs=[]
+raw=sys.stdin.read().split('\\n')
+start=next((i for i,l in enumerate(raw) if l.lstrip().startswith(('[','{')) and not l.startswith('[PM2]')), None)
+if start is None: sys.exit(1)
+try: procs=json.loads('\\n'.join(raw[start:]))
+except ValueError: sys.exit(1)
+if not isinstance(procs, list): sys.exit(1)
 p=[x for x in procs if x.get('name')=='$APP']
 if not p: print('not registered'); raise SystemExit
 e=p[0].get('pm2_env',{})
 print('%s  mode=%s  restarts=%s  uptime-since=%s' % (
   e.get('status'), e.get('exec_mode'), e.get('restart_time'), e.get('pm_uptime')))" 2>/dev/null \
-    || printf 'unknown (pm2 not readable)\n'
+    || { printf 'unknown (pm2 jlist output is not a process list)\n'; return 1; }
 }
 
 save_if_online() {
@@ -327,27 +414,45 @@ save_if_online() {
   # while this app is down persists a dump that omits it and the next reboot
   # comes back short. Save only when it is online; otherwise say so and leave
   # the previous dump alone.
-  case "$(pm2_state)" in
-    online*) pm2 save;;
-    *) warn "$APP is not online — skipping pm2 save so the dump keeps its last good state";;
-  esac
+  local state
+  if state="$(pm2_state)"; then
+    case "$state" in
+      online*) pm2_clean save;;
+      *) warn "$APP is not online ($state) — skipping pm2 save so the dump keeps its last good state";;
+    esac
+  else
+    warn "pm2 state unreadable ($state) — skipping pm2 save so the dump keeps its last good state"
+  fi
 }
 
 # ---------------------------------------------------------------------------
 # Probes
 # ---------------------------------------------------------------------------
-probe() {
+PROBE_TRIES="${DNDSIM_PROBE_TRIES:-10}"   # deploy/restart: seconds to wait for the local 200
+probe() {  # $1 = attempts at the local probe, one second apart (default 1)
   # Local first, then public: a healthy app behind a broken vhost and a dead
   # app behind a fine vhost look identical from the outside, and telling them
   # apart is most of the diagnosis. /api/health also says whether the process
   # is in mock mode — a production box answering mock:true is its own finding.
-  local lcode lbody pcode
+  #
+  # Returns 1 unless the local probe answered HTTP 200 — deploy and restart
+  # exit on that, because "pm2 was told to run it" is not "it is serving".
+  # The public result is printed either way: a good app behind a bad vhost is
+  # the finding, not something to hide behind the local failure.
+  local tries="${1:-1}" try=0 lcode="" lbody pcode
+  while :; do
+    try=$((try + 1))
+    lcode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:$PORT$HEALTH" || true)"
+    [ "$lcode" = "200" ] && break
+    [ "$try" -lt "$tries" ] || break
+    sleep 1
+  done
   lbody="$(curl -s --max-time 10 "http://127.0.0.1:$PORT$HEALTH" || true)"
-  lcode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:$PORT$HEALTH" || true)"
   pcode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$FQDN$HEALTH" || true)"
   printf 'local:     http://127.0.0.1:%s%s  ->  HTTP %s  %s\n' "$PORT" "$HEALTH" "${lcode:-unreachable}" "${lbody:-}"
   printf 'public:    https://%s%s  ->  HTTP %s\n' "$FQDN" "$HEALTH" "${pcode:-unreachable}"
   case "${lbody:-}" in *'"mock":true'*) warn "the app is running in MOCK mode (DND_SIM_MOCK=1) — no real LLM calls";; esac
+  [ "$lcode" = "200" ]
 }
 
 upstream_family() {
@@ -391,9 +496,11 @@ vhost_path() {  # -> path on stdout, exit 1 if none
 }
 
 sse_transform() {  # $1=vhost file -> rewritten content on stdout
-  python3 - "$1" "$SSE_BEGIN" "$SSE_END" <<'PY'
+  python3 - "$1" "$SSE_BEGIN" "$SSE_END" "$SSE_MANAGED" "$SSE_MANAGED_HDR" <<'PY'
 import re, sys
 path, mark_begin, mark_end = sys.argv[1], sys.argv[2], sys.argv[3]
+MANAGED = re.compile(sys.argv[4])
+MANAGED_HDR = re.compile(sys.argv[5], re.I)
 lines = open(path, encoding="utf-8").read().split("\n")
 
 # 1. drop any earlier managed block(s)
@@ -404,9 +511,6 @@ for ln in lines:
     if not skip: kept.append(ln)
 lines = kept
 
-MANAGED = re.compile(r"^\s*(proxy_http_version|proxy_buffering|proxy_cache|proxy_read_timeout|"
-                     r"proxy_send_timeout|chunked_transfer_encoding|gzip)\s")
-MANAGED_HDR = re.compile(r"^\s*proxy_set_header\s+Connection\s", re.I)
 BLOCK = [mark_begin,
          'proxy_http_version 1.1;',
          'proxy_set_header Connection "";',
@@ -450,11 +554,41 @@ sys.stdout.write("\n".join(out))
 PY
 }
 
+sse_unmanaged_lines() {  # $1=vhost -> the input lines a correct rewrite must keep
+  # Everything except old marker blocks (dropped whole) and managed
+  # directives (dropped and re-issued): the rewrite's contract is that
+  # nothing else goes missing. A marker is recognised the way the rewrite
+  # recognises it — python's strip(), so whitespace at either end and a
+  # trailing CR do not count — or a marker line with a stray space would be
+  # dropped by one and demanded by the other, and the vhost would be
+  # unrepairable with a message blaming the wrong thing.
+  awk -v b="$SSE_BEGIN" -v e="$SSE_END" \
+    '{ t=$0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", t) } t==b { skip=1; next } t==e { skip=0; next } !skip' "$1" \
+    | { grep -vE "$SSE_MANAGED" || true; } | { grep -viE "$SSE_MANAGED_HDR" || true; }
+}
+
 ensure_sse() {  # $1 = --dry-run|"" ; requires a vhost
-  local dry="${1:-}" vhost tmp stamp backup_dir
+  local dry="${1:-}" vhost tmp stamp backup_dir missing
   vhost="$(vhost_path)" || die "no vhost for $FQDN under $NGINX_AVAIL / $NGINX_ENABLED — run: dndsim setup"
   tmp="$(mktemp)"
-  sse_transform "$vhost" > "$tmp"
+  if ! sse_transform "$vhost" > "$tmp"; then
+    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite failed — vhost left untouched"
+  fi
+  # The result is checked before anything is written, because an empty file
+  # passes `nginx -t` (an empty config is a valid one) and a truncated one
+  # may. The check is structural, not a size: a vhost that has collected
+  # several stale marker blocks legitimately comes out much shorter, so
+  # instead every input line that is neither a managed directive nor inside
+  # a marker block must still be in the output, exactly. Anything missing
+  # means this is not a rewrite of this vhost.
+  if [ ! -s "$tmp" ]; then
+    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite produced an empty result — refusing to write it; vhost left untouched"
+  fi
+  missing="$(sse_unmanaged_lines "$vhost" | { grep -vxF -f "$tmp" || true; })"
+  if [ -n "$missing" ]; then
+    printf 'missing from the rewrite:\n%s\n' "$missing" >&2
+    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite dropped $(printf '%s\n' "$missing" | wc -l) line(s) that are not managed directives (above) — refusing to write it; vhost left untouched"
+  fi
   if cmp -s "$vhost" "$tmp"; then
     log "vhost $vhost: SSE block present, nothing to change"
     rm -f "$tmp"; return 0
@@ -467,8 +601,8 @@ ensure_sse() {  # $1 = --dry-run|"" ; requires a vhost
   need_root
   stamp="$(date +%Y%m%d-%H%M%S)"
   backup_dir="$BACKUP_ROOT/dndsim-sse-$stamp"
-  mkdir -p "$backup_dir$(dirname "$vhost")"
-  cp -p "$vhost" "$backup_dir$vhost"
+  mkdir -p "$backup_dir$(dirname "$vhost")" || die "cannot create $backup_dir — vhost left untouched"
+  cp -p "$vhost" "$backup_dir$vhost" || die "cannot back up $vhost to $backup_dir — vhost left untouched"
   log "vhost $vhost: inserting SSE block (backup: $backup_dir$vhost)"
   cat "$tmp" > "$vhost"; rm -f "$tmp"
   if ! nginx -t; then
@@ -477,7 +611,7 @@ ensure_sse() {  # $1 = --dry-run|"" ; requires a vhost
     nginx -t || warn "nginx -t still failing after rollback — inspect manually!"
     die "aborted; original vhost restored from $backup_dir."
   fi
-  systemctl reload nginx
+  systemctl reload nginx || die "nginx -t passed but the reload failed — the SSE block is in $vhost; reload nginx by hand (backup: $backup_dir$vhost)"
   log "nginx reloaded with the SSE block in place"
 }
 
@@ -489,14 +623,19 @@ install_fallback_vhost() {  # no provision-site on PATH: HTTP-only vhost from de
   sed -e "s/dndsim\.lab980\.com/$FQDN/g" -e "s/127\.0\.0\.1:8071/127.0.0.1:$PORT/g" "$src" > "$conf"
   ln -sf "$conf" "$NGINX_ENABLED/$FQDN"
   if ! nginx -t; then rm -f "$conf" "$NGINX_ENABLED/$FQDN"; die "nginx -t rejected the fallback vhost; removed it."; fi
-  systemctl reload nginx
+  systemctl reload nginx || die "nginx -t passed but the reload failed — $conf is installed; reload nginx by hand"
   warn "HTTP only. Point DNS at this box, then:  certbot --nginx -d $FQDN --redirect"
   warn "and, from the lab980 repo:  fix-security-headers --fix   (the fallback vhost has no headers include)"
 }
 
 cmd_setup() {
-  local dry=""
-  [ "${1:-}" = "--dry-run" ] && dry="--dry-run"
+  local dry="" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) dry="--dry-run";;
+      *) die "setup: unknown option '$arg' (usage: dndsim setup [--dry-run])";;
+    esac
+  done
   cd "$ROOT"
   if vhost_path >/dev/null; then
     log "vhost for $FQDN exists: $(vhost_path)"
@@ -516,7 +655,8 @@ cmd_setup() {
     # rest), creates data/, writes the vhost with the shared headers include,
     # waits for DNS and runs certbot. It stops before build/run on purpose.
     log "running provision-site dndsim $REPO --port $PORT --dir $ROOT"
-    provision-site dndsim "$REPO" --port "$PORT" --dir "$ROOT"
+    provision-site dndsim "$REPO" --port "$PORT" --dir "$ROOT" \
+      || die "provision-site failed (exit $?) — DNS, vhost or certbot did not complete; fix the cause and re-run: dndsim setup"
   else
     install_fallback_vhost
   fi
@@ -530,8 +670,13 @@ cmd_setup() {
 }
 
 cmd_deploy() {
-  local DO_INSTALL=1
-  [ "${1:-}" = "--no-install" ] && DO_INSTALL=0
+  local DO_INSTALL=1 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --no-install) DO_INSTALL=0;;
+      *) die "deploy: unknown option '$arg' (usage: dndsim deploy [--no-install])";;
+    esac
+  done
   need_root
   command -v pm2 >/dev/null || die "pm2 not found on PATH."
   cd "$ROOT"
@@ -560,15 +705,44 @@ cmd_deploy() {
 
   if ! vhost_path >/dev/null; then
     log "no vhost for $FQDN yet — running dndsim setup first"
-    if ! cmd_setup; then
-      warn "setup did not complete; deploying the app anyway. Fix the cause and re-run: dndsim setup"
+    # Setup runs in a subshell so that `die` (which is `exit 1`) ends setup
+    # and not the deploy — and around `set +e`, not inside `if !` or `||`:
+    # bash suspends errexit for everything a condition runs, the subshell
+    # included, so written that way a failing step inside setup would be
+    # ignored. This way setup keeps its own errexit and this shell gets its
+    # exit status, and the app is deployed regardless: a missing vhost is a
+    # site that is not reachable yet, not a reason to leave the old code
+    # running.
+    local setup_rc=0
+    set +e; ( set -e; cmd_setup ); setup_rc=$?; set -e
+    if [ "$setup_rc" -ne 0 ]; then
+      warn "setup did not complete (exit $setup_rc); deploying the app anyway. Fix the cause and re-run: dndsim setup"
+    fi
+  fi
+
+  # The SSE block is setup's, but provision-site re-run by hand, certbot, or
+  # an edit can put the generic proxy block back, and until now only `setup`
+  # repaired it. ensure_sse is idempotent (a no-op when the block is in
+  # place) and root is held here, so every deploy keeps the vhost right.
+  # Before the restart, and subshelled like setup: `nginx -t` is global, so
+  # a broken vhost of any other site on the box fails it, and a `die` in
+  # here must not end the deploy with new code running and no probe taken.
+  if vhost_path >/dev/null; then
+    local sse_rc=0
+    set +e; ( set -e; ensure_sse ); sse_rc=$?; set -e
+    if [ "$sse_rc" -ne 0 ]; then
+      warn "the SSE block could not be put in the vhost (exit $sse_rc); deploying the app anyway. Fix the cause and re-run: dndsim setup"
     fi
   fi
 
   # A (re)start kills any in-flight game; the app marks it stopped on boot
   # and the transcript stays readable. That is expected. The ecosystem file
   # is the registration's source of truth, so it is re-read on every deploy.
-  case "$(pm2_state)" in
+  # The state has to be readable: `pm2 start` on a process pm2 already holds
+  # is a no-op that looks like a deploy, so an unreadable list is a stop.
+  local state
+  state="$(pm2_state)" || die "pm2: $state — cannot tell whether $APP is registered, so not starting or restarting it. Check: dndsim status"
+  case "$state" in
     "not registered")
       log "pm2 start $ECOSYSTEM ($APP, first registration)"
       pm2_clean start "$ECOSYSTEM" --only "$APP"
@@ -580,12 +754,22 @@ cmd_deploy() {
   esac
   sleep 2
   save_if_online
-  probe
-  log "deployed: $(git rev-parse --short HEAD)  $(git log -1 --format=%s)"
+  if probe "$PROBE_TRIES"; then
+    log "deployed: $(git rev-parse --short HEAD)  $(git log -1 --format=%s)"
+  else
+    die "$(git rev-parse --short HEAD) is checked out and pm2 was told to run it, but 127.0.0.1:$PORT$HEALTH did not answer HTTP 200 — not deployed. Look at: dndsim logs"
+  fi
 }
 
-cmd_restart() { need_root; cd "$ROOT"; log "pm2 restart $APP"; pm2_clean restart "$ECOSYSTEM" --only "$APP"; sleep 2; probe; }
-cmd_logs()    { pm2 logs "$APP" "$@"; }
+cmd_restart() {
+  [ $# -eq 0 ] || die "restart: unknown option '$1' (usage: dndsim restart)"
+  need_root; cd "$ROOT"
+  log "pm2 restart $APP"
+  pm2_clean restart "$ECOSYSTEM" --only "$APP"
+  sleep 2
+  probe "$PROBE_TRIES" || die "$APP was restarted but 127.0.0.1:$PORT$HEALTH did not answer HTTP 200. Look at: dndsim logs"
+}
+cmd_logs()    { pm2_clean logs "$APP" "$@"; }
 
 cmd_status() {
   cd "$ROOT"
@@ -613,7 +797,7 @@ cmd_status() {
   else
     printf 'vhost:     none for %s — run: dndsim setup\n' "$FQDN"
   fi
-  probe
+  probe || true      # status reports; deploy/restart are the ones that fail on it
   local pem="/etc/letsencrypt/live/$FQDN/cert.pem"
   if [ -r "$pem" ]; then
     local end days
@@ -629,22 +813,21 @@ cmd_status() {
 
 cmd_keys() {
   # Read-only, names only. The same matrix `status` prints, for both files,
-  # plus what pm2's launch unsets. Exit 1 when the default DM's key is not in
-  # .env, so a bring-up script can gate on it.
+  # plus which key is never adopted and what pm2 is launched with. Exit 1 when
+  # the default DM's key is not in .env, so a bring-up script can gate on it.
   printf 'known keys: %s\n' "${KNOWN_KEYS[*]}"
+  printf 'not adopted: %s  (set with: dndsim token)\n' "$NO_ADOPT_KEYS"
   if [ -e "$ENV_FILE" ]; then printf 'env:        %s  %s\n' "$ENV_FILE" "$(key_matrix "$ENV_FILE")"
   else printf 'env:        %s missing — run: dndsim deploy\n' "$ENV_FILE"; fi
   local f; for f in "${KEY_SOURCES[@]}"; do
     if [ -r "$f" ]; then printf 'key store:  %s  %s\n' "$f" "$(key_matrix "$f" --aliases)"
     else printf 'key store:  %s  unreadable\n' "$f"; fi
   done
-  printf 'pm2 unsets: %s\n' "$(pm2_unset_names)"
+  printf 'pm2 launch: %s\n' "$(pm2_env_names)"
   if env_file_has "$ENV_FILE" "$REQUIRED_KEY"; then return 0; fi
   warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Put it in ${KEY_SOURCES[0]} and run: dndsim deploy"
   return 1
 }
-
-WRITE_TOKEN_KEY="DND_WRITE_TOKEN"
 
 cmd_token() {
   # Set the write token and then use it: write .env, restart so the app reads
@@ -691,7 +874,9 @@ cmd_token() {
   log "$ENV_FILE: set $WRITE_TOKEN_KEY"
 
   # run.sh sources .env at start, so nothing sees a new token until a restart.
-  case "$(pm2_state)" in
+  local state
+  state="$(pm2_state)" || die "pm2: $state — the token is in $ENV_FILE, but the app was not restarted to read it. Fix pm2, then: dndsim restart"
+  case "$state" in
     "not registered"*)
       warn "$APP is not registered with pm2 — the token takes effect on the next: dndsim deploy";;
     *)

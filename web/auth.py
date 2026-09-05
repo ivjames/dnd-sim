@@ -48,7 +48,8 @@ from flask import current_app, jsonify, request
 #: which `run.sh` sources, and `dndsim token` is what puts it there. Unlike a
 #: vendor key it is not kept in `/etc/environment`: adoption exists for the
 #: box's shared platform keys, and this one is this app's own. It is on
-#: `KNOWN_KEYS` in `bin/dndsim` so pm2's launch unsets it, as for every key.
+#: `KNOWN_KEYS` in `bin/dndsim` so `keys`/`status` report it — and it is the
+#: one known key `dndsim deploy` never adopts from the store.
 ENV_VAR = "DND_WRITE_TOKEN"
 
 #: The request header carrying it.

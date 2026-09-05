@@ -596,8 +596,9 @@ which object sits behind it in live mode and how a model id reaches a seat.
      the explicit provider is the one its prefix routes to anyway — so
      DeepSeek's `thinking` field never reaches `deepinfra:deepseek-ai/…`.
    - `bin/dndsim` knows `SILICONFLOW_API_KEY` and `DEEPINFRA_API_KEY` (adopted
-     from `/etc/environment`, unset for pm2's launch). `CARTESIA_API_KEY`,
-     also in that store, is text-to-speech and is not a provider.
+     from `/etc/environment` into `.env`; pm2 is launched under an `env -i`
+     allowlist, so no key reaches it). `CARTESIA_API_KEY`, also in that
+     store, is text-to-speech and is not a provider.
 
 ### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
 

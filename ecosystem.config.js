@@ -1,20 +1,24 @@
 // PM2 process definition for dnd-sim (lab980 protocol).
 //
 // Started and restarted by `dndsim deploy` (bin/dndsim) — never by hand:
-//   env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u XAI_API_KEY \
-//       -u MISTRAL_API_KEY -u DEEPSEEK_API_KEY -u GITHUB_TOKEN \
+//   env -i PATH="$PATH" HOME="$HOME" [PM2_HOME=…] [TERM=…] LANG=C.UTF-8 \
 //       pm2 start ecosystem.config.js --only dnd-sim
-//   (the unset list is KNOWN_KEYS in bin/dndsim, plus GITHUB_TOKEN)
+//   (pm2_clean in bin/dndsim; every pm2 command the CLI runs goes through it,
+//   including the `pm2 jlist` that spawns the daemon when it is down)
 //
-// The platform API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
-// XAI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY) and the AWS credentials
-// Polly narration uses (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION)
-// are NOT set here and are NOT inherited from the shell. They live in /var/www/dndsim/.env (mode 600,
-// gitignored), which `dndsim deploy` writes by copying each value out of
-// /etc/environment, and which run.sh sources before exec'ing python. pm2 is
-// deliberately launched with every known key unset so ~/.pm2/dump.pm2 never
-// carries one. Values in .env override the env block below. Never commit a
-// key to this file.
+// The platform API keys, the AWS credentials Polly narration uses and the
+// write token — the list is KNOWN_KEYS in bin/dndsim — are NOT set here and
+// are NOT inherited from the shell. They live in /var/www/dndsim/.env (mode
+// 600, gitignored), which `dndsim deploy` writes by copying each value out of
+// /etc/environment, and which run.sh sources before exec'ing python. pm2
+// gives the process the environment of the command that started it, and
+// `pm2 save` writes that into ~/.pm2/dump.pm2 — so the allowlist on the
+// start/restart above is what keeps a known key, or anything else root's
+// login shell holds, out of both. (The other pm2 commands go through the
+// same wrapper as hygiene for the daemon's own environ.) Nothing else from
+// the shell reaches the process either: TZ, proxy variables, a DND_* override
+// belong in .env. Values in .env override the env block below. Never commit
+// a key to this file.
 module.exports = {
   apps: [
     {

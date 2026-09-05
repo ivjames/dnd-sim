@@ -21,13 +21,29 @@ CLI = os.path.join(ROOT, "bin", "dndsim")
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
 
 
+SHIM_PATH = ""
+
+
+@pytest.fixture(autouse=True, scope="module")
+def root_shim(tmp_path_factory):
+    """`cmd_token` asks `need_root` before it does anything, and `need_root`
+    asks `id -u`. An `id` on PATH that answers 0 lets the whole thing run for
+    any user; everything it touches is a temp file the test hands it."""
+    global SHIM_PATH
+    d = tmp_path_factory.mktemp("id-shim")
+    p = d / "id"
+    p.write_text('#!/bin/sh\nif [ "$1" = "-u" ]; then echo 0; else PATH=/usr/bin:/bin exec id "$@"; fi\n')
+    p.chmod(0o755)
+    SHIM_PATH = str(d)
+
+
 def run(body: str, **env: str) -> subprocess.CompletedProcess:
     """Source the CLI (so its functions are defined) and run `body`."""
     script = 'source "%s" >/dev/null 2>&1\n%s' % (CLI, body)
     return subprocess.run(
         ["bash", "-c", script],
         capture_output=True, text=True, timeout=60,
-        env={**os.environ, **env},
+        env={**os.environ, "PATH": SHIM_PATH + os.pathsep + os.environ.get("PATH", ""), **env},
     )
 
 

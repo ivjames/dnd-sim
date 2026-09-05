@@ -19,9 +19,12 @@ this box; the repo was authored against `/opt/dnd-sim`), the port is **8071**
 8045), and the keys: **the platform API keys stay in `/etc/environment`**, the
 known-key store on this box, and the app reads them from **`/var/www/dndsim/.env`**,
 which `dndsim deploy` writes once by copying each value across and `run.sh`
-sources on every start. pm2 never sees a key — `deploy` launches it under
-`env -u <every known key> -u GITHUB_TOKEN`, so `~/.pm2/dump.pm2` does not carry
-the root shell's copies — and no key is ever on any argv or in any log line.
+sources on every start. pm2 never sees a key — the CLI starts and restarts it
+through `env -i` with an allowlist (`PATH`, `HOME`, `PM2_HOME` and `TERM` when
+set, `LANG`), and since pm2 gives the process the environment of the command
+that started it and `pm2 save` records that, neither the app nor
+`~/.pm2/dump.pm2` carries anything from the root shell's environment, known
+key or not — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
@@ -58,10 +61,16 @@ behaviour, not the CLI's — and the other seats are unaffected. To adopt a key
 for a platform not in this list, set `DNDSIM_KEYS` (space-separated names) when
 running `dndsim deploy`; no code change is needed.
 
+Put them there with an editor, one `KEY=value` line each, not with `echo`
+on a command line: an `echo 'ANTHROPIC_API_KEY=sk-ant-...' >> /etc/environment`
+puts the value in that shell's history and, for as long as it runs, in a
+world-readable `/proc/<pid>/cmdline` — the two places the rest of this page
+keeps it out of.
+
 ```bash
-grep -q '^ANTHROPIC_API_KEY=' /etc/environment || echo 'ANTHROPIC_API_KEY=sk-ant-...' >> /etc/environment
-# and likewise OPENAI_API_KEY=..., GEMINI_API_KEY=..., XAI_API_KEY=..., MISTRAL_API_KEY=..., DEEPSEEK_API_KEY=...,
-# SILICONFLOW_API_KEY=..., DEEPINFRA_API_KEY=...
+${EDITOR:-nano} /etc/environment      # add ANTHROPIC_API_KEY=sk-ant-... and any of the
+                                      # others as KEY=value lines; save
+dndsim keys                           # names only: which known keys the store holds
 ```
 
 Then:
@@ -99,16 +108,44 @@ In order, each step a no-op when already done:
    gitignored.
 4. If there is no vhost for `dndsim.lab980.com` yet, runs **`dndsim setup`**
    (below) first.
-5. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
-   `pm2 restart` after — both under `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY
-   -u GEMINI_API_KEY -u XAI_API_KEY -u MISTRAL_API_KEY -u DEEPSEEK_API_KEY
-   -u SILICONFLOW_API_KEY -u DEEPINFRA_API_KEY -u GITHUB_TOKEN` (the unset
-   list is built from the same known-key list as step 3, so a key added
-   there is unset here too). Then `pm2 save`, but
-   **only if the process reports `online`** (a save while it is down would
-   persist a dump that omits it).
-6. Probes `http://127.0.0.1:8071/api/health` and the public URL, prints the
-   deployed commit, and warns if the health body says `"mock":true`.
+5. If a vhost exists, ensures the SSE block (next section) is in it — the
+   same idempotent repair `setup` does, so a vhost rewritten by
+   `provision-site`, certbot or a hand edit is put right on the next deploy
+   rather than the next `setup`. This runs **before** the restart and in a
+   subshell: `nginx -t` is global, so a broken vhost belonging to any other
+   site on the box fails it, and that is reported (`warn:`, re-run `dndsim
+   setup` once fixed) rather than ending the deploy with new code running
+   and no probe taken.
+6. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
+   `pm2 restart` after, as `env -i PATH=… HOME=… [PM2_HOME=…] [TERM=…]
+   LANG=C.UTF-8 pm2 …`. That environment is the one that matters: pm2 hands
+   the process the environment of the command that started it (not the
+   daemon's), and `pm2 save` writes that into the dump — so an allowlist on
+   start/restart is what keeps root's login environment out of both, the
+   known keys and equally anything else `/etc/environment` holds
+   (`CARTESIA_API_KEY`, say), where an unset list is one key behind by
+   construction. The other pm2 commands (`pm2 jlist` to ask whether it is
+   registered, `pm2 save`, `dndsim logs`) go through the same wrapper as
+   hygiene — the first of them after a reboot spawns the daemon, whose own
+   environ then stays clean — not as the protection. If `pm2 jlist` cannot
+   be read the deploy stops rather than guess: a `pm2 start` on a process
+   pm2 already holds is a silent no-op that looks like a deploy. Then `pm2
+   save`, but **only if the process reports `online`** (a save while it is
+   down would persist a dump that omits it; an unreadable state skips it too,
+   and says which).
+7. Probes `http://127.0.0.1:8071/api/health` (up to `DNDSIM_PROBE_TRIES`
+   seconds, default 10, for a 200) and the public URL, and warns if the
+   health body says `"mock":true`. **The deploy exits 1 unless the local
+   probe answered HTTP 200** — pm2 having been told to run the code is not
+   the code serving, and a green exit from a deploy whose app is down is how
+   a bad deploy goes unnoticed. The public result is printed either way; a
+   healthy app behind a broken vhost is the diagnosis, not something to hide.
+   On success the last line is `deployed: <commit>`. `dndsim restart` holds
+   the same rule.
+
+`dndsim deploy` takes `--no-install` and nothing else; `dndsim setup` takes
+`--dry-run` and nothing else. An option either does not know is an error, not
+something silently ignored.
 
 **A (re)start kills any in-flight game.** On boot the app marks every game
 still `running`/`paused`/`created` as `stopped`; its transcript stays
@@ -122,14 +159,22 @@ readable. Deploy between games if one matters.
   certbot. `--port` is not optional (it would otherwise allocate the next free
   port from 8060 and proxy to that); `--dir` is the existing checkout, which
   it detects and leaves alone. It also seeds `.env` with `PORT=` if there is
-  none, which step 3 above then fills in.
+  none, which step 3 above then fills in. If it exits non-zero, setup stops
+  there and says so.
 - Without `provision-site`: installs `deploy/nginx-dndsim.conf` as the vhost
   (HTTP only, no headers include) and tells you to run
   `certbot --nginx -d dndsim.lab980.com --redirect` and `fix-security-headers --fix`.
 - Either way, then **ensures the SSE block** (next section) is in every proxied
   `location` of the vhost, with backup under `/var/backups/dndsim-sse-*`,
-  `nginx -t`, reload, and rollback on failure. `dndsim setup --dry-run` shows
-  the diff without touching anything.
+  `nginx -t`, reload, and rollback on failure. The rewrite is checked before
+  it is written: a failed or empty result (an empty file passes `nginx -t`)
+  leaves the vhost untouched. `dndsim setup --dry-run` shows the diff without
+  touching anything.
+
+When `deploy` runs `setup` for a missing vhost, it does so in a subshell so a
+setup failure is reported and the app is deployed anyway — an unreachable
+site is not a reason to leave the old code running — with a `warn:` line
+saying to fix the cause and re-run `dndsim setup`.
 
 ## Two constraints that survive everything
 
@@ -155,6 +200,16 @@ Claude); the other platform keys are needed only by seats that use that
 platform, and any subset is fine. Everything else has a default. `.env` values
 override the process environment pm2 provides.
 
+**Nothing else reaches the process.** pm2 is started under `env -i`, so the
+app inherits only what the allowlist passes (`PATH`, `HOME`, `PM2_HOME`,
+`TERM`, and `LANG`, which is fixed to `C.UTF-8`), the `env` block in
+`ecosystem.config.js`, and `.env`. Root's login environment does not: a `TZ`,
+`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, an `AWS_PROFILE`, or a `DND_*` override
+exported in the shell that runs `dndsim deploy` is not seen by the app. It
+used to be — the launch passed everything except the known keys — so a value
+that arrived from the shell by accident now has to be written into `.env`,
+which is the config and was always meant to be.
+
 | key | what it is |
 |---|---|
 | `PORT` | `8071` — must match the vhost's `proxy_pass` |
@@ -170,7 +225,7 @@ override the process environment pm2 provides.
 | `AWS_ACCESS_KEY_ID` | Amazon Polly narration — optional; adopted the same way |
 | `AWS_SECRET_ACCESS_KEY` | ditto |
 | `AWS_REGION` | Polly region, e.g. `us-east-1`; adopted the same way. boto3 will not build a client without one |
-| `DND_WRITE_TOKEN` | the shared secret the write routes require (`X-Dnd-Token` header): `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. Unset → each answers 503 with `{"code": "writes_unconfigured"}`, and reading a game, listing games, the SSE stream, `/api/tts` and the narration hold stay anonymous. Set it with **`dndsim token`**, which writes it straight into `.env`; it is not kept in `/etc/environment`, being this app's own secret rather than one of the box's shared vendor keys. Unset for pm2's launch like every other key |
+| `DND_WRITE_TOKEN` | the shared secret the write routes require (`X-Dnd-Token` header): `POST /api/games`, `/note`, `/pause`, `/resume`, `/stop`. Unset → each answers 503 with `{"code": "writes_unconfigured"}`, and reading a game, listing games, the SSE stream, `/api/tts` and the narration hold stay anonymous. Set it with **`dndsim token`**, which writes it straight into `.env`; it is not kept in `/etc/environment`, being this app's own secret rather than one of the box's shared vendor keys, and it is the one known key `deploy` never adopts from there |
 | `DND_TTS` | unset (auto) — `0` switches server voices off entirely; `1` turns them on even for mock games |
 | `DND_TTS_ENGINE` | `neural` — Polly engine for the table ($16/1M). `standard`, `long-form` and `generative` also work; each is sent only the SSML it accepts |
 | `DND_TTS_MONSTER_ENGINE` | unset — speaking monsters sit on `DND_TTS_ENGINE` with everyone else. They were held on `standard` ($4/1M) for `vocal-tract-length`; `tts/dsp.py` makes an ogre bigger than a goblin now, so name an engine here only if you want the split back for its own sake |
@@ -228,8 +283,11 @@ looks like here — there is no per-writer identity to revoke instead.
 can adopt the box's *shared vendor* keys into `.env`; this secret is this app's
 own, generated on the box, and a second copy would be one more place to leak it
 from and one more to forget on a rotation. It stays on `KNOWN_KEYS` in
-`bin/dndsim` only so pm2's launch unsets it and `keys`/`status` report it by
-name.
+`bin/dndsim` so `keys`/`status` report it by name, and it is the one known
+key `deploy` never adopts: a copy that does end up in `/etc/environment` is
+reported (`warn:`) and left there, never copied into `.env` — otherwise the
+line above would be false and the store would quietly become the token's
+second home.
 
 Unset, it fails closed: the write routes answer `503 {"code":
 "writes_unconfigured"}` and everything else — the page, every read, the stream,
@@ -327,5 +385,8 @@ dndsim logs | grep 'tts failed'    # names the seat, the engine and the voice
 keys are adopted from, first hit wins; default `/etc/environment` alone —
 any other file is consulted only because you named it here),
 `DNDSIM_ENV_FILE` (`<app dir>/.env`), `DNDSIM_KEYS` (space-separated key names
-to adopt, report and unset for pm2; default is the eleven known keys above —
-setting it replaces the list, so include `ANTHROPIC_API_KEY`).
+to adopt and report; default is the twelve known keys above — setting it
+replaces the list, so include `ANTHROPIC_API_KEY`; pm2's launch does not
+consult it, since it drops the whole environment), `DNDSIM_PROBE_TRIES`
+(`10`; seconds `deploy`/`restart` wait for the local `/api/health` to answer
+200 before exiting 1).
