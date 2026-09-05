@@ -51,6 +51,9 @@ from dataclasses import dataclass
 
 __all__ = [
     "SAMPLE_RATE",
+    "FIELDS",
+    "BOUNDS",
+    "EFFECT_CHAIN",
     "MonsterFX",
     "apply",
     "wav",
@@ -91,6 +94,77 @@ MAX_DRIVE = 5.0
 MAX_FEEDBACK = 0.6
 
 
+#: Every knob, with the bounds it is clamped to. One table, because seventeen
+#: of anything hand-written seventeen times is seventeen chances to write the
+#: sixteenth one wrong — `__post_init__` clamps from here, `token()` spells
+#: from here, and `tts/voices.py` builds its `Tune` and the voice lab its
+#: sliders from here rather than from a second list that would drift.
+#:
+#: This is DECLARATION order, which is the dataclass's positional order, and
+#: the original three keep the front of it: `MonsterFX(20, 55, 40)` has meant
+#: size, growl, room since there were only three, and a knob inserted ahead of
+#: those would silently repoint every positional construction in the tree at a
+#: different effect. The order the chain applies them in is a different
+#: question and `EFFECT_CHAIN` answers it.
+FIELDS: tuple[tuple[str, int, int], ...] = (
+    ("size_pct", -MAX_SIZE_PCT, MAX_SIZE_PCT),
+    ("growl_pct", 0, 100),
+    ("cave_pct", 0, 100),
+    ("suboctave_pct", 0, 100),
+    ("noise_pct", 0, 100),
+    ("bandgrowl_pct", 0, 100),
+    ("fold_pct", 0, 100),
+    ("rectify_pct", 0, 100),
+    ("highpass_pct", 0, 100),
+    ("formant_pct", -100, 100),
+    ("phone_pct", 0, 100),
+    ("vibrato_pct", 0, 100),
+    ("phaser_pct", 0, 100),
+    ("metal_pct", 0, 100),
+    ("slap_pct", 0, 100),
+    ("tremolo_pct", 0, 100),
+    ("stutter_pct", 0, 100),
+)
+
+#: The bounds alone, by name. What `voices.py` and the voice lab want.
+BOUNDS: dict[str, tuple[int, int]] = {n: (lo, hi) for n, lo, hi in FIELDS}
+
+#: The sample-touching part of `FIELDS`, in the order a signal chain wants
+#: them, paired with the function that applies each. `size_pct` is absent by
+#: construction: it is the sample rate in the WAV header and never a pass over
+#: the audio.
+#:
+#: What generates content comes first (an octave under the voice, breath
+#: through it), then the nonlinearities while the signal is still clean enough
+#: for them to bite, then the filters that shape what those made, then
+#: modulation, then the room, and last the two that chop the level — a gate
+#: ahead of a reverb tail cuts the tail, which is a fault rather than an effect.
+#:
+#: Every one of these takes `(work, pct, rate)` and mutates `work` in place,
+#: where `work` is a list of floats at 16-bit scale and `rate` is the PLAYBACK
+#: rate — heard time, not recorded time, so that a creature shifted down stands
+#: in the same room and rasps at the same speed as one shifted up. `_cave` has
+#: always counted its delay that way and the rest follow it.
+EFFECT_CHAIN: tuple[tuple[str, str], ...] = (
+    ("suboctave_pct", "_suboctave"),
+    ("noise_pct", "_noise"),
+    ("bandgrowl_pct", "_bandgrowl"),
+    ("growl_pct", "_saturate"),
+    ("fold_pct", "_fold"),
+    ("rectify_pct", "_rectify"),
+    ("highpass_pct", "_highpass"),
+    ("formant_pct", "_formant"),
+    ("phone_pct", "_phone"),
+    ("vibrato_pct", "_vibrato"),
+    ("phaser_pct", "_phaser"),
+    ("metal_pct", "_metal"),
+    ("slap_pct", "_slap"),
+    ("cave_pct", "_cave"),
+    ("tremolo_pct", "_tremolo"),
+    ("stutter_pct", "_stutter"),
+)
+
+
 @dataclass(frozen=True)
 class MonsterFX:
     """What is done to a monster's audio after Polly hands it over.
@@ -105,32 +179,79 @@ class MonsterFX:
     bigger creature, i.e. lower. Unlike VTL it moves pitch along with the
     formants, because it is a resample rather than a synthesizer parameter —
     a cruder effect than Amazon's, applied to much better audio.
+
+    `formant_pct` is the one knob here that does move an emphasis without
+    moving pitch, and it is signed to agree with `size_pct`: positive is a
+    bigger creature. It is a single peaking filter rather than a real vocal
+    tract, so it is a cue and not a transform — but it is the only cue in this
+    module that a listener hears as head size rather than as tape speed.
+
+    The other fourteen are character rather than size, all of them 0 by
+    default, none of them dealt by `voices.py` as this stands: they are
+    reachable through a `Tune` — the voice lab — so that what a creature type
+    should sound like is decided by ear before it is written into the casting.
     """
 
-    size_pct: int = 0       # + is bigger/deeper; the whole spectrum scales
-    growl_pct: int = 0      # soft saturation: harmonics, grit
-    cave_pct: int = 0       # a feedback comb: the room it is standing in
+    # The original three, first and in their original order: this dataclass is
+    # constructed positionally in places, and these three have meant these
+    # three since it had no others. See `FIELDS`.
+    size_pct: int = 0        # + is bigger/deeper; the whole spectrum scales
+    growl_pct: int = 0       # soft saturation: harmonics, grit
+    cave_pct: int = 0        # a feedback comb: the room it is standing in
+    # Character, all of them 0 unless a Tune says otherwise.
+    suboctave_pct: int = 0   # an octave under the voice, mixed beneath it
+    noise_pct: int = 0       # breath, shaped by the voice's own envelope
+    bandgrowl_pct: int = 0   # saturation on the low band alone
+    fold_pct: int = 0        # wavefolding: harsher, and not a voice any more
+    rectify_pct: int = 0     # blended rectification: an octave up, nastily
+    highpass_pct: int = 0    # thins it: incorporeal, distant
+    formant_pct: int = 0     # + is a bigger head; pitch untouched
+    phone_pct: int = 0       # 300-3400 Hz: a helm, a jar, a speaking stone
+    vibrato_pct: int = 0     # pitch wobble off a modulated delay
+    phaser_pct: int = 0      # cascaded all-passes: swirl
+    metal_pct: int = 0       # feedforward comb: notches, no tail
+    slap_pct: int = 0        # one early reflection
+    tremolo_pct: int = 0     # sub-audio amplitude modulation
+    stutter_pct: int = 0     # a gate on a grid: chittering
 
     def __post_init__(self) -> None:
         # Clamped rather than rejected: these are dealt from a hash, and a
         # spread widened past what Polly's rate tag can undo should sound wrong
         # rather than fail a line that a listener is waiting for.
-        object.__setattr__(self, "size_pct", _clamp(self.size_pct, -MAX_SIZE_PCT, MAX_SIZE_PCT))
-        object.__setattr__(self, "growl_pct", _clamp(self.growl_pct, 0, 100))
-        object.__setattr__(self, "cave_pct", _clamp(self.cave_pct, 0, 100))
+        for name, lo, hi in FIELDS:
+            object.__setattr__(self, name, _clamp(getattr(self, name), lo, hi))
 
     def __bool__(self) -> bool:
-        return bool(self.size_pct or self.growl_pct or self.cave_pct)
+        return any(getattr(self, name) for name, _, _ in FIELDS)
+
+    def touches_samples(self) -> bool:
+        """Whether anything here is a pass over the audio.
+
+        False for a treatment that is only a size shift, which is most of them
+        and which `apply` answers without reading a sample.
+        """
+        return any(getattr(self, name) for name, _ in EFFECT_CHAIN)
 
     def token(self) -> str:
         """The part of a cache key this treatment is responsible for.
+
+        Spells only what is dealt — `fx:size=20,growl=55:<fp>` — so that a
+        treatment keys the same length it always did however many knobs exist,
+        and so that adding a knob nobody has turned on does not rewrite the key
+        of every clip on disk. (The fingerprint does that anyway when the code
+        moves; this is about the ones where it has not.)
 
         Includes `source_fingerprint`, so that editing the arithmetic below
         retires the clips it made. Without it a changed saturation curve would
         go on being served from disk, for a year, from a key that still
         described it correctly.
         """
-        return f"fx:{self.size_pct}:{self.growl_pct}:{self.cave_pct}:{source_fingerprint()}"
+        dealt = ",".join(
+            f"{name[:-4]}={getattr(self, name)}"
+            for name, _, _ in FIELDS
+            if getattr(self, name)
+        )
+        return f"fx:{dealt}:{source_fingerprint()}"
 
     def rate_pct(self) -> int:
         """The speaking rate that undoes what `playback_rate` will do to duration.
@@ -184,21 +305,27 @@ def apply(pcm: bytes, fx: MonsterFX, in_rate: int = SAMPLE_RATE) -> tuple[bytes,
     """
     rate = fx.playback_rate(in_rate)
     samples = _samples(pcm)
-    if not samples or not (fx.growl_pct or fx.cave_pct):
+    if not samples or not fx.touches_samples():
         # The size shift is the header, so a monster with no character effects
         # is answered without touching a sample. Most of them are.
         return _bytes(samples), rate
     work = [float(v) for v in samples]
-    # Held across the treatment: saturation is a compressor and a comb adds
-    # energy, so both make a clip LOUDER as a side effect of changing its
-    # shape. A monster ten decibels over the narrator reading the line before
-    # it is a mixing fault, not a costume — so the level that comes out is the
-    # level that went in, and only the timbre has moved.
+    # Held across the treatment: saturation is a compressor, a comb adds
+    # energy, a gate takes it away, and a bandpass throws most of the spectrum
+    # out. Every one of those moves the LEVEL as a side effect of changing the
+    # shape. A monster ten decibels over — or under — the narrator reading the
+    # line before it is a mixing fault, not a costume, so the level that comes
+    # out is the level that went in and only the timbre has moved.
+    #
+    # It is measured once, here, rather than per effect: sixteen successive
+    # renormalizations would each undo part of what the next one was reacting
+    # to, and a gate would end up pumping the surviving syllables up by
+    # whatever fraction of the clip it had just silenced.
     level = _rms(work)
-    if fx.growl_pct:
-        _saturate(work, fx.growl_pct)
-    if fx.cave_pct:
-        _cave(work, fx.cave_pct, rate)
+    for name, func in EFFECT_CHAIN:
+        pct = getattr(fx, name)
+        if pct:
+            globals()[func](work, pct, rate)
     return _bytes(_to_pcm(work, level)), rate
 
 
@@ -234,7 +361,7 @@ def _rms(work: list[float]) -> float:
     return (total / len(work)) ** 0.5
 
 
-def _saturate(work: list[float], pct: int) -> None:
+def _saturate(work: list[float], pct: int, rate: int) -> None:
     """Soft-clip, in place: harmonics on top of the voice, not instead of it.
 
     `x(27+x²)/(27+9x²)` is the standard rational stand-in for `tanh` — three
@@ -297,6 +424,187 @@ def _to_pcm(work: list[float], level: float = 0.0) -> array:
     if scale == 1.0:
         return array("h", [int(v) for v in work])
     return array("h", [int(v * scale) for v in work])
+
+
+# --------------------------------------------------------------------------
+# The character effects. Every one of them takes `(work, pct, rate)`, mutates
+# `work` in place, and is called only when `pct` is non-zero — so none of them
+# needs a "not dealt" branch, and every one of them must be a no-op in the
+# limit as `pct` approaches 0 anyway, or the voice lab's sliders jump.
+#
+# `rate` is the PLAYBACK rate. Anything counted in seconds is counted in
+# seconds the listener will hear.
+# --------------------------------------------------------------------------
+
+
+def _suboctave(work: list[float], pct: int, rate: int) -> None:
+    """An octave under the voice, mixed beneath it: the classic fiend.
+
+    Overlap-add: grains of `SUBOCTAVE_GRAIN_S` are read at half speed against
+    a full-speed write pointer and cross-faded with a Hann window, which
+    halves the frequency of everything without halving the duration. Crude
+    next to a phase vocoder and much cheaper — and mixed *under* the dry voice
+    at `pct`, never replacing it, so the intelligibility of the line is the dry
+    signal's and only the weight underneath it is this.
+    """
+    raise NotImplementedError
+
+
+def _noise(work: list[float], pct: int, rate: int) -> None:
+    """Breath: white noise shaped by the voice's own envelope.
+
+    A one-pole envelope follower over |x|, times a deterministic LCG's output,
+    mixed in at `pct`. Shaped rather than flat because a constant hiss is a bad
+    line and a rasp that arrives only where the creature is speaking is a
+    damaged throat. The generator is seeded from a constant, not from the
+    clock or the id: a clip is cached, and a cached clip that was different the
+    second time it was rendered would be a bug nobody could see.
+    """
+    raise NotImplementedError
+
+
+def _bandgrowl(work: list[float], pct: int, rate: int) -> None:
+    """Saturation on the low band alone, so the consonants survive it.
+
+    `MAX_DRIVE` is where it is because past it "the consonants stop arriving" —
+    which is a statement about the high band, since that is where they live. So
+    split at `BANDGROWL_SPLIT_HZ` with a one-pole, saturate the low half, add
+    the untouched high half back. The same curve as `_saturate`, driven much
+    harder, at an intelligibility cost of nearly nothing.
+    """
+    raise NotImplementedError
+
+
+def _fold(work: list[float], pct: int, rate: int) -> None:
+    """Wavefolding: what saturation does, but no longer a voice.
+
+    Where `_saturate` compresses a signal toward a ceiling, this reflects it
+    back off one — so a loud syllable comes out with more harmonics than it
+    went in with rather than fewer, and the result reads as a thing wearing a
+    voice rather than a person with a rough one. Triangular folding, `pct`
+    setting how hard the signal is driven into the fold.
+    """
+    raise NotImplementedError
+
+
+def _rectify(work: list[float], pct: int, rate: int) -> None:
+    """Blended rectification: an octave up, and nasty with it.
+
+    `|x|` at full blend is the octave-doubling trick every fuzz pedal knows;
+    blended against the dry signal at `pct` it is an edge rather than a
+    transformation. Cheap — one comparison a sample — and the only effect here
+    that adds energy specifically at the top of the band.
+    """
+    raise NotImplementedError
+
+
+def _highpass(work: list[float], pct: int, rate: int) -> None:
+    """One-pole highpass: thins the voice out.
+
+    Corner slides from `HIGHPASS_MIN_HZ` to `HIGHPASS_MAX_HZ` across the range,
+    so 0 is genuinely nothing and 100 is a voice with no chest left in it —
+    incorporeal, or a long way off. The complement of the muffle that would
+    take the metallic edge off `_cave`, and deliberately gentle: one pole, 6 dB
+    an octave, because a steep highpass on a 16 kHz clip sounds like a fault.
+    """
+    raise NotImplementedError
+
+
+def _formant(work: list[float], pct: int, rate: int) -> None:
+    """A peaking bell where the vocal tract would put one: head size, no pitch.
+
+    The one knob here that pushes on the axis `<amazon:effect
+    vocal-tract-length>` owned — an emphasis moved without the pitch moving
+    with it — and it is a cue rather than a transform: one RBJ peaking biquad,
+    `FORMANT_GAIN_DB` at full deflection, centred at `FORMANT_BIG_HZ` for
+    positive and `FORMANT_SMALL_HZ` for negative. Signed to agree with
+    `size_pct`: positive is a bigger creature, which is energy moved down.
+
+    Gain scales with `|pct|` rather than the centre sliding, so 0 is no filter
+    at all rather than a bell parked in the middle doing nothing audible.
+    """
+    raise NotImplementedError
+
+
+def _phone(work: list[float], pct: int, rate: int) -> None:
+    """300-3400 Hz, blended: a helm, a jar, a voice out of a speaking stone.
+
+    The telephone band, which is a band because that is what a narrow channel
+    does to a voice and every listener has heard it. A one-pole pair rather
+    than a steep filter, and blended against the dry signal at `pct` so the
+    slider is a distance rather than a switch.
+    """
+    raise NotImplementedError
+
+
+def _vibrato(work: list[float], pct: int, rate: int) -> None:
+    """Pitch wobble, off a delay line whose read pointer is modulated.
+
+    A sine LFO at `VIBRATO_HZ` moving a fractional read pointer over a short
+    delay, linearly interpolated — a delay whose length is changing IS a pitch
+    shift, which is the whole trick. `pct` is the depth. Unstable things:
+    oozes, something not entirely holding its shape.
+    """
+    raise NotImplementedError
+
+
+def _phaser(work: list[float], pct: int, rate: int) -> None:
+    """Cascaded all-passes with a swept coefficient: swirl.
+
+    `PHASER_STAGES` first-order all-pass sections whose coefficient is swept by
+    an LFO at `PHASER_HZ`, summed with the dry signal so the moving phase
+    becomes moving notches. Costs a pass per stage and sounds like nothing else
+    in this module — incorporeal, planar, wrong in a way that is not grit.
+    """
+    raise NotImplementedError
+
+
+def _metal(work: list[float], pct: int, rate: int) -> None:
+    """A feedforward comb: fixed notches, and no tail at all.
+
+    `y[n] = x[n] + g*x[n-d]` — the same delay `_cave` uses with the feedback
+    taken out, at `METAL_DELAY_S`, which is short enough that what is heard is
+    a timbre rather than a repeat. Where `_cave` is the room a creature stands
+    in, this is the creature being made of something that rings. They stack.
+    """
+    raise NotImplementedError
+
+
+def _slap(work: list[float], pct: int, rate: int) -> None:
+    """One early reflection at `SLAP_DELAY_S`, and only one.
+
+    A single non-feedback tap far enough out to be heard as a surface rather
+    than as timbre, and near enough not to be heard as an echo. It is what
+    tells a listener the creature is standing in front of something, which
+    `_cave` says much more expensively.
+    """
+    raise NotImplementedError
+
+
+def _tremolo(work: list[float], pct: int, rate: int) -> None:
+    """Sub-audio amplitude modulation: a voice that pulses.
+
+    A sine at `TREMOLO_HZ` scaling the amplitude by `pct` — slow enough to be
+    heard as breathing or as something not quite sustaining itself, where the
+    same modulation at audio rate would be ring modulation and a different
+    effect entirely. Undead, oozes, a thing speaking on borrowed air.
+    """
+    raise NotImplementedError
+
+
+def _stutter(work: list[float], pct: int, rate: int) -> None:
+    """A gate on a fixed grid: chittering.
+
+    The clip is divided into `STUTTER_HZ` windows and the amplitude is pulled
+    down over part of each, with `pct` setting both how much of the window is
+    gated and how far down it goes. Edges are ramped over `STUTTER_RAMP_S`
+    rather than switched, because a hard gate on a 16 kHz clip clicks, and a
+    click is the one artefact a listener reads as a broken file rather than a
+    monster. Swarms, insect things, a voice made of more than one throat.
+
+    Last in the chain: a gate ahead of `_cave` would cut the tail it just made.
+    """
+    raise NotImplementedError
 
 
 def wav(pcm: bytes, rate: int) -> bytes:
