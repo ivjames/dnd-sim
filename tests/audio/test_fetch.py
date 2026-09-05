@@ -110,6 +110,24 @@ def test_fetch_writes_the_file_the_manifest_and_the_credits(tmp_path):
     assert "must** be credited" in credits
 
 
+def test_the_manifest_carries_the_finished_credit_sentence(tmp_path):
+    """The player has to show this, and must not have to rebuild it.
+
+    `credit_line` decides the wording each source requires; a page that
+    re-derived it would be the same licence rule in two places, and the one in
+    JavaScript would be the untested one — so the generated file carries the
+    sentence and the runtime path never imports this module.
+    """
+    doc = config(music_combat=assignment(license="by", title="Battle", author="Composer",
+                                         source="incompetech",
+                                         download_url="https://cdn.invalid/battle.mp3"))
+    with audio_client() as client:
+        manifest = F.fetch_all(doc, tmp_path, client=client, log=lambda *_: None)
+    entry = manifest["cues"]["music_combat"]
+    assert entry["credit_text"] == F.credit_line(entry["credit"])
+    assert "Battle" in entry["credit_text"] and "creativecommons.org" in entry["credit_text"]
+
+
 def test_files_are_named_by_cue_and_grouped_by_layer(tmp_path):
     doc = config(**{c: assignment() for c in ("amb_camp_fire", "sfx_dice", "music_combat")})
     with audio_client() as client:

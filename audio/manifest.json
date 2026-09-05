@@ -35,7 +35,8 @@
     "bytes_after": 2907879,
     "file": "music_explore.mp3"
    },
-   "duration_s": 238.71
+   "duration_s": 238.71,
+   "credit_text": "\"Darkest Child\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_tension": {
    "file": "assets/music/music_tension.mp3",
@@ -70,7 +71,8 @@
     "bytes_after": 1961885,
     "file": "music_tension.mp3"
    },
-   "duration_s": 140.33
+   "duration_s": 140.33,
+   "credit_text": "\"Constance\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_combat": {
    "file": "assets/music/music_combat.mp3",
@@ -107,7 +109,8 @@
     "bytes_after": 4762738,
     "file": "music_combat.mp3"
    },
-   "duration_s": 327.26
+   "duration_s": 327.26,
+   "credit_text": "\"Curse of the Scarab\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_combat_desperate": {
    "file": "assets/music/music_combat_desperate.mp3",
@@ -144,7 +147,8 @@
     "bytes_after": 5601951,
     "file": "music_combat_desperate.mp3"
    },
-   "duration_s": 375.61
+   "duration_s": 375.61,
+   "credit_text": "\"Clash Defiant\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_victory": {
    "file": "assets/music/music_victory.mp3",
@@ -181,7 +185,8 @@
     "bytes_after": 360918,
     "file": "music_victory.mp3"
    },
-   "duration_s": 28.08
+   "duration_s": 28.08,
+   "credit_text": "\"The Curtain Rises\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_defeat": {
    "file": "assets/music/music_defeat.mp3",
@@ -216,7 +221,8 @@
     "bytes_after": 705275,
     "file": "music_defeat.mp3"
    },
-   "duration_s": 40.99
+   "duration_s": 40.99,
+   "credit_text": "\"Transition One\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "music_downtime": {
    "file": "assets/music/music_downtime.mp3",
@@ -251,7 +257,8 @@
     "bytes_after": 2852274,
     "file": "music_downtime.mp3"
    },
-   "duration_s": 183.77
+   "duration_s": 183.77,
+   "credit_text": "\"Folk Round\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "sting_combat_start": {
    "file": "assets/sting/sting_combat_start.mp3",
@@ -289,7 +296,8 @@
     "bytes_after": 25045,
     "file": "sting_combat_start.mp3"
    },
-   "duration_s": 3.08
+   "duration_s": 3.08,
+   "credit_text": "\"Danse Macabre - Big Hit 1\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "sting_combat_end": {
    "file": "assets/sting/sting_combat_end.mp3",
@@ -327,7 +335,8 @@
     "bytes_after": 23582,
     "file": "sting_combat_end.mp3"
    },
-   "duration_s": 2.9
+   "duration_s": 2.9,
+   "credit_text": "\"Danse Macabre - Big Hit 2\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "sting_crit": {
    "file": "assets/sting/sting_crit.mp3",
@@ -369,7 +378,8 @@
     "bytes_after": 43000,
     "file": "sting_crit.mp3"
    },
-   "duration_s": 5.33
+   "duration_s": 5.33,
+   "credit_text": "\"Der Kleber Sting\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "sting_fumble": {
    "file": "assets/sting/sting_fumble.mp3",
@@ -412,7 +422,8 @@
     "file": "sting_fumble.mp3",
     "trimmed_from_s": 58.57
    },
-   "duration_s": 8.05
+   "duration_s": 8.05,
+   "credit_text": "\"Cowboy Sting\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "sting_death_save_fail": {
    "file": "assets/sting/sting_death_save_fail.mp3",
@@ -454,7 +465,8 @@
     "file": "sting_death_save_fail.mp3",
     "trimmed_from_s": 152.06
    },
-   "duration_s": 8.05
+   "duration_s": 8.05,
+   "credit_text": "\"Deep Noise\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "swell_dread": {
    "file": "assets/swell/swell_dread.mp3",
@@ -491,7 +503,8 @@
     "file": "swell_dread.mp3",
     "trimmed_from_s": 18.26
    },
-   "duration_s": 12.83
+   "duration_s": 12.83,
+   "credit_text": "\"Gustav Sting\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "swell_heroic": {
    "file": "assets/swell/swell_heroic.mp3",
@@ -528,7 +541,8 @@
     "file": "swell_heroic.mp3",
     "trimmed_from_s": 18.26
    },
-   "duration_s": 14.58
+   "duration_s": 14.58,
+   "credit_text": "\"Greta Sting\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   },
   "swell_reveal": {
    "file": "assets/swell/swell_reveal.mp3",
@@ -565,7 +579,8 @@
     "file": "swell_reveal.mp3",
     "trimmed_from_s": 15.33
    },
-   "duration_s": 12.15
+   "duration_s": 12.15,
+   "credit_text": "\"Discovery Hit\" Kevin MacLeod (incompetech.com) \u2014 Licensed under Creative Commons: By Attribution 4.0 \u2014 https://creativecommons.org/licenses/by/4.0/"
   }
  }
 }

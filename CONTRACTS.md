@@ -278,6 +278,8 @@ POST /api/games/<id>/note   {"text"}    → 202                                 
 GET  /api/tts                           {"available":bool,"engine","monster_engine","monster_fx":bool,"language","max_chars","price_per_million_chars","monster_price_per_million_chars","config"} — can this server render voices?
 POST /api/tts/cast       {party}       {"available":bool,"seats":[{"id","voice","language","accent","gender"}]} — who will read each seat, before the game exists; casts nothing, spends nothing
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg for one narrated line — audio/wav for a `monster:<id>` seat, whose clip is post-processed (`tts/dsp.py`); 402 over budget, 503 no service, 502 synthesis failed. `v` is the probe's `config`, a cache-buster the server ignores
+GET  /api/audio                         {"available":bool,"version","generated","digest","base","cues":[{id,file,group,match,loop,gain_db,duration,fade_in_ms,fade_out_ms,trim_start_s,trim_end_s,when,credit}]} — the picked score (`audio/manifest.json`), cues in cue-table order; `available:false` + `reason` where there is no pack
+GET  /audio/<file>                      one cue's audio, immutable; only a path some cue in the manifest names, 404 otherwise
 ```
 Routes marked **write token** require the `X-Dnd-Token` header to match
 `DND_WRITE_TOKEN`; every other route is anonymous. See the 2026-09-04 `web/`
@@ -2017,3 +2019,64 @@ the *game*; this is the other half, and it is about the *screen*.
    acting when it ended, until the next thing moved.
 
 Nothing in `engine/`, `agents/` or `llm/` changed.
+
+### 2026-09-04 — new `web/routes/audio.py` + web/static — the picked score is played
+
+**What changed.** The audio pack that `tools/audio` has been writing since
+2026-09-04 (AUDIO.md, `audio/manifest.json` and the files beside it) is now
+served and played. It never was: nothing under `web/` read a manifest, no route
+served `audio/`, and `cues_for_event` had no caller outside `tools/` and
+`tests/`. The pack was committed and unreachable.
+
+1. **Two routes** (§5 above). `GET /api/audio` is the capability probe and the
+   cue table in one — the same shape as `/api/tts`, so a server with no pack
+   answers `{"available": false, "reason": ...}` and the page simply has no
+   score. `GET /audio/<file>` serves one cue's audio, `immutable`, and the
+   manifest is the allowlist: a path no cue names is a 404, which is what keeps
+   `config.json` (source URLs and per-source ids) and `CREDITS.md` out of the
+   web root. `DND_AUDIO_DIR` moves the pack; it defaults to `audio/` in the
+   checkout.
+
+2. **`web/static/cues.js`** — new, pure, node-testable, the third file the page
+   loads. It is `tools/audio/cues.py`'s matching transliterated: kind plus
+   equality constraints on `data` with dotted paths, at most one cue per group,
+   the most specific rule winning and ties breaking on table order.
+   `web/tests/test_cues_js.py` drives both implementations over events
+   generated *from* the cue table and compares the answers, so a new cue brings
+   its own cases and the two cannot drift.
+
+3. **The mixer in `app.js`.** Two layers, as the cue table has them: `music`
+   and `ambience` are a bed, one at a time, crossfaded at the manifest's fade
+   times; the rest are one-shots, three at once at most. Web Audio where there
+   is any (a gain node per layer is what makes ducking a ramp), the element's
+   own `volume` where there is not. `gain_db`, `loop`, the fades and the trim
+   points are honoured as recorded — nothing interprets them.
+
+4. **Three decisions worth stating.**
+   - **Cues fire from the reveal, not from arrival.** `scoreOnEvent` is called
+     by `renderEvent`, which under the 2026-09-04 reveal gate is the beat the
+     narrator starts the line in. Firing on arrival would play a fight's stings
+     while its first sentence was still being read.
+   - **The bed ducks under the narration**, whichever engine is reading —
+     `V.current` is set for a Polly clip and for an utterance alike.
+   - **A history replay is silent**, and the bed is picked up afterwards from
+     the newest event in the transcript that fires one.
+
+5. **`credit_text` in the manifest** (`tools/audio/fetch.py`). Most of this
+   pack is CC BY, so attribution is a condition of playing it, and the page
+   renders the pack's credits in a Score panel. The sentence is built where its
+   wording is decided and travels in the generated file: a player that derived
+   its own would be the same licence rule in two places, and it is what keeps
+   `tools/` off the runtime path — `web/` reads a manifest, not a dev tool.
+
+**Why.** AUDIO.md said "what plays the manifest is a separate decision and is
+not built yet", and that is the decision: the browser, per viewer, at that
+viewer's volume. A server-side mixer would have to pick whose narration it was
+ducking under, and would send one stream to two spectators at different places
+in the same game — the thing the playhead exists to allow.
+
+**What did not change.** No cue is chosen in the page: it holds no cue id and
+no event kind, and everything it plays it learns from the manifest. A cue with
+no `match` rule (`music_explore`, the swells) is picked but still fires
+nothing; giving it a trigger is a decision about the game, not about the
+player.
