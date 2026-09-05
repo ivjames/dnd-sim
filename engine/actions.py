@@ -2562,6 +2562,12 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
     """Move to the next combatant who can take a turn, handling round wrap,
     dead creatures (skipped) and dying ones (auto death save, then skipped)."""
     n = len(new.initiative)
+    # Once a side has no one left standing the fight is over, and a dying
+    # creature's turn no longer comes round: the death saves that used to be
+    # rolled here while looking for the next actor were failures logged after
+    # the last enemy had already died. The orchestrator ends the combat on its
+    # next look; until then the downed are simply skipped.
+    over = combat_over(new) is not None
     for _ in range(n + 1):
         new.turn_index += 1
         if new.turn_index >= n:
@@ -2573,7 +2579,7 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
         if c is None or c.dead:
             continue
         if c.hp <= 0:
-            if not c.stable:
+            if not c.stable and not over:
                 _death_save(new, events, rng, c)
             if c.hp <= 0 or c.dead:
                 continue
