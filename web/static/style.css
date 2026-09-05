@@ -70,15 +70,14 @@
      it is declared once here and re-declared only by the size queries at the
      foot of the file.
 
-     The middle term is arithmetic, not taste: 560px is what the page owes
-     everything above the fold that is not the board — the top bar, the padding
-     and the gaps, the thin narration bar, and the transcript's own 340px floor
-     — and the board takes what is left. The score and the controls are NOT in
-     that sum: they are a card column under the narration bar and are allowed
-     below the fold, which is where the transcript's extra height came from.
-     Clamped at both ends because a board under ~280px is a map the size of a
-     stamp, and over ~560px the map has stopped needing the height and the
-     transcript has better uses for it. */
+     This is the board's share of the stage; the transcript gets the rest,
+     whatever the rest turns out to be — nothing here has to add up to the
+     viewport any more, which is the one thing this length used to get wrong.
+     The middle term keeps the split honest as the screen grows: a tall screen
+     can afford a bigger map, up to the point where the map has stopped needing
+     the height and the transcript has better uses for it. Clamped at both ends
+     because a board under ~280px is a map the size of a stamp, and over ~560px
+     it is a picture. */
   --board-h: clamp(280px, calc(100vh - 560px), 560px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -193,6 +192,10 @@ html, body {
 
 body {
   display: flex; flex-direction: column;
+  /* The window does not scroll — `.layout` below is the scroll container, so
+     that a box inside it can be told to be exactly one viewport tall without
+     anyone having to know how tall the top bar came out. */
+  overflow: hidden;
   /* a candle pool over the wood, no distraction */
   background-image: radial-gradient(130% 80% at 50% -12%, var(--glow) 0%, var(--bg) 62%);
   background-attachment: fixed;
@@ -248,19 +251,42 @@ body {
    nine combatants used to lengthen those panels until the story started below
    the fold, and the roster scrolls inside itself instead.
 
-   Under it the FEED: the transcript, which takes what the viewport has left
-   over and scrolls internally so a live game never lengthens the page; then
-   the narrator's transport as one thin bar the full width of it; then the
-   score and the table controls as a column of cards. Those two are the only
-   things on the page allowed under the fold — they are set once a game is
-   running and read rarely after, and the height they used to hold beside the
-   narration bar is worth more to the story. */
+   Under it the FEED: the transcript, which takes what the stage has left over
+   and scrolls internally so a live game never lengthens the page, and under
+   that the narrator's transport as one thin bar the full width of it. Those
+   three are the STAGE, and the stage is one viewport exactly. Below it, and
+   deliberately below the fold, the score and the table controls as a column of
+   cards: they are set once a game is running and read rarely after, and the
+   height they used to hold beside the narration bar is worth more to the
+   story.
+
+   `.layout` is the page's scroll container rather than the window — that is
+   what lets the stage be `height: 100%` and mean it. Everything that has to
+   be on screen is then sized by measurement, not by a sum of the top bar and
+   the gaps and the bar heights, which is a sum that was wrong the first time
+   a top bar wrapped to two rows on a tablet. */
 .layout {
   flex: 1 1 auto;
   display: flex; flex-direction: column; gap: 12px;
   padding: 12px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
   min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+/* One viewport, and no part of it is a guess.
+
+   `flex: 0 0 100%` rather than a plain `height`: as a flex item above the card
+   column it would otherwise shrink to make room for it, which is the one thing
+   it must never do. And `min-height: 0` because a flex item's automatic
+   minimum is its content: on a portrait tablet the map's minimum alone was
+   taller than 45% of the screen, which grew the stage past the viewport and
+   put the narration bar under the fold — the exact bug this wrapper exists to
+   end, arriving by the back door. Every band inside is shrinkable and their
+   floors are small enough for a 600px window whose top bar has wrapped, so
+   pinning the stage costs nothing. */
+.stage {
+  flex: 0 0 100%; min-height: 0;
+  display: flex; flex-direction: column; gap: 12px;
 }
 
 /* The map's column is as wide as the board is tall, so the map is drawn in a
@@ -268,12 +294,12 @@ body {
    takes what is left. On a wide screen the map stops at 60% of the board so
    the two panels stay a pair rather than a picture with a margin.
 
-   Its height is `--board-h` and it neither grows nor shrinks. It used to give
-   way to whatever the feed asked for, which was right while the whole feed had
-   to fit above the fold; now that the score and the controls are allowed below
-   it, shrinking the map bought nothing — the page scrolled anyway and the map
-   was smaller for it. Spare height goes to the transcript instead, which is
-   the only thing on the page that can use an arbitrary amount of it. */
+   Its height is `--board-h`, and it may only shrink — never grow. Spare height
+   in the stage goes to the transcript, which is the only thing on the page
+   that can use an arbitrary amount of it; but on a stage too short to hold
+   the board, the bar and a readable transcript, the map is what gives way,
+   because the alternative is the story falling off the bottom of the screen
+   and that is the bug this layout exists to prevent. */
 .board {
   /* Painted above the feed, though the feed is written first: see the source
      order note in index.html. */
@@ -282,9 +308,13 @@ body {
   grid-template-columns: minmax(260px, min(var(--board-h), 60%)) minmax(0, 1fr);
   /* `min-height: 0` because a flex item's automatic minimum is its content,
      and the map's own content minimum is taller than the short-viewport
-     `--board-h`: without this the board quietly ignores the smaller sizes the
-     queries at the foot of the file ask it for. */
-  flex: 0 0 var(--board-h); min-height: 0;
+     `--board-h`: without this the board quietly ignores both the smaller sizes
+     the queries at the foot of the file ask it for and the shrink above. */
+  /* Never more than 45% of the stage, whatever `--board-h` says. A portrait
+     tablet is 1200px tall and its board would otherwise take the 560px cap
+     and leave the story the smaller half of its own screen; the percentage
+     resolves against the stage, which is a definite height. */
+  flex: 0 1 min(var(--board-h), 45%); min-height: 0;
 }
 .quad {
   display: flex; flex-direction: column;
@@ -297,18 +327,15 @@ body {
   padding-right: 4px;
 }
 
-/* Grows into a tall viewport and never shrinks: what the feed asks for is the
-   transcript's floor plus whatever the narration and controls row actually
-   comes to, and that is the ask the board gives way to. It can only ask for
-   that because the transcript panel has a definite flex basis below — with an
-   `auto` basis the feed would ask for the whole transcript, thousands of
-   pixels of it, and take the board with it. */
-.feed { order: 2; flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
-/* A column, not a row: the narration bar is the full width of the transcript
-   and only as tall as its transport, and the score and the controls stack
-   beneath it as cards. Side by side they were three columns of a panel each,
-   and the tallest of them — the controls, once a write token is in — set the
-   height of the whole band and took it off the transcript. */
+/* Takes the stage's whole remainder, and `min-height: 0` so that what is
+   inside it — a scroll region and a bar — divides that remainder rather than
+   growing it. The transcript is thousands of pixels of text and would take
+   the board with it otherwise. */
+.feed { order: 2; flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+/* Under the stage: a column, not a row. Side by side, score and controls were
+   two columns of a panel each and the taller of them — the controls, once a
+   write token is in — set the height of the whole band and took it off the
+   transcript. */
 .under { display: flex; flex-direction: column; gap: 12px; flex: 0 0 auto; }
 
 .panel {
@@ -448,27 +475,16 @@ body {
   min-height: 0;
   padding-right: 6px;
 }
-/* The basis is what the viewport has left once the board and everything above
-   the narration bar is placed, so the bar lands on the fold and the transcript
-   takes all the height a tall screen has rather than sitting at a fixed floor
-   with the page scrolled. 151px is measured, not guessed: the top bar, the
-   page padding, the two gaps and the narration bar itself. It only has to be
-   about right — the basis flexes, and the floor below is what a short viewport
-   actually gets. Under the fold from here on is the card column. */
-.feed .panel-fill {
-  flex: 1 1 calc(100vh - 151px - var(--board-h));
-  min-height: 340px;
-}
-/* A game with no narration has no bar under the transcript, and the 68px it
-   would have taken is the transcript's. `:has` or nothing: a browser without
-   it simply leaves the gap, which is the layout as it was a line above. The
-   query is not decoration — a phone sets this panel from `height` further
-   down, and a bare `flex-basis` here would beat it. */
-@media (min-width: 641px) {
-  .feed:has(> .under > #voice-panel[hidden]) .panel-fill {
-    flex-basis: calc(100vh - 83px - var(--board-h));
-  }
-}
+/* Whatever the stage has left once the board and the narration bar are placed
+   — no arithmetic, so nothing to be wrong about: a top bar that wraps, a
+   narration bar that wraps, a game with no narration bar at all, each simply
+   changes what is left. The floor is a floor and not a target; a stage too
+   short for it takes the difference out of the board above. */
+/* The basis is deliberately small and definite. `auto` would make it the
+   height of the transcript's text — thousands of pixels — and the feed would
+   ask the stage for all of it and squeeze the board down to a strip. It asks
+   for 200 and grows into whatever is left instead. */
+.feed .panel-fill { flex: 1 1 200px; min-height: 140px; }
 .transcript-tools {
   display: flex; gap: 14px; align-items: center;
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -852,12 +868,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
    the desktop sizes the board and the transcript floor together came to more
    than it had, so the narration bar and the controls hung under the fold. */
 @media (max-height: 820px) {
-  /* Under this there is nothing left to give — the floors alone come to more
-     than the viewport — so the board takes a fixed slice of it and the page
-     scrolls the card column rather than squeezing the map away. */
+  /* A laptop is short, not narrow: the board takes a proportion of the stage
+     rather than a length, so the transcript keeps a readable share of it. */
   :root { --board-h: clamp(240px, 36vh, 380px); }
   .board { grid-template-columns: minmax(230px, 22vw) minmax(0, 1fr); }
-  .feed .panel-fill { min-height: 300px; }
 }
 @media (max-width: 640px) {
   /* Map over roster, both full width, and the transcript above them: neither
@@ -875,6 +889,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .feed { order: 0; flex: 0 0 auto; min-height: auto; }
   :root { --board-h: 300px; }
   .feed .panel-fill { flex: 0 0 auto; height: 66vh; min-height: 320px; }
+  /* The stage stops being one screen: on a phone the whole page is a column
+     and `.layout` scrolls it, so the stage is just its first two bands. */
+  .stage { flex: 0 0 auto; }
   .row, .row-4 { grid-template-columns: 1fr; }
   /* three columns leave a phone about 90px for the name; stack instead */
   .party-seat { grid-template-columns: 1fr 1fr; }
