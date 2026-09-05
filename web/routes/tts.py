@@ -24,7 +24,13 @@ from typing import Any
 from flask import Blueprint, Response, current_app, jsonify, request
 
 from tts.client import TTSError
-from tts.voices import MONSTER_PREFIX, gender_for_pronouns, is_monster_key, tune_from
+from tts.voices import (
+    FX_KNOBS,
+    MONSTER_PREFIX,
+    gender_for_pronouns,
+    is_monster_key,
+    tune_from,
+)
 
 bp = Blueprint("tts", __name__, url_prefix="/api")
 
@@ -382,6 +388,78 @@ def capability():
     )
 
 
+#: What each knob of the monster treatment is called on a slider, and what it
+#: does said in one line. Keyed by the short name (`FX_KNOBS`), lifted from the
+#: field comments and stub docstrings in `tts/dsp.py`.
+#:
+#: Here rather than in `web/static/app.js` because the panel is built from what
+#: this route serves: a page carrying its own copy of the wording would be a
+#: second place a knob has to be added, which is the thing the field table
+#: exists to stop. A knob with no entry is still served — named by its own
+#: short name, with no hint — so a new one in `tts/dsp.py` reaches the lab as
+#: an unlabelled slider rather than not at all; `web/tests/test_tts_api.py`
+#: fails until someone writes it a line.
+FX_COPY: dict[str, tuple[str, str]] = {
+    "size": ("size", "Bigger creature, lower voice — the whole spectrum shifts"),
+    "growl": ("growl", "Saturation: harmonics and grit"),
+    "cave": ("room", "The space it is standing in"),
+    "suboctave": ("sub", "An octave under the voice, mixed beneath it"),
+    "noise": ("breath", "Breath, shaped by the voice’s own envelope"),
+    "bandgrowl": ("rasp", "Saturation on the low band alone, so the consonants survive"),
+    "fold": ("fold", "Wavefolding: harsher, and not a voice any more"),
+    "rectify": ("edge", "Blended rectification: an octave up, nastily"),
+    "highpass": ("thin", "Thins it out: incorporeal, or a long way off"),
+    "formant": ("head", "A bigger head, with the pitch left where it was"),
+    "phone": ("phone", "300–3400 Hz: a helm, a jar, a speaking stone"),
+    "vibrato": ("waver", "Pitch wobble: something not quite holding its shape"),
+    "phaser": ("swirl", "Cascaded all-passes: swirl"),
+    "metal": ("metal", "A short comb: notches and no tail — a thing that rings"),
+    "slap": ("slap", "One early reflection: a surface right in front of it"),
+    "tremolo": ("pulse", "Slow amplitude modulation: a voice that pulses"),
+    "stutter": ("swarm", "A gate on a grid: a voice made of more than one throat"),
+}
+
+
+def _fx_spec(available: bool) -> dict:
+    """The monster treatment as a panel can build it: every knob, its bounds,
+    what to call it, and whether the casting deals it.
+
+    Generated from `dsp.FIELDS` rather than written out, which is the point of
+    that table: the lab gained fourteen sliders without this route, the query
+    string, the tune or the page learning fourteen names. `order` carries the
+    declaration order, because `jsonify` sorts an object’s keys and the order
+    these are read in is the order they matter in.
+
+    `dealt` is what `cast_for` actually deals (`DEALT_FX`) — three of the
+    seventeen. The lab keeps those in front of the listener and folds the rest
+    away, so a bench with every effect on it does not bury the three that
+    describe every monster in the game.
+    """
+    from tts.dsp import BOUNDS, FIELDS  # noqa: PLC0415
+    from tts.voices import DEALT_FX, fx_knob  # noqa: PLC0415
+
+    # `available` is the switch, not a knob: with `DND_TTS_MONSTER_FX=0` a
+    # monster is made out of standard-only SSML instead and there is nothing
+    # on this bench to move. The knobs are described either way, so the page
+    # can say what it is not offering.
+    spec: dict = {"available": available, "order": [fx_knob(n) for n, _, _ in FIELDS]}
+    for name, _, _ in FIELDS:
+        knob = fx_knob(name)
+        label, hint = FX_COPY.get(knob, (knob, ""))
+        lo, hi = BOUNDS[name]
+        spec[knob] = {
+            "min": lo,
+            "max": hi,
+            # Every one of them is 0 for "not dealt" (`MonsterFX`), so 0 is
+            # where a slider sits when the seat has not been tuned.
+            "auto": 0,
+            "label": label,
+            "hint": hint,
+            "dealt": name in DEALT_FX,
+        }
+    return spec
+
+
 @bp.get("/tts/voices")
 def roster():
     """Every voice the page may offer for a seat, by the engine that speaks it.
@@ -409,7 +487,6 @@ def roster():
     if svc is None or not svc.available():
         return jsonify({"available": False, "engines": {}})
 
-    from tts.dsp import MAX_SIZE_PCT  # noqa: PLC0415
     from tts.voices import (  # noqa: PLC0415
         PITCH_MAX_PCT,
         PITCH_MIN_PCT,
@@ -453,14 +530,7 @@ def roster():
                 "rate": {"min": RATE_MIN_PCT, "max": RATE_MAX_PCT, "auto": 100},
                 "pitch": {"min": PITCH_MIN_PCT, "max": PITCH_MAX_PCT, "auto": 0},
             },
-            "fx": {
-                "available": bool(getattr(svc, "monster_fx", False)),
-                # Signed the way vocal-tract-length was: positive is a longer
-                # tract, a bigger creature, a lower voice.
-                "size": {"min": -MAX_SIZE_PCT, "max": MAX_SIZE_PCT},
-                "growl": {"min": 0, "max": 100},
-                "cave": {"min": 0, "max": 100},
-            },
+            "fx": _fx_spec(bool(getattr(svc, "monster_fx", False))),
         }
     )
 
@@ -613,9 +683,12 @@ def speak(game_id: str):
         request.args.get("voice"),
         request.args.get("rate"),
         request.args.get("pitch"),
-        request.args.get("size"),
-        request.args.get("growl"),
-        request.args.get("cave"),
+        # Every knob of the treatment by the short name it is served under
+        # (`_fx_spec`), read straight out of the query string: `tune_from`
+        # clamps each against the bounds the treatment itself clamps from and
+        # drops the ones nobody stated, so a URL naming none of them keys
+        # exactly as it always did.
+        fx={knob: request.args.get(knob) for knob in FX_KNOBS},
     )
     try:
         cast, ckey = svc.cache_key_for(key, text, gender, age, size=size, tune=tune)

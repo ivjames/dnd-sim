@@ -40,7 +40,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from tts.dsp import MAX_SIZE_PCT, MonsterFX
+from tts.dsp import BOUNDS, FIELDS, MonsterFX
 from tts.dsp import source_fingerprint as dsp_fingerprint
 
 __all__ = [
@@ -84,6 +84,10 @@ __all__ = [
     "normalize_creature_size",
     "MONSTER_GROWL",
     "MONSTER_CAVE",
+    "FX_KNOBS",
+    "FX_FIELD",
+    "DEALT_FX",
+    "fx_knob",
     "MONSTER_TEMPO",
     "source_fingerprint",
 ]
@@ -336,6 +340,34 @@ MONSTER_GROWL_ALWAYS: tuple[int, ...] = tuple(g for g in MONSTER_GROWL if g)
 #: compensation `MonsterFX.rate_pct` asks for. Same spread the VTL arrangement
 #: dealt.
 MONSTER_TEMPO: tuple[int, ...] = (90, 95, 100, 105)
+
+#: Which knobs of the treatment `cast_for` actually deals, in `FIELDS` order.
+#:
+#: Three of seventeen. The other fourteen exist in `tts/dsp.py` and are
+#: reachable only through a `Tune` — the voice lab — because what a creature
+#: type should sound like is a decision to be made by ear before it is written
+#: into the casting. Naming them here rather than in the panel is what lets the
+#: voice lab show the dealt ones and fold the rest away without keeping its own
+#: copy of which is which, and what lets a test say that adding a knob to
+#: `FIELDS` changed no existing monster.
+DEALT_FX: tuple[str, ...] = ("size_pct", "growl_pct", "cave_pct")
+
+#: The short name each knob goes by outside `tts/dsp.py`: `size_pct` is `size`,
+#: in a query string, in a stored tune and on a slider. Exactly the spelling
+#: `MonsterFX.token()` uses, so a cache key and a URL name the same thing.
+#:
+#: Derived from `FIELDS` rather than written out, for `FIELDS`' own reason: a
+#: second list of seventeen names is a second list to forget the eighteenth in.
+FX_KNOBS: tuple[str, ...] = tuple(name[:-4] for name, _, _ in FIELDS)
+
+#: Short name back to the `MonsterFX` field it sets.
+FX_FIELD: dict[str, str] = {name[:-4]: name for name, _, _ in FIELDS}
+
+
+def fx_knob(field: str) -> str:
+    """The short name for a `MonsterFX` field. `"growl_pct"` -> `"growl"`."""
+    return str(field or "")[:-4]
+
 
 #: `<prosody rate>` "has a range of 20-200%"
 #: (https://docs.aws.amazon.com/polly/latest/dg/prosody-tag.html, read
@@ -777,26 +809,43 @@ class Tune:
     later roster change moves it. The empty tune is the casting itself, which
     is what "auto" saves.
 
-    The last three are the monster treatment (`tts/dsp.py`) and apply to a
-    monster seat alone, because that is the only seat a treatment exists on:
-    `fx` is None everywhere else, and switching it on for a PC would change
-    what a clip *is* — pcm and a WAV rather than Polly's own MP3 — which is a
-    different decision from recasting one.
+    `fx` is the monster treatment (`tts/dsp.py`) and applies to a monster seat
+    alone, because that is the only seat a treatment exists on: `Cast.fx` is
+    None everywhere else, and switching it on for a PC would change what a clip
+    *is* — pcm and a WAV rather than Polly's own MP3 — which is a different
+    decision from recasting one.
+
+    The treatment is **one field holding only what was asked for**, rather than
+    one optional field per knob, and that is the whole reason a seventeen-knob
+    treatment did not become seventeen more lines here, seventeen more in
+    `tune_from`, seventeen more in `retune` and seventeen more in the panel.
+    Pairs rather than a dict because this dataclass is frozen and a dict inside
+    one is neither hashable nor immutable; ordered by `FIELDS`, and holding no
+    entry at all for a knob nobody moved — which is what keeps an untouched
+    tune empty and an untouched clip keyed exactly as it always was.
     """
 
     voice_id: str = ""
     rate_pct: int | None = None
     pitch_pct: int | None = None
-    size_pct: int | None = None
-    growl_pct: int | None = None
-    cave_pct: int | None = None
+    fx: tuple[tuple[str, int], ...] = ()
 
     def __bool__(self) -> bool:
-        return bool(self.voice_id) or any(
-            v is not None
-            for v in (self.rate_pct, self.pitch_pct,
-                      self.size_pct, self.growl_pct, self.cave_pct)
+        return bool(self.voice_id) or bool(self.fx) or any(
+            v is not None for v in (self.rate_pct, self.pitch_pct)
         )
+
+    def fx_get(self, field: str) -> int | None:
+        """What this tune says about one `MonsterFX` field, or None for nothing.
+
+        A scan rather than a dict lookup: there are seventeen of them at most
+        and usually none, and a mapping built per call to answer one question
+        would cost more than the scan does.
+        """
+        for name, value in self.fx:
+            if name == field:
+                return value
+        return None
 
 
 def _clamped_int(value, lo: int, hi: int) -> int | None:
@@ -817,19 +866,46 @@ def _clamped_int(value, lo: int, hi: int) -> int | None:
 
 
 def tune_from(voice_id="", rate=None, pitch=None,
-              size=None, growl=None, cave=None) -> Tune:
-    """A `Tune` from three loose values (query strings, JSON, whatever).
+              size=None, growl=None, cave=None, fx=None, **knobs) -> Tune:
+    """A `Tune` from loose values (query strings, JSON, whatever).
+
+    `size`, `growl` and `cave` keep their places — including their positional
+    ones, which is how the route has always called this — and every other knob
+    arrives either by its own short name (`suboctave=40`) or in `fx`, a mapping
+    of short name to value, which is what a caller reading a query string has.
+    A key `fx` does not recognise is ignored, because that mapping is built
+    from a URL a stranger wrote; an unrecognised keyword raises, because that
+    one was written here.
+
+    Each knob is clamped against `dsp.BOUNDS` — the table the treatment itself
+    clamps from — rather than against numbers copied out of it, so a bound
+    changed there cannot leave a slider offering a range the server will
+    silently pull back.
 
     Nothing here validates the voice id against a roster: that needs the pool,
     which is the service's to know, and `retune` does it at the point of use.
     """
+    loose: dict[str, object] = {}
+    if fx:
+        loose.update({k: v for k, v in dict(fx).items() if k in FX_FIELD})
+    unknown = [k for k in knobs if k not in FX_FIELD]
+    if unknown:
+        raise TypeError("tune_from() got unexpected knobs: " + ", ".join(sorted(unknown)))
+    loose.update(knobs)
+    # Last, so an explicit `size=` beats the same knob arriving in `fx`.
+    for knob, value in (("size", size), ("growl", growl), ("cave", cave)):
+        if value is not None:
+            loose[knob] = value
+    dealt = []
+    for name, _, _ in FIELDS:
+        value = _clamped_int(loose.get(fx_knob(name)), *BOUNDS[name])
+        if value is not None:
+            dealt.append((name, value))
     return Tune(
         voice_id=str(voice_id or "").strip()[:64],
         rate_pct=_clamped_int(rate, RATE_MIN_PCT, RATE_MAX_PCT),
         pitch_pct=_clamped_int(pitch, PITCH_MIN_PCT, PITCH_MAX_PCT),
-        size_pct=_clamped_int(size, -MAX_SIZE_PCT, MAX_SIZE_PCT),
-        growl_pct=_clamped_int(growl, 0, 100),
-        cave_pct=_clamped_int(cave, 0, 100),
+        fx=tuple(dealt),
     )
 
 
@@ -840,8 +916,8 @@ def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
     The engine is never changed, and neither is *whether* there is a treatment:
     which engine speaks a seat is a deployment's decision (`engine_for`), and a
     seat either is a monster or is not. A tune recasts how a seat sounds, not
-    what kind of seat it is — so `size_pct`/`growl_pct`/`cave_pct` are ignored
-    where `cast.fx` is None.
+    what kind of seat it is — so everything in `tune.fx` is ignored where
+    `cast.fx` is None.
 
     **Rate means two different things, and this is where that is honoured.** On
     an ordinary seat it is the speaking rate and replaces what was dealt. On a
@@ -869,15 +945,15 @@ def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
 
     fx = cast.fx
     treated = fx is not None
-    fx_touched = treated and any(
-        v is not None for v in (tune.size_pct, tune.growl_pct, tune.cave_pct)
-    )
+    fx_touched = treated and bool(tune.fx)
     if fx_touched:
-        fx = MonsterFX(
-            size_pct=fx.size_pct if tune.size_pct is None else tune.size_pct,
-            growl_pct=fx.growl_pct if tune.growl_pct is None else tune.growl_pct,
-            cave_pct=fx.cave_pct if tune.cave_pct is None else tune.cave_pct,
-        )
+        # Every field of the dealt treatment, with the tuned ones written over
+        # it — from `FIELDS`, so a knob added to `tts/dsp.py` arrives here
+        # without anyone remembering to add it. An untouched knob keeps what
+        # the casting gave it, which for the fourteen that are never dealt is 0.
+        values = {name: getattr(fx, name) for name, _, _ in FIELDS}
+        values.update(dict(tune.fx))
+        fx = MonsterFX(**values)
 
     rate_pct = cast.rate_pct
     if treated and (fx_touched or tune.rate_pct is not None):

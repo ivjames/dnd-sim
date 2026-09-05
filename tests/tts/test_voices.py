@@ -16,11 +16,15 @@ import subprocess
 
 import pytest
 
+from tts.dsp import BOUNDS, FIELDS, MonsterFX
 from tts.voices import (
     ACCENTS,
     CHILD_VOICE_IDS,
     AUDIBLE_SIZE_PCT,
+    DEALT_FX,
     DEFAULT_SIZE_BAND,
+    FX_FIELD,
+    FX_KNOBS,
     ENGINE_SSML,
     MONSTER_CAVE,
     MONSTER_GROWL,
@@ -42,7 +46,10 @@ from tts.voices import (
     normalize_creature_size,
     normalize_gender,
     accent_for,
+    fx_knob,
+    retune,
     ssml_for,
+    tune_from,
 )
 
 CHILDREN = {v.id for v in STANDARD_ENGLISH if is_child_voice(v)}
@@ -533,3 +540,167 @@ def test_no_two_monsters_in_a_shipped_scenario_sound_alike():
                         f"{seen[heard]}"
                     )
                     seen[heard] = who
+
+
+# -- the tune: the listener's own hand on the treatment ----------------------
+#
+# `cast_for` deals three of the seventeen knobs and the rest are reachable only
+# from here, so this is where the plumbing between `dsp.FIELDS` and a query
+# string is held to being complete. Every one of these is about a number
+# arriving intact — what any of them SOUNDS like is `tests/tts/test_dsp.py`.
+
+
+def monster():
+    """A creature with a treatment on it, dealt the way a game deals one."""
+    cast = cast_for("monster:mon_6", STANDARD_ENGLISH, "Brian", "", "standard", size="L")
+    assert cast.fx is not None, "a monster is dealt a treatment"
+    return cast
+
+
+def test_the_casting_still_deals_exactly_the_three_knobs_it_dealt():
+    """The regression the other fourteen must not cause.
+
+    They exist in `tts/dsp.py` and they are reachable from the voice lab, and
+    that is all: nothing deals them, because what a creature TYPE should sound
+    like is a taste decision to be made by ear first. If one ever leaks into
+    the casting, every monster in every game changes voice at once and every
+    clip on disk is re-bought — so this walks the whole spread of keys and
+    sizes and asserts the other fourteen are still 0.
+    """
+    untouched = [name for name, _, _ in FIELDS if name not in DEALT_FX]
+    assert len(untouched) == 14
+    for size in list(MONSTER_SIZE_BANDS) + ["", "nonsense"]:
+        for slot in range(60):
+            fx = cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian",
+                          size=size).fx
+            assert fx is not None
+            for name in untouched:
+                assert getattr(fx, name) == 0, f"{name} was dealt to mon_{slot}"
+            # And the three that are dealt are still dealt from what they were.
+            assert fx.size_pct in MONSTER_SIZE
+            assert fx.growl_pct in MONSTER_GROWL or fx.growl_pct in MONSTER_GROWL_ALWAYS
+            assert fx.cave_pct in MONSTER_CAVE
+
+
+def test_a_knob_nobody_moved_is_not_in_the_cache_key():
+    """`MonsterFX.token()` spells only what is dealt. A treatment must key the
+    length it always did however many knobs exist, or adding one nobody has
+    turned on re-keys — and re-buys — every clip on disk."""
+    fx = MonsterFX(size_pct=20, growl_pct=55)
+    token = fx.token()
+    assert token.startswith("fx:size=20,growl=55:")
+    for name, _, _ in FIELDS:
+        if name in ("size_pct", "growl_pct"):
+            continue
+        assert fx_knob(name) not in token, name
+    # Through a Tune and a Cast, which is how it actually reaches a key.
+    cast = retune(monster(), tune_from(size=20, growl=55, cave=0), STANDARD_ENGLISH)
+    assert cast.cache_key().endswith(cast.fx.token())
+    assert cast.fx.token().startswith("fx:size=20,growl=55:")
+
+
+def test_every_knob_of_the_treatment_can_be_asked_for_and_arrives():
+    """One at a time, by its short name, for all seventeen: the plumbing from
+    a query string to `MonsterFX` is generated from `FIELDS`, so the test that
+    it is complete has to be generated from `FIELDS` too."""
+    cast = monster()
+    for name, _, _ in FIELDS:
+        knob = fx_knob(name)
+        assert FX_FIELD[knob] == name
+        tuned = retune(cast, tune_from(**{knob: 37}), STANDARD_ENGLISH)
+        assert getattr(tuned.fx, name) == 37, knob
+        # Everything else stands exactly as the casting dealt it.
+        for other, _, _ in FIELDS:
+            if other != name:
+                assert getattr(tuned.fx, other) == getattr(cast.fx, other), other
+    assert tuple(FX_KNOBS) == tuple(fx_knob(n) for n, _, _ in FIELDS)
+
+
+def test_a_knob_is_clamped_to_the_bounds_the_treatment_itself_clamps_to():
+    """From `dsp.BOUNDS`, not from numbers copied out of it: a slider offering
+    a range the server pulls back is a control that lies about what it did."""
+    for name, _, _ in FIELDS:
+        knob = fx_knob(name)
+        lo, hi = BOUNDS[name]
+        assert tune_from(**{knob: 10 ** 6}).fx_get(name) == hi, knob
+        assert tune_from(**{knob: -(10 ** 6)}).fx_get(name) == lo, knob
+        # Not a number is nothing said, which is not the same as 0.
+        assert tune_from(**{knob: "loud"}).fx_get(name) is None, knob
+        assert tune_from(**{knob: ""}).fx_get(name) is None, knob
+
+
+def test_a_tune_holds_only_what_was_asked_for():
+    """Which is what keeps an untouched clip keyed as it always was, and what
+    makes `bool(tune)` mean "the listener has said something"."""
+    assert not tune_from()
+    assert tune_from().fx == ()
+    assert not tune_from(voice_id="", rate="", pitch="", size="", phaser="")
+    t = tune_from(growl=10, phaser=20)
+    assert t and t.fx == (("growl_pct", 10), ("phaser_pct", 20))   # FIELDS order
+    assert t.fx_get("cave_pct") is None
+    # Frozen and hashable, so a tune can be a dict key or a memo.
+    assert hash(t) == hash(tune_from(growl=10, phaser=20))
+
+
+def test_the_knobs_arrive_the_three_ways_a_caller_has_them():
+    """Positionally, as the route has always called it; by name, which is how a
+    test or a tool writes one; and as a mapping, which is what a caller holding
+    a query string has."""
+    positional = tune_from("", None, None, 20, 55, 40)
+    assert positional.fx == (("size_pct", 20), ("growl_pct", 55), ("cave_pct", 40))
+    assert tune_from(fx={"size": 20, "growl": 55, "cave": 40}).fx == positional.fx
+    assert tune_from(size=20, growl=55, cave=40).fx == positional.fx
+    # A mapping is read off a URL a stranger wrote, so a key it does not know
+    # is ignored; a keyword was written here, so it raises.
+    assert tune_from(fx={"nonsense": 5, "phaser": 5}).fx == (("phaser_pct", 5),)
+    with pytest.raises(TypeError):
+        tune_from(nonsense=5)
+
+
+def test_a_treatment_asked_for_on_a_seat_that_has_none_is_ignored():
+    """Every knob, not just the three: switching a treatment on for a PC would
+    change what the clip *is* — pcm and a WAV rather than Polly's own MP3 —
+    which is not what a slider means."""
+    pc = cast_for("pc_1", STANDARD_ENGLISH, "Brian", "", "standard")
+    assert pc.fx is None
+    everything = tune_from(fx={knob: 50 for knob in FX_KNOBS})
+    assert retune(pc, everything, STANDARD_ENGLISH).fx is None
+    assert retune(pc, everything, STANDARD_ENGLISH).rate_pct == pc.rate_pct
+
+
+def test_a_monsters_rate_is_still_a_tempo_over_the_size_compensation():
+    """The load-bearing part of `retune`, restated against the new shape: a
+    rate override is a TEMPO on a treated seat and multiplies onto the
+    compensation the size shift needs, where on any other seat it replaces the
+    rate outright."""
+    cast = monster()
+    compensation = cast.fx.rate_pct()                    # 100 + size_pct
+    assert cast.rate_pct != compensation, "this creature was dealt a tempo too"
+
+    assert retune(cast, tune_from(rate=100), STANDARD_ENGLISH).rate_pct == compensation
+    assert (retune(cast, tune_from(rate=150), STANDARD_ENGLISH).rate_pct
+            == round(compensation * 1.5))
+    # A knob that is not the size leaves the rate exactly where it was dealt.
+    for knob in ("growl", "phaser", "stutter"):
+        assert retune(cast, tune_from(**{knob: 40}), STANDARD_ENGLISH).rate_pct \
+            == cast.rate_pct, knob
+    # And an untouched tune does not recompute it at all — a rounded rate is a
+    # different SSML document and a different cache key.
+    assert retune(cast, tune_from(), STANDARD_ENGLISH) == cast
+
+    pc = cast_for("pc_1", STANDARD_ENGLISH, "Brian", "", "standard")
+    assert retune(pc, tune_from(rate=150), STANDARD_ENGLISH).rate_pct == 150
+
+
+def test_changing_only_the_size_keeps_how_fast_this_creature_talks():
+    cast = monster()
+    dealt_tempo = cast.rate_pct * 100.0 / cast.fx.rate_pct()
+    bigger = retune(cast, tune_from(size=50), STANDARD_ENGLISH)
+    assert bigger.rate_pct == round(150 * dealt_tempo / 100.0)
+
+
+def test_dealt_fx_names_real_fields_and_only_the_dealt_ones():
+    """`DEALT_FX` is what the voice lab keeps in front of the listener, so it
+    has to stay a statement about the casting rather than a preference."""
+    assert set(DEALT_FX) <= {name for name, _, _ in FIELDS}
+    assert DEALT_FX == ("size_pct", "growl_pct", "cave_pct")

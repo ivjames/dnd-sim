@@ -281,10 +281,11 @@ POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)       
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
-GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}, limits:{rate,pitch}, fx:{available, size, growl, cave}} — the roster a seat may be recast from, and the bounds a control may offer
+GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}, limits:{rate,pitch}, fx:{available, order:[...], <knob>:{min,max,auto,label,hint,dealt}}} — the roster a seat may be recast from, and the bounds a control may offer
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
      [&voice=&rate=&pitch=]             ... recast for this seat by the listener (see the voice lab)
-     [&size=&growl=&cave=]              ... and, on a monster seat, its treatment (`tts/dsp.py`)
+     [&size=&growl=&cave=&<knob>=]      ... and, on a monster seat, its treatment — any of the
+                                        seventeen knobs `/api/tts/voices` reports (`tts/dsp.py`)
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -493,6 +494,21 @@ numbers, so what the casting guessed can be heard and changed:
   so it takes pitch and formants together.
 - **growl** — soft saturation: harmonics and grit.
 - **room** — a feedback comb, the space the thing is standing in.
+
+Those three are what the casting deals. Fourteen more exist and nothing deals
+any of them: they fold away behind **14 more effects** on a monster's row, and
+they are there so that what a gnoll or an ooze or a swarm should sound like can
+be settled by ear before it is written into the casting. In the order the chain
+applies them — **sub** (an octave underneath), **breath**, **rasp** (saturation
+on the low band alone, so the consonants survive it), growl, **fold**,
+**edge**, **thin**, **head**, **phone**, **waver**, **swirl**, **metal**,
+**slap**, room, **pulse**, **swarm**. `EFFECT_CHAIN` in `tts/dsp.py` is that
+order and the reason for it.
+
+**head** is the one worth singling out: it is the only knob here that moves an
+emphasis without moving pitch with it, which is the axis `vocal-tract-length`
+owned and this bought back in part. It is one peaking bell — a cue rather than
+a transform.
 
 They are the monster treatment and nothing else has one, so they appear on
 monster rows alone: `fx` is None on every other seat, and switching a treatment

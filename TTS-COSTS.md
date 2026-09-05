@@ -492,3 +492,58 @@ once more. It is bounded by dialogue, which is a small share of a game's
 characters — every mechanics and narration clip keeps its key. The orphans are
 not deleted; `AudioCache.prune` is size-triggered LRU, so they wait until the
 directory passes its ceiling and are then the first to go.
+
+### Fourteen more knobs, and the clip cache turning over once
+
+The treatment `tts/dsp.py` shipped with was three effects — size, grit, a stone
+room — and it is seventeen now: `FIELDS` holds every knob with its bounds and
+`EFFECT_CHAIN` the order a signal chain wants them applied in.
+
+**None of that changes what a game costs**, because none of it changes what a
+game renders. All fourteen new knobs default to 0, and `tts/voices.py` still
+deals a monster exactly what it dealt before — a `size_pct` from the creature's
+SRD size band, grit and a room from the hash of its voice key. The fourteen are
+reachable only through a `Tune`, which is to say the voice lab, so they are
+heard before they are dealt; what a creature type should be given is the open
+question here and is deliberately not answered in the code.
+
+**There is a one-off, and it is the cache turning over.** `MonsterFX.token()`
+folds in `source_fingerprint()`, a digest of `dsp.py`'s own source, so any edit
+to that module orphans every monster clip already on disk. Currently-dealt
+monsters re-render byte-identically — same three knobs, same arithmetic — but
+what the cache holds is the treated WAV, not the speech underneath it, so an
+orphaned key is a fresh `SynthesizeSpeech` billed at the neural $16/1M like any
+other rather than a second pass over audio already on disk. It is the same shape
+as the attribution rewording above and bounded the same way: monsters are a
+small share of a game's spoken characters, as the engine split noted, every
+narration and mechanics clip keeps its key, and the orphans are not deleted but
+wait for `AudioCache.prune`'s size-triggered LRU. Every edit to the module pays
+it again, which is a reason to land the effects together rather than one at a
+time.
+
+**The CPU cost grows with what a creature is dealt, not with what exists.**
+Measured on a 14-second clip (224,000 samples) in pure Python: **0.3 ms** for
+the size-only treatment most monsters get, which is the no-pass path and is
+the sample rate in the WAV header rather than any arithmetic; **61 ms** for the
+three the casting actually deals; **478 ms** for all sixteen sample-touching
+effects at once, which only the voice lab can ask for. The per-effect spread is
+8.7 ms (`_metal`) to 91 ms (`_suboctave`, which pays for a pitch search before
+it can place a grain — see below), with `_phaser` next at 70 ms for its pass
+per all-pass stage; the two that were already here are 26 ms (`_saturate`) and
+8.9 ms (`_cave`), so the fourteen did not change the cost of what is dealt,
+because what is dealt did not change.
+
+`_suboctave` is the one that got dearer rather than cheaper on second look. It
+shipped with a fixed grain hop, which meant the two overlapping grains read the
+source a fixed distance apart and the octave survived only where that distance
+was a whole number of pitch periods — at 160 and 240 Hz it arrived as ordered,
+and at 90, 110, 130, 190, 220 and 250 it cancelled to under 1% and left a
+flutter doublet where it should have been. Human speech is 85-255 Hz, so the
+knob did nothing for most voices. The hop is now a whole number of *estimated*
+periods, which costs a decimated autocorrelation per 48 ms block (12 ms of the
+91) and buys the octave at every fundamental a voice uses.
+
+All of that is paid once per distinct line and then cached forever, on a
+request a listener is waiting for and behind a Polly round trip that is itself
+slower than any of these numbers. The budget it was written against was 3
+seconds; the worst case is a seventh of that.
