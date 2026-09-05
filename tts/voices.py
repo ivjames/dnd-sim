@@ -40,7 +40,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from tts.dsp import MonsterFX
+from tts.dsp import MAX_SIZE_PCT, MonsterFX
 from tts.dsp import source_fingerprint as dsp_fingerprint
 
 __all__ = [
@@ -776,14 +776,27 @@ class Tune:
     only moves the rate keeps the voice the casting chose — including when a
     later roster change moves it. The empty tune is the casting itself, which
     is what "auto" saves.
+
+    The last three are the monster treatment (`tts/dsp.py`) and apply to a
+    monster seat alone, because that is the only seat a treatment exists on:
+    `fx` is None everywhere else, and switching it on for a PC would change
+    what a clip *is* — pcm and a WAV rather than Polly's own MP3 — which is a
+    different decision from recasting one.
     """
 
     voice_id: str = ""
     rate_pct: int | None = None
     pitch_pct: int | None = None
+    size_pct: int | None = None
+    growl_pct: int | None = None
+    cave_pct: int | None = None
 
     def __bool__(self) -> bool:
-        return bool(self.voice_id) or self.rate_pct is not None or self.pitch_pct is not None
+        return bool(self.voice_id) or any(
+            v is not None
+            for v in (self.rate_pct, self.pitch_pct,
+                      self.size_pct, self.growl_pct, self.cave_pct)
+        )
 
 
 def _clamped_int(value, lo: int, hi: int) -> int | None:
@@ -803,7 +816,8 @@ def _clamped_int(value, lo: int, hi: int) -> int | None:
     return max(lo, min(hi, n))
 
 
-def tune_from(voice_id="", rate=None, pitch=None) -> Tune:
+def tune_from(voice_id="", rate=None, pitch=None,
+              size=None, growl=None, cave=None) -> Tune:
     """A `Tune` from three loose values (query strings, JSON, whatever).
 
     Nothing here validates the voice id against a roster: that needs the pool,
@@ -813,36 +827,78 @@ def tune_from(voice_id="", rate=None, pitch=None) -> Tune:
         voice_id=str(voice_id or "").strip()[:64],
         rate_pct=_clamped_int(rate, RATE_MIN_PCT, RATE_MAX_PCT),
         pitch_pct=_clamped_int(pitch, PITCH_MIN_PCT, PITCH_MAX_PCT),
+        size_pct=_clamped_int(size, -MAX_SIZE_PCT, MAX_SIZE_PCT),
+        growl_pct=_clamped_int(growl, 0, 100),
+        cave_pct=_clamped_int(cave, 0, 100),
     )
 
 
 def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
-    """`cast` with the listener's choices applied — voice, rate, pitch.
+    """`cast` with the listener's choices applied — voice, rate, pitch, and on
+    a monster the treatment itself.
 
-    The engine is never changed, and neither is `fx`: which engine speaks a
-    seat is a deployment's decision (`engine_for`), and the treatment is what
-    makes a monster a monster rather than an actor with a deep voice. A tune
-    recasts *who reads the line*, not what kind of seat it is.
+    The engine is never changed, and neither is *whether* there is a treatment:
+    which engine speaks a seat is a deployment's decision (`engine_for`), and a
+    seat either is a monster or is not. A tune recasts how a seat sounds, not
+    what kind of seat it is — so `size_pct`/`growl_pct`/`cave_pct` are ignored
+    where `cast.fx` is None.
+
+    **Rate means two different things, and this is where that is honoured.** On
+    an ordinary seat it is the speaking rate and replaces what was dealt. On a
+    monster it is the *tempo*, and it multiplies onto the compensation the size
+    shift needs (`MonsterFX.rate_pct`, exactly `100 + size_pct`) — the same
+    arrangement `cast_for` deals. Replacing the rate outright there would throw
+    the compensation away, and the line would arrive as much too long as the
+    creature is big; a tempo slider should not be able to do that. The dealt
+    tempo is read back out of the cast, so changing the size alone keeps how
+    fast this particular creature talks.
 
     A voice id that is not in `pool` is ignored rather than refused. The pool is
     what Polly listed for this engine a moment ago, and a stored tune outlives
     it: a roster change, a language change, or a deployment that moved the
     table to an engine this voice does not serve would otherwise turn every
-    line of that seat into a 400 and silence it. Falling back to the casting is
-    the same answer `speech.js` gives for a browser voice that has gone.
+    line of that seat into a 400. Falling back to the casting is the same
+    answer `speech.js` gives for a browser voice that has gone.
     """
     if not tune:
         return cast
+
     voice_id = cast.voice_id
     if tune.voice_id and any(v.id == tune.voice_id for v in pool):
         voice_id = tune.voice_id
+
+    fx = cast.fx
+    treated = fx is not None
+    fx_touched = treated and any(
+        v is not None for v in (tune.size_pct, tune.growl_pct, tune.cave_pct)
+    )
+    if fx_touched:
+        fx = MonsterFX(
+            size_pct=fx.size_pct if tune.size_pct is None else tune.size_pct,
+            growl_pct=fx.growl_pct if tune.growl_pct is None else tune.growl_pct,
+            cave_pct=fx.cave_pct if tune.cave_pct is None else tune.cave_pct,
+        )
+
+    rate_pct = cast.rate_pct
+    if treated and (fx_touched or tune.rate_pct is not None):
+        # Left exactly as dealt when neither was touched: recomputing rounds,
+        # and a rounded rate is a different SSML document — a different cache
+        # key for a clip nobody asked to change.
+        was = cast.fx.rate_pct() or 100
+        dealt_tempo = cast.rate_pct * 100.0 / was
+        tempo = dealt_tempo if tune.rate_pct is None else float(tune.rate_pct)
+        rate_pct = max(RATE_MIN_PCT,
+                       min(RATE_MAX_PCT, round(fx.rate_pct() * tempo / 100.0)))
+    elif not treated and tune.rate_pct is not None:
+        rate_pct = tune.rate_pct
+
     return Cast(
         cast.key,
         voice_id,
         cast.language,
         cast.engine,
         pitch_pct=cast.pitch_pct if tune.pitch_pct is None else tune.pitch_pct,
-        rate_pct=cast.rate_pct if tune.rate_pct is None else tune.rate_pct,
+        rate_pct=rate_pct,
         vtl_pct=cast.vtl_pct,
-        fx=cast.fx,
+        fx=fx,
     )

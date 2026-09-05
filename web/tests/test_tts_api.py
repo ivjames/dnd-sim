@@ -1145,3 +1145,96 @@ def test_a_tuned_clip_is_charged_and_cached_like_any_other(tts_client, tts, game
     calls = len(tts.calls)
     assert tts_client.get(url).status_code == 200
     assert len(tts.calls) == calls        # the second is the cache, not Polly
+
+
+# -- the monster treatment, under the listener's hand ------------------------
+
+def test_the_roster_reports_the_bounds_a_control_may_offer(tts_client, tts):
+    """From the code that enforces them, so a slider cannot be built with a
+    range the server will silently clamp."""
+    from tts.dsp import MAX_SIZE_PCT
+    from tts.voices import PITCH_MAX_PCT, RATE_MAX_PCT, RATE_MIN_PCT
+
+    body = tts_client.get("/api/tts/voices").get_json()
+    assert body["limits"]["rate"] == {"min": RATE_MIN_PCT, "max": RATE_MAX_PCT, "auto": 100}
+    assert body["limits"]["pitch"]["max"] == PITCH_MAX_PCT
+    fx = body["fx"]
+    assert fx["available"] is True
+    assert fx["size"] == {"min": -MAX_SIZE_PCT, "max": MAX_SIZE_PCT}
+    assert fx["growl"] == {"min": 0, "max": 100} and fx["cave"] == {"min": 0, "max": 100}
+    # With the treatment switched off a monster is standard-only SSML instead,
+    # and there is nothing on this bench to move.
+    tts.monster_fx = False
+    assert tts_client.get("/api/tts/voices").get_json()["fx"]["available"] is False
+    tts.monster_fx = True
+
+
+def monster_cast(key="monster:mon_6", size="L", **kw):
+    from tts.voices import STANDARD_ENGLISH, cast_for
+
+    return cast_for(key, STANDARD_ENGLISH, "Brian", "", "standard", size=size, **kw)
+
+
+def test_the_treatment_is_the_listeners_to_change_one_field_at_a_time():
+    from tts.voices import STANDARD_ENGLISH, retune, tune_from
+
+    cast = monster_cast()
+    assert cast.fx, "a monster is dealt a treatment"
+    quiet = retune(cast, tune_from(growl=0, cave=0), STANDARD_ENGLISH)
+    assert quiet.fx.growl_pct == 0 and quiet.fx.cave_pct == 0
+    assert quiet.fx.size_pct == cast.fx.size_pct       # untouched fields stand
+    big = retune(cast, tune_from(size=50), STANDARD_ENGLISH)
+    assert big.fx.size_pct == 50 and big.fx.growl_pct == cast.fx.growl_pct
+
+
+def test_a_treatment_asked_for_on_an_ordinary_seat_is_ignored():
+    """A PC is not a monster. Switching a treatment on would change what the
+    clip *is* — pcm and a WAV — which is not what a slider means."""
+    from tts.voices import STANDARD_ENGLISH, cast_for, retune, tune_from
+
+    pc = cast_for("pc_1", STANDARD_ENGLISH, "Brian", "", "standard")
+    assert pc.fx is None
+    assert retune(pc, tune_from(size=50, growl=90, cave=90), STANDARD_ENGLISH).fx is None
+
+
+def test_a_monsters_rate_is_a_tempo_over_the_size_compensation():
+    """The bug this bench found. `MonsterFX.rate_pct` is the compensation that
+    undoes what the size shift does to duration, and `cast_for` multiplies the
+    creature's tempo onto it. A rate override that REPLACED the rate threw the
+    compensation away, and the line arrived as much too long as the creature
+    was big."""
+    from tts.voices import STANDARD_ENGLISH, retune, tune_from
+
+    cast = monster_cast()
+    compensation = cast.fx.rate_pct()                  # 100 + size_pct
+    assert cast.rate_pct != compensation, "this creature was dealt a tempo too"
+
+    at_100 = retune(cast, tune_from(rate=100), STANDARD_ENGLISH)
+    assert at_100.rate_pct == compensation             # tempo 100%, not rate 100
+
+    half_again = retune(cast, tune_from(rate=150), STANDARD_ENGLISH)
+    assert half_again.rate_pct == round(compensation * 1.5)
+
+
+def test_changing_only_the_size_keeps_how_fast_this_creature_talks():
+    from tts.voices import STANDARD_ENGLISH, retune, tune_from
+
+    cast = monster_cast()
+    dealt_tempo = cast.rate_pct * 100.0 / cast.fx.rate_pct()
+    bigger = retune(cast, tune_from(size=50), STANDARD_ENGLISH)
+    assert bigger.rate_pct == round(150 * dealt_tempo / 100.0)
+
+
+def test_an_untouched_monster_keys_exactly_as_it_was_dealt(tts_client, tts, game):
+    """Recomputing the rate would round it, and a rounded rate is a different
+    SSML document — a different cache key for a clip nobody asked to change."""
+    url = speak_url(game, key="monster:mon_1")
+    plain = tts_client.get(url)
+    assert plain.status_code == 200
+    assert tts_client.get(url + "&voice=").headers["ETag"] == plain.headers["ETag"]
+
+
+def test_a_treated_clip_is_asked_for_and_served_as_a_wav(tts_client, tts, game):
+    treated = tts_client.get(speak_url(game, key="monster:mon_1") + "&growl=90&size=30")
+    assert treated.status_code == 200
+    assert treated.mimetype == "audio/wav"

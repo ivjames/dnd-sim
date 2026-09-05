@@ -281,9 +281,10 @@ POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)       
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
-GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}} — the roster a seat may be recast from
+GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}, limits:{rate,pitch}, fx:{available, size, growl, cave}} — the roster a seat may be recast from, and the bounds a control may offer
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
      [&voice=&rate=&pitch=]             ... recast for this seat by the listener (see the voice lab)
+     [&size=&growl=&cave=]              ... and, on a monster seat, its treatment (`tts/dsp.py`)
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -478,6 +479,39 @@ speak it, which is why the roster arrives per engine: a monster rendering on
 Choices are kept in `localStorage` on that device, one entry per seat, and a
 stored voice that the roster no longer has falls back to the casting rather
 than silencing the seat.
+
+#### The monster bench
+
+A monster is not an actor with a deep voice. Its size, its grit and the room it
+is standing in are made out of the audio after Polly hands it over
+(`tts/dsp.py`), and the casting deals all three from the creature's SRD size
+band and a hash of its id. A monster's row in the lab carries those same three
+numbers, so what the casting guessed can be heard and changed:
+
+- **size** — signed the way `<amazon:effect vocal-tract-length>` was: positive
+  is a longer vocal tract, a bigger creature, a lower voice. It is a resample,
+  so it takes pitch and formants together.
+- **growl** — soft saturation: harmonics and grit.
+- **room** — a feedback comb, the space the thing is standing in.
+
+They are the monster treatment and nothing else has one, so they appear on
+monster rows alone: `fx` is None on every other seat, and switching a treatment
+on for a PC would change what the clip *is* (pcm and a WAV rather than Polly's
+own MP3), which is a different decision from recasting a voice.
+
+**On a monster the rate slider is a tempo**, and is labelled so. The size shift
+changes how long a clip lasts, and `MonsterFX.rate_pct` is the `<prosody rate>`
+that undoes exactly that (`100 + size_pct`); the creature's own tempo multiplies
+onto it. So the slider sets the tempo and the compensation stays underneath —
+moving the size alone keeps how fast that creature talks, and a tempo of 100%
+means "as dealt", not "rate 100". The first version of this shipped without
+that distinction and a rate override silently discarded the compensation, which
+made a big creature's lines run long by exactly its size shift.
+
+Bounds come from `/api/tts/voices` rather than from the page, so a slider
+cannot offer a range the server will clamp; with `DND_TTS_MONSTER_FX=0` the
+treatment does not exist and `fx.available` is false, which is what hides the
+bench.
 
 ### Who a character is
 

@@ -744,6 +744,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .vl-voice { grid-area: voice; font-family: var(--mono); font-size: 13px; }
 .vl-auto { grid-area: reset; align-self: center; }
 .vl-sliders { grid-area: sliders; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+/* the treatment's own three, inside the fx block rather than the row grid */
+.vl-fxsliders { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 14px; }
 .vl-slider { display: grid; grid-template-columns: 38px 1fr 44px; align-items: center; gap: 6px; }
 .vl-slabel { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
 .vl-val { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); text-align: right; }
@@ -753,8 +755,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   -webkit-appearance: auto; appearance: auto; accent-color: var(--accent);
 }
 .vl-slider.vl-dead { opacity: .45; }
+.vl-fx {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: 58px 1fr; align-items: center; gap: 6px 10px;
+  padding-top: 8px; border-top: 1px dashed var(--line-soft);
+}
+.vl-fxlabel {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--accent); font-family: var(--mono);
+}
 @media (max-width: 560px) {
-  .vl-sliders { grid-template-columns: 1fr; }
+  .vl-fx { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .vl-sliders, .vl-fxsliders { grid-template-columns: 1fr; }
 }
 .party-seats { display: grid; gap: 6px; }
 /* Name, the two controls, and — on a line under all three — who that casting

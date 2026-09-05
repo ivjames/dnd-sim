@@ -80,3 +80,20 @@ def test_the_lab_has_a_way_in_and_a_way_out():
     html = read(INDEX)
     assert 'id="voice-lab"' in html and 'id="voicelab"' in html
     assert 'id="vl-rows"' in html and 'id="vl-close"' in html
+
+
+def test_auto_clears_every_field_the_row_can_set():
+    """A row reading "auto" while still carrying a size shift would be a lie,
+    and the seat would keep the shift for good."""
+    js = read(APP_JS)
+    m = re.search(r"resetBtn\.addEventListener\('click', function \(\) \{(.+?)\n    \}\);", js, re.S)
+    assert m, "the auto button has gone"
+    body = m.group(1)
+    for field in ("voice", "rate", "pitch", "size", "growl", "cave"):
+        assert field + ": null" in body, field
+
+
+def test_the_treatment_travels_in_the_clip_url_too():
+    js = read(APP_JS)
+    q = re.search(r"function tuneQuery\(key\) \{(.+?)\n  \}", js, re.S)
+    assert q and "'size', 'growl', 'cave'" in q.group(1)
