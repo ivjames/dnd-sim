@@ -84,6 +84,20 @@ CAVE_DELAY_S = 0.052
 #: consonants stop arriving.
 MAX_DRIVE = 5.0
 
+#: Where a clip is placed in the shaper's knee at `growl_pct` just above zero,
+#: as a fraction of the shaper's unit scale, measured on the clip's own RMS.
+#:
+#: The drive used to be measured against `PEAK` — full scale — which assumed a
+#: clip arrives mastered to the top of the format. Polly's does not: a line
+#: comes back peaking somewhere around a quarter to a half of full scale, and
+#: an average sample an order below that, which put the whole clip in the part
+#: of the curve that is indistinguishable from a straight line. The slider
+#: moved and nothing happened, and the quieter the line the less happened.
+#: Against the clip's own level instead, `growl` means the same thing whatever
+#: arrives — which is the only way a number dealt by the casting can describe
+#: a creature rather than a recording.
+DRIVE_REF = 0.25
+
 #: The comb's feedback at `cave_pct = 100`. Below 1 by construction (the comb
 #: is `y[n] = x[n] + fb·y[n-d]`, which decays geometrically and is stable for
 #: any fb < 1), and well below it in practice: at 0.6 the peak gain is 2.5x and
@@ -239,16 +253,26 @@ def _saturate(work: list[float], pct: int) -> None:
 
     `x(27+x²)/(27+9x²)` is the standard rational stand-in for `tanh` — three
     multiplies a sample, where `math.tanh` is a call — and it is used the same
-    way: drive into it, then divide by what it does to full scale, so nothing
-    here overshoots the format. What it does to the LEVEL is undone afterwards,
-    in `_to_pcm`, because compressing a signal upward is most of what a
-    saturator does and none of what this one is for.
+    way: drive into it, then bring the level back, which `_to_pcm` does.
+    Compressing a signal upward is most of what a saturator does and none of
+    what this one is for.
+
+    **The drive is measured against the clip's own level, not against full
+    scale** (`DRIVE_REF`). A shaper only shapes near and past its unit; a Polly
+    line arrives quiet enough that measuring against `PEAK` left every sample
+    on the straight part of the curve, and the effect was inaudible in
+    proportion to how quietly the voice happened to speak.
     """
+    ref = _rms(work)
+    if ref <= 0.0:
+        return
     drive = 1.0 + (pct / 100.0) * (MAX_DRIVE - 1.0)
-    norm = _shape(drive) or 1.0
-    scale = PEAK / norm
+    # An average sample lands at `DRIVE_REF` of the shaper's unit at the bottom
+    # of the range and at `MAX_DRIVE` times that at the top; the peaks, some
+    # four times the RMS in speech, are what actually round over.
+    gain = drive * DRIVE_REF / ref
     for i, v in enumerate(work):
-        work[i] = _shape(drive * v / PEAK) * scale
+        work[i] = _shape(v * gain) * PEAK
 
 
 def _shape(x: float) -> float:

@@ -117,6 +117,73 @@ def test_saturation_adds_harmonics_rather_than_volume():
     assert peak(grim) / rms(grim) < peak(plain) / rms(plain)
 
 
+def speechy(peak_frac: float, seconds: int = SECONDS, rate: int = SAMPLE_RATE) -> bytes:
+    """A voice-ish tone with syllables, at a chosen fraction of full scale.
+
+    Two things about it matter and `tone()` has neither. Polly does not master
+    a line to the top of the format — one comes back peaking somewhere around a
+    quarter to a half — so the level a treatment meets is not a detail but the
+    case that actually occurs. And speech is peaky: it arrives in syllables
+    with gaps between them, so its peaks stand three or four times its RMS,
+    which is the part of a waveform a soft clipper acts on. A steady tone
+    understates both.
+    """
+    top = 32767 * peak_frac / 1.4
+    out = []
+    for i in range(seconds * rate):
+        t = i / rate
+        syllable = abs(math.sin(2 * math.pi * 2.5 * t)) ** 3
+        env = 0.05 + 0.95 * syllable
+        out.append(int(top * env * (math.sin(2 * math.pi * 180 * t)
+                                    + 0.4 * math.sin(2 * math.pi * 540 * t))))
+    return array("h", out).tobytes()
+
+
+def change(pcm: bytes, fx: MonsterFX) -> float:
+    """How much a treatment altered a clip, relative to the clip's own level.
+
+    The difference signal's RMS over the untreated RMS: 0 is "did nothing",
+    and it is a ratio so clips at different levels can be compared.
+    """
+    base = samples(apply(pcm, MonsterFX(size_pct=fx.size_pct))[0])
+    out = samples(apply(pcm, fx)[0])
+    n = min(len(base), len(out))
+    delta = array("h", [max(-32768, min(32767, base[i] - out[i])) for i in range(n)])
+    return rms(delta) / (rms(base) or 1.0)
+
+
+def test_growl_does_the_same_thing_however_quietly_the_line_was_spoken():
+    """The regression this exists for.
+
+    The drive used to be measured against `PEAK` — full scale — which assumed
+    a clip arrives mastered to the top of the format. A Polly line does not, so
+    every sample sat on the straight part of the shaper and the effect came out
+    in proportion to how loudly the voice happened to speak: at a quarter of
+    full scale, `growl=100` moved the audio by about a tenth of what it moved
+    at nine tenths. From the listener's side the slider did nothing.
+
+    Measured against the clip's own level instead, the same number has to mean
+    the same treatment at any input level.
+    """
+    changes = [change(speechy(frac), MonsterFX(growl_pct=80))
+               for frac in (0.9, 0.5, 0.25, 0.1)]
+    assert min(changes) > 0.15, f"growl 80 is inaudible somewhere: {changes}"
+    # Level-independent: the quietest and the loudest get the same treatment.
+    assert max(changes) - min(changes) < 0.05, changes
+
+
+def test_growl_is_monotonic_and_arrives_at_something():
+    """A slider whose top end is not clearly different from its bottom end is
+    a slider nobody can use."""
+    pcm = speechy(0.4)
+    got = [change(pcm, MonsterFX(growl_pct=p)) for p in (30, 55, 80, 100)]
+    assert got == sorted(got), got
+    assert got[0] > 0.05, f"the lowest dealt growl is inaudible: {got}"
+    assert got[-1] > 0.25, f"full growl is not much of a growl: {got}"
+    # And the range has resolution in it: the top is not the bottom twice over.
+    assert got[-1] > got[0] * 2, got
+
+
 def test_the_room_is_the_same_size_whatever_the_creature_is():
     """The comb delay is counted in samples of the PLAYBACK rate, so a monster
     shifted down is standing in the same cave as one shifted up rather than in

@@ -491,7 +491,11 @@ numbers, so what the casting guessed can be heard and changed:
 - **size** — signed the way `<amazon:effect vocal-tract-length>` was: positive
   is a longer vocal tract, a bigger creature, a lower voice. It is a resample,
   so it takes pitch and formants together.
-- **growl** — soft saturation: harmonics and grit.
+- **growl** — soft saturation: harmonics and grit. Driven against the clip's
+  own level rather than against full scale, so the number means the same thing
+  however loudly the voice happened to speak; measured against full scale it
+  did almost nothing, because Polly returns a line nowhere near the top of the
+  format.
 - **room** — a feedback comb, the space the thing is standing in.
 
 They are the monster treatment and nothing else has one, so they appear on
