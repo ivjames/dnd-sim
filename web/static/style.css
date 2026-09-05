@@ -899,6 +899,35 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .topbar-right { width: 100%; }
   .cost-bar { width: 50px; }
 }
+/* ---------- landscape ----------
+   A wide, short window is a different shape of problem, and the stacked
+   layout answered it badly: the board's height is what sizes the map, so on a
+   1373x857 tablet the map came out a 280px stamp while the roster spread
+   itself over three columns of a panel a thousand pixels wide. Beside each
+   other instead — board left, story right — the map gets the whole height of
+   the stage to be square in, and the transcript becomes the tall column it
+   always wanted to be. The gate is shape, not device: wide enough for two
+   real columns, and half again as wide as it is tall — which is a browser
+   window on a laptop, and a tablet held sideways once its chrome is off the
+   height, and not a 4:3 window or anything held upright. */
+@media (min-width: 1000px) and (min-aspect-ratio: 7/5) {
+  .stage { flex-direction: row; }
+  /* The board is one column of two rows now — map over table — rather than
+     two panels side by side in a strip. */
+  .board {
+    order: 0; flex: 0 0 42%;
+    grid-template-columns: minmax(0, 1fr);
+    /* Three fifths to the map, two to the roster. A ratio rather than the
+       map's own square, because a square panel in a column this wide leaves
+       the row it sits in taller than itself and the roster starts 200px down
+       the page; the canvas fits itself to whatever panel it is given. */
+    grid-template-rows: minmax(160px, 3fr) minmax(120px, 2fr);
+  }
+  .feed { order: 1; flex: 1 1 auto; min-width: 0; }
+  /* Roster columns are decided by the panel's width, and the panel is half of
+     what it was: one column, so a card is not squeezed to a stub. */
+  .roster { columns: 260px 2; }
+}
 @media (prefers-reduced-motion: reduce) {
   .hpbar i { transition: none; }
 }
