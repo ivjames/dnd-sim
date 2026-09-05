@@ -14,6 +14,7 @@ from .common import (
     clamp_words,
     event_text,
     extract_json,
+    rejection_preamble,
     render,
     rules_digest,
     speech_fields,
@@ -57,7 +58,42 @@ _EVENT_KINDS_FOR_NARRATION = {
     "combat_end",
     "skill_check",
     "dialogue",
+    # Everything the engine resolves that produces no roll: Dodge, Dash,
+    # Disengage, Help, Hide, Action Surge, Uncanny Dodge, a drunk potion, a
+    # sculpted fireball, an immunity that swallowed a condition. Without these
+    # the narrator was handed a turn in which nothing happened and wrote one,
+    # which is how "someone forces a potion" got said of a fighter drinking his
+    # own, and how a whole round of Dodging read as a lull.
+    "system",
+    # An action the engine refused. The narrator was describing the intent it
+    # never saw refused — a gnoll "fleeing" whose move had been rejected — so
+    # the refusal has to be in front of it. `Game._run_turn` collects these
+    # alongside the engine's own events for exactly that.
+    "error",
 }
+
+#: `system` events the narrator must not be shown, keyed by a marker in the
+#: event's `data`. All three are table furniture rather than anything that
+#: happened in the fiction: `options` is the list of things the party might do
+#: next (narrating it means reading the menu aloud before anyone has chosen),
+#: `game_id` is the seed-and-mock line the run opens with, and `round_cap` is
+#: the orchestrator calling the fight off at `max_rounds_per_combat` — a
+#: budget, not an event, and a narrator told about it writes the cap into the
+#: fiction. Marked in `data` rather than matched on text so a reworded line
+#: does not quietly become narratable.
+_SYSTEM_DATA_DENY = frozenset({"options", "game_id", "round_cap"})
+
+
+def _narratable(ev: object, kind: str) -> bool:
+    if kind not in _EVENT_KINDS_FOR_NARRATION:
+        return False
+    if kind != "system":
+        return True
+    get = ev.get if isinstance(ev, dict) else lambda k, d=None: getattr(ev, k, d)
+    data = get("data", None) or {}
+    if not isinstance(data, dict):
+        return True
+    return _SYSTEM_DATA_DENY.isdisjoint(data)
 
 
 def _event_lines(events: list) -> str:
@@ -65,7 +101,7 @@ def _event_lines(events: list) -> str:
     for ev in events or []:
         kind = getattr(ev, "kind", "") or (ev.get("kind") if isinstance(ev, dict) else "")
         text = event_text(ev)
-        if not text or kind not in _EVENT_KINDS_FOR_NARRATION:
+        if not text or not _narratable(ev, kind):
             continue
         lines.append(f"- {text}")
     return "\n".join(lines[-20:]) or "- (nothing mechanical happened)"
@@ -183,7 +219,14 @@ class DMAgent:
         monster_name: str | None = None,
         *,
         speak: bool = True,
+        rejected: str | None = None,
     ) -> Any:
+        """Act for one monster. `rejected` re-asks after an engine refusal.
+
+        Same bargain as `PlayerAgent.choose_action`: the engine's own message
+        names what was wrong with the last choice, so one more call usually
+        buys a legal action where the alternative is a wasted monster turn.
+        """
         if not templates:
             raise AgentOutputError("no legal actions offered")
         by_id = {getattr(t, "id", None) or t.get("id"): t for t in templates}
@@ -196,6 +239,7 @@ class DMAgent:
             actions=render_actions(templates),
             **speech_fields(speak, SPEECH_WORDS),
         )
+        user = rejection_preamble(rejected) + user
         error: str | None = None
         for attempt in range(2):
             prompt = (

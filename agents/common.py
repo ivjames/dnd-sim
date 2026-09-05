@@ -22,6 +22,7 @@ __all__ = [
     "action_class",
     "speech_fields",
     "event_text",
+    "rejection_preamble",
 ]
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -178,6 +179,24 @@ _SPEECH_RULE_ON = (
 _SPEECH_RULE_OFF = (
     'SPEECH: you have already spoken this turn. Set "speech" to null and just act.'
 )
+
+
+#: How the engine's refusal of an action is put back to the agent that chose
+#: it. One wording for both seats — a player and a monster are told the same
+#: thing because the engine tells them the same thing — and it opens the user
+#: turn rather than the system block, so the cached prefix does not move.
+_REJECTION = (
+    "The engine rejected your last action: {message}. Choose again from the "
+    "list. Something else in it will work; the same choice will not."
+)
+
+
+def rejection_preamble(message: str | None) -> str:
+    """The lead-in for a re-ask after `IllegalAction`, or "" if there was none."""
+    text = " ".join(str(message or "").split())
+    if not text:
+        return ""
+    return _REJECTION.format(message=text) + "\n\n"
 
 
 def speech_fields(speak: bool, words: int) -> dict[str, str]:

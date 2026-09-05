@@ -3,7 +3,7 @@
   "seed": 42,
   "setting": "The muddy Kingsroad two days out from Phandalin, in the wet grey spring. Goblins have been robbing supply carts and leaving the drivers alive to spread the story.",
   "tone": "classic heroic, with dry humour between the blows",
-  "budget_usd": 1.75,
+  "budget_usd": 2.5,
   "tempo_ms": 800,
   "max_rounds_per_combat": 20,
   "party": [
@@ -69,7 +69,7 @@
       },
       {
         "title": "Up the Bank",
-        "description": "Past the gorse the ground rises to a rough camp of hide tents and stolen sacking.",
+        "description": "Past the gorse the ground rises to a rough camp: hide tents, stolen sacking, a fire pit still smoking, and a chained wolf that has just noticed you.",
         "location": "The goblin camp above the road"
       }
     ],
@@ -87,6 +87,21 @@
           "enemy_start": [[10, 3], [10, 6], [9, 2], [9, 7], [11, 5]],
           "difficult": [[5, 4], [5, 5], [5, 6], [6, 4], [6, 5]],
           "walls": [[7, 0], [7, 1], [7, 2], [7, 8], [7, 9]]
+        }
+      },
+      {
+        "trigger": "scene_2",
+        "monsters": [
+          {"name": "Goblin", "count": 3},
+          {"name": "Wolf", "count": 1}
+        ],
+        "grid": {
+          "width": 12,
+          "height": 10,
+          "party_start": [[1, 3], [1, 4], [1, 5], [1, 6]],
+          "enemy_start": [[10, 2], [10, 3], [10, 6], [10, 5]],
+          "difficult": [[3, 2], [3, 7], [6, 4], [6, 5], [7, 4], [7, 5]],
+          "walls": [[8, 1], [9, 1], [8, 2], [9, 2], [8, 7], [9, 7], [8, 8], [9, 8], [11, 4], [11, 5]]
         }
       }
     ]

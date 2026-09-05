@@ -1,0 +1,46 @@
+DAMAGE, HEALING AND DYING (SRD)
+
+HIT POINTS. Damage subtracts from hit points, and any damage in excess of what
+reduces you to 0 hit points is simply lost, except in the case of massive
+damage below. Hit points regained from healing never exceed your hit point
+maximum, and healing an unconscious creature above 0 hit points wakes it.
+
+TEMPORARY HIT POINTS. Temporary hit points are a buffer, not healing: damage
+reduces them first, and losing them does not reduce your real hit points.
+Temporary hit points do not stack — when you receive some while you still have
+others, you choose which to keep. They are lost when you finish a long rest.
+
+DROPPING TO 0 HIT POINTS. When you drop to 0 hit points you either die outright
+or fall unconscious. You fall unconscious and are dying, unless the damage that
+took you down is massive damage: if the leftover damage after you reach 0 equals
+or exceeds your hit point maximum, you die instantly.
+
+DEATH SAVING THROWS. When you start your turn at 0 hit points you make a death
+saving throw: roll a d20 with no modifier, and 10 or higher is a success. On
+your third success you become stable; on your third failure you die. The
+successes and failures do not need to be consecutive, and both are reset to
+zero when you regain any hit points or become stable. Rolling a 1 on the d20
+counts as two failures, and rolling a 20 means you regain 1 hit point.
+
+DAMAGE AT 0 HIT POINTS. If you take any damage while you are at 0 hit points,
+you suffer a death saving throw failure. If the damage is from a critical hit
+you suffer two failures instead. If the damage equals or exceeds your hit point
+maximum you die outright.
+
+STABILIZING. A stable creature does not make death saving throws, though it
+remains at 0 hit points and unconscious. It regains 1 hit point after 1d4 hours
+unless it takes damage first; taking damage makes it dying again. You can use
+your action to administer first aid to an unconscious creature and attempt to
+stabilize it, which requires a successful DC 10 Wisdom (Medicine) check.
+
+MONSTERS AND DEATH. Most monsters simply die at 0 hit points rather than
+falling unconscious and making death saving throws.
+
+KNOCKING A CREATURE OUT. When you reduce a creature to 0 hit points with a
+melee attack, you can choose to knock it out instead: it falls unconscious and
+is stable.
+
+RESISTANCE, VULNERABILITY AND IMMUNITY. Resistance halves the damage of a given
+type, vulnerability doubles it, and immunity reduces it to nothing. Resistance
+and then vulnerability are applied after all other modifiers, and multiple
+instances of either count only once.

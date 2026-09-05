@@ -203,8 +203,17 @@ id only. The label states cost and expected numbers, e.g.
 Options that need a parameter say so: move needs "path" (or pick one of the
 suggested destinations), area spells need "point" (a grid square), multi-target
 spells need "targets" (a list of ids). Anything not in the list is illegal this
-turn — the engine already filtered by range, line of sight, remaining budget,
-spell slots, and conditions. "[aN] End turn" is always available.
+turn: an option that is offered has already been filtered by range, line of
+sight, remaining budget, spell slots, and conditions. THE PARAMETERS ARE NOT
+FILTERED, and "path" least of all — it is a list of squares you name yourself,
+and the engine checks it only when you send it. A square can be occupied,
+walled off, or further than the movement shown; difficult terrain costs two
+feet of movement for every one and the list does not say which squares are
+difficult, so a path that looks affordable may not be. A suggested destination
+is always reachable and always safe to send; anything else is your risk: a
+path the engine refuses comes back to you once, with the reason, and a second
+refusal ends the turn. "[aN] End turn" is always
+available.
 
 ATTACKS. d20 + ability modifier + proficiency vs the target's AC; ties go to the
 attacker (equal = hit). A natural 20 always hits and is a CRITICAL: roll the

@@ -314,7 +314,16 @@ class Game:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
 
-    def _emit_new(self, kind: str, text: str, actor: str | None = None, data: dict | None = None) -> None:
+    def _emit_new(self, kind: str, text: str, actor: str | None = None, data: dict | None = None) -> Any:
+        """Build, publish and return one orchestrator-side event.
+
+        Returned so a turn can add it to its own record: `collected` in
+        `_run_turn` is the list `dm.narrate` is shown, and it otherwise holds
+        only what the engine returned. A refusal has no engine event of its
+        own — `apply` raised instead of returning one — so without appending
+        it the DM is handed the turn with the failed action simply missing,
+        and narrates the intent as though it had happened.
+        """
         ev = self._event(kind, text, actor, data)
         # _event already claimed a seq; _emit claims another, so reuse this one.
         self._publish(ev)
@@ -323,6 +332,7 @@ class Game:
         if self.cfg.tempo_ms:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
+        return ev
 
     def _say(self, actor_id: str, name: str, speech: str | None) -> bool:
         """Emit one line of dialogue unless it repeats what was just said.
@@ -669,7 +679,23 @@ class Game:
                 raise _Stopped()
 
     def _exploration(self, scene_key: str) -> None:
+        """Run the scene's beats, then its scripted encounter if it has one.
+
+        The beats decide who is surprised. A scene's skill checks are the
+        party's approach to the thing waiting for it — the Stealth roll down the
+        passage, the Perception roll at the door — and until now the engine
+        rolled them, the transcript printed them, and nothing whatever turned on
+        the result: the encounter fired at the end of the beats either way. Now
+        a failed check with an encounter still pending ends the beats there and
+        then and the party walks into it surprised, and a scene whose last check
+        succeeded surprises the enemy instead. A scene with no check at all is
+        the old behaviour, and neither is applied to a fight the DM starts
+        itself: a `start_combat` ruling is the DM narrating an encounter into
+        being, and nobody has rolled anything about it.
+        """
         beats = int((self.cfg.scenario or {}).get("beats_per_scene", DEFAULT_BEATS_PER_SCENE))
+        pending = self.cfg.encounter_for(scene_key)
+        last_check: bool | None = None
         for _ in range(max(0, beats)):
             self._gate()
             self._check_budget()
@@ -707,35 +733,85 @@ class Game:
                 self._emit_new("narration", ruling["narration"], actor="dm")
 
             if ruling["resolution"] == "skill_check":
-                self._resolve_skill_check(ruling)
+                outcome = self._resolve_skill_check(ruling)
+                if outcome is not None:
+                    last_check = outcome
+                    if not outcome and pending:
+                        # Botched, and something was waiting: it hears them.
+                        self._run_combat(
+                            pending, pending.get("grid"), surprised="party"
+                        )
+                        return
             elif ruling["resolution"] == "start_combat":
                 self._run_combat(ruling.get("encounter") or {}, None)
                 return
             self._maybe_summarize()
 
-        encounter = self.cfg.encounter_for(scene_key)
-        if encounter:
-            self._run_combat(encounter, encounter.get("grid"))
+        if pending:
+            self._run_combat(
+                pending,
+                pending.get("grid"),
+                surprised="enemy" if last_check else None,
+            )
 
-    def _resolve_skill_check(self, ruling: dict) -> None:
+    def _resolve_skill_check(self, ruling: dict) -> bool | None:
+        """Roll the DM's check. Returns whether it succeeded, or None if unrolled.
+
+        None is not a failure: an engine that refused the check, or a scene with
+        nobody left standing to roll it, has told us nothing about who spots
+        whom, and surprise is decided only by a check that actually happened.
+        """
         actor = ruling.get("actor")
         if actor not in self.state.combatants:
             candidates = [cid for cid in self.players if self._conscious(cid)]
             actor = candidates[0] if candidates else None
         if actor is None:
-            return
+            return None
         try:
             self.state, events = self.engine.skill_check(
                 self.state, actor, ruling.get("skill") or "Perception", int(ruling.get("dc") or 10)
             )
         except Exception as exc:  # noqa: BLE001 - engine refused; narrate instead
             self._emit_new("error", f"skill check failed: {exc}", actor=actor)
-            return
+            return None
         self._emit_all(events)
+        return self._check_succeeded(events)
+
+    @staticmethod
+    def _check_succeeded(events: list) -> bool | None:
+        """Read the outcome off the `skill_check` event the engine emitted.
+
+        The event's `data["success"]` is the engine's own verdict; nothing here
+        re-reads the roll against the DC, because the engine is what decides
+        whether a check passed and a second opinion computed from the same
+        numbers is a second place for the rule to live.
+        """
+        for ev in reversed(events or []):
+            kind = getattr(ev, "kind", None) or (
+                ev.get("kind") if isinstance(ev, dict) else None
+            )
+            if kind != "skill_check":
+                continue
+            data = getattr(ev, "data", None)
+            if data is None and isinstance(ev, dict):
+                data = ev.get("data")
+            if isinstance(data, dict) and "success" in data:
+                return bool(data["success"])
+        return None
 
     # -- combat ------------------------------------------------------------
 
-    def _run_combat(self, encounter: dict, grid_spec: dict | None) -> None:
+    def _run_combat(
+        self, encounter: dict, grid_spec: dict | None, surprised: str | None = None
+    ) -> None:
+        """Run one fight. `surprised` is "party", "enemy", or None.
+
+        The word is passed straight to the engine, which is what applies it:
+        a surprised creature is offered only `end_turn` on its first turn and
+        takes no reactions until that turn ends. The orchestrator's part is
+        deciding who it is (see `_exploration`) and saying so out loud, because
+        the `combat_start` event's own text does not.
+        """
         eng = self.engine
         grid_spec = grid_spec or encounter.get("grid") or {}
         if grid_spec:
@@ -745,8 +821,18 @@ class Game:
         if not any(c.side == "enemy" and not c.dead for c in self.state.combatants.values()):
             return
 
+        if surprised in ("party", "enemy"):
+            self._emit_new(
+                "system",
+                "The party is caught unawares."
+                if surprised == "party"
+                else "The enemy is caught unawares.",
+                data={"surprised": surprised},
+            )
         self.state.mode = "combat"
-        self.state, events = eng.start_combat(self.state, self.rng.state())
+        self.state, events = eng.start_combat(
+            self.state, self.rng.state(), surprised=surprised
+        )
         self._emit_all(events)
 
         turns = 0
@@ -759,6 +845,10 @@ class Game:
                 self._emit_new(
                     "system",
                     f"Combat hits the {self.cfg.max_rounds_per_combat}-round cap; the fight breaks off.",
+                    # The marker `agents.dm` denies narration on: the cap is a
+                    # budget the table set, not something that happened in the
+                    # fiction, and a narrator shown it writes it into the world.
+                    data={"round_cap": self.cfg.max_rounds_per_combat},
                 )
                 break
             actor_id = self.state.active_id()
@@ -849,7 +939,13 @@ class Game:
                 break
             if not templates:
                 break
-            action = self._choose(actor_id, actor, templates, speak=not spoke)
+            if len(templates) == 1 and getattr(templates[0], "type", None) == "end_turn":
+                # Surprised, or otherwise unable to act: the engine offers
+                # only end_turn, so there is nothing to ask a model — and
+                # the ask would cost a full call for each surprised seat.
+                action = self._end_turn_action(actor_id, templates)
+            else:
+                action = self._choose(actor_id, actor, templates, speak=not spoke)
             if action is None:
                 break
             if self._say(actor_id, actor.name, getattr(action, "speech", None)):
@@ -857,34 +953,81 @@ class Game:
             try:
                 self.state, events = eng.apply(self.state, action)
             except Exception as exc:  # noqa: BLE001 - IllegalAction and friends
-                self._emit_new(
-                    "error", f"{actor.name}'s action was rejected: {exc}", actor=actor_id
+                # One re-ask, with the engine's own complaint in the prompt.
+                # A rejection used to end the turn outright, which threw away a
+                # whole turn over a path into a wall; the engine's message names
+                # what was wrong and the same agent usually picks something
+                # legal when it is told. The rejection is collected as well as
+                # emitted so the narrator sees the attempt fail rather than
+                # describing a flight that never happened.
+                collected.append(
+                    self._emit_new(
+                        "error", f"{actor.name}'s action was rejected: {exc}", actor=actor_id
+                    )
                 )
-                action = self._end_turn_action(actor_id, templates)
+                # `speak=False`: it may already have had its line on the
+                # rejected action, and a retry is not a second chance to talk.
+                action = self._choose(
+                    actor_id, actor, templates, speak=False, rejected=str(exc)
+                )
                 if action is None:
                     break
                 try:
                     self.state, events = eng.apply(self.state, action)
-                except Exception as exc2:  # noqa: BLE001
-                    self._emit_new("error", f"end_turn failed: {exc2}", actor=actor_id)
-                    break
+                except Exception as exc2:  # noqa: BLE001 - the retry failed too
+                    collected.append(
+                        self._emit_new(
+                            "error",
+                            f"{actor.name}'s second attempt was rejected too "
+                            f"({exc2}); ending the turn.",
+                            actor=actor_id,
+                        )
+                    )
+                    action = self._end_turn_action(actor_id, templates)
+                    if action is None:
+                        break
+                    try:
+                        self.state, events = eng.apply(self.state, action)
+                    except Exception as exc3:  # noqa: BLE001
+                        self._emit_new("error", f"end_turn failed: {exc3}", actor=actor_id)
+                        break
             self._emit_turn(events)
             collected.extend(events)
             if self._is_end_turn(templates, action):
                 break
         return collected
 
-    def _choose(self, actor_id: str, actor: Any, templates: list, *, speak: bool = True) -> Any:
-        """Ask the right agent; on agent failure fall back to end_turn."""
+    def _choose(
+        self,
+        actor_id: str,
+        actor: Any,
+        templates: list,
+        *,
+        speak: bool = True,
+        rejected: str | None = None,
+    ) -> Any:
+        """Ask the right agent; on agent failure fall back to end_turn.
+
+        `rejected` re-asks the same seat after the engine refused its last
+        action, carrying the engine's message into the prompt. Both seats take
+        it — a monster's turn is worth no less than a character's.
+        """
         try:
             if getattr(actor, "kind", "pc") == "pc" and actor_id in self.players:
                 agent = self.players[actor_id]
                 view = player_view(self.state, actor_id, self._recent(), self.summary)
-                return agent.choose_action(view, templates, speak=speak)
+                return agent.choose_action(
+                    view, templates, speak=speak, rejected=rejected
+                )
             view = dm_view(self.state, self._recent(), self.summary)
             self.dm.pending_note = self._pop_notes()
             return self.dm.monster_action(
-                view, templates, actor_id, getattr(actor, "name", None), speak=speak
+                view,
+                templates,
+                actor_id,
+                getattr(actor, "name", None),
+                speak=speak,
+                rejected=rejected,
             )
         except AgentOutputError as exc:
             self._emit_new("error", f"{actor.name} hesitated ({exc}); ending turn.", actor=actor_id)

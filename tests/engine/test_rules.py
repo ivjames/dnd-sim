@@ -493,20 +493,25 @@ def test_zero_hp_unconscious_and_death_saves(script):
     pc = make_pc("pc_1")
     pc.hp = 1
     gob = make_mon("Goblin", "mon_1", (1, 0))
-    st = make_state(gob, pc)
+    ally = make_pc("pc_2", "Wizard", pos=(19, 19))  # still standing, so the fight is not over
+    st = make_state(gob, pc, ally)
     script(15)
-    st, ev = attack(st, "mon_1", "Fighter", "Scimitar")
+    st, ev = attack(st, "mon_1", "Fighter pc_1", "Scimitar")
     assert find(ev, "down") and st.combatants["pc_1"].hp == 0
     assert st.combatants["pc_1"].has_condition("unconscious") and st.combatants["pc_1"].has_condition("prone")
     # each of the PC's turns rolls a death save automatically
     script(5)
     st, ev = A.advance_turn(st)
     assert find(ev, "death_save") and st.combatants["pc_1"].death_saves == {"success": 0, "failure": 1}
-    assert st.active_id() == "mon_1"  # dying creatures are skipped
+    assert st.active_id() == "pc_2"  # dying creatures are skipped
+    st, _ = A.advance_turn(st)
+    assert st.active_id() == "mon_1"
     st, _ = do(st, "mon_1", templates(st, "mon_1", "end_turn")[0])
     script(1)  # natural 1 = two failures -> dead
     st, ev = A.advance_turn(st)
     assert find(ev, "dead") and st.combatants["pc_1"].dead
+    assert A.combat_over(st) is None
+    st.combatants["pc_2"].hp = 0
     assert A.combat_over(st) == "enemy"
 
 
@@ -516,12 +521,15 @@ def test_death_save_natural_20_and_three_successes(script):
         pc.hp = 0
         pc.add_condition(Condition("unconscious"))
         gob = make_mon("Goblin", "mon_1", (5, 5))
-        st = make_state(gob, pc)
+        ally = make_pc("pc_2", "Wizard", pos=(19, 19))  # still standing, so the fight is not over
+        st = make_state(gob, pc, ally)
         for f in faces:
             script(f)
-            st, ev = A.advance_turn(st)
-            if st.active_id() == "mon_1":
-                st, _ = do(st, "mon_1", templates(st, "mon_1", "end_turn")[0])
+            for _ in range(4):  # advance until the dying PC's turn comes round
+                st, ev = A.advance_turn(st)
+                if find(ev, "death_save"):
+                    break
+            assert find(ev, "death_save")
         c = st.combatants["pc_1"]
         if want == "revived":
             assert c.hp == 1 and not c.has_condition("unconscious") and find(ev, "death_save").data.get("revived")

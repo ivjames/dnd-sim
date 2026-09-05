@@ -118,7 +118,10 @@
   ],
   "multiattack": [
    "Scimitar",
-   "Scimitar"
+   {
+    "name": "Scimitar",
+    "disadvantage": true
+   }
   ],
   "actions": [
    {
@@ -1062,9 +1065,24 @@
   "condition_immunities": [],
   "traits": [],
   "multiattack": [
-   "Scimitar",
-   "Scimitar",
-   "Dagger"
+   [
+    "Scimitar",
+    "Scimitar",
+    {
+     "name": "Dagger",
+     "mode": "melee"
+    }
+   ],
+   [
+    {
+     "name": "Dagger",
+     "mode": "ranged"
+    },
+    {
+     "name": "Dagger",
+     "mode": "ranged"
+    }
+   ]
   ],
   "actions": [
    {
@@ -1669,8 +1687,18 @@
    }
   ],
   "multiattack": [
-   "Longsword",
-   "Longsword"
+   [
+    "Longsword",
+    "Longsword"
+   ],
+   [
+    "Longsword",
+    "Life Drain"
+   ],
+   [
+    "Longbow",
+    "Longbow"
+   ]
   ],
   "actions": [
    {

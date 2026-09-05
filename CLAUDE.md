@@ -299,8 +299,12 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
 - **Scenarios are `examples/*.json` and the web panel offers all of them**, so a
   file dropped in there is a shipped scenario. `budget_usd` in each is sized
   from a full mock run of that file (`--mock --tempo 0 --budget 20` prints the
-  total) with headroom — the budget is a stop, not an estimate, and a game that
-  hits it halts mid-scene. Grid bounds, `scene_<i>` triggers, party size and
+  total) at **about four times the mock total** — the budget is a stop, not an
+  estimate, and a game that hits it halts mid-scene. Four times, because the
+  mock now accounts for prompt caching the way the API does while its outputs
+  are one-line canned strings against a live DM's ~90 tokens a call, so live
+  LLM spend ran 2–2.5× the mock total across the first sixteen live games
+  (`CONTRACTS.md`, 2026-09-05 llm/ amendment). Grid bounds, `scene_<i>` triggers, party size and
   monster names are checked for every file by the suite, so a broken scenario
   fails `pytest` rather than a live game.
 - **Players sample at `player_temperature` (default 1.0), not 0.8.** Per game,

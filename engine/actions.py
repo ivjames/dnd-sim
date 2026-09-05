@@ -46,11 +46,14 @@ _AUTO_CRIT = tuple(n for n, c in _COND.items() if c.get("auto_crit_within_5"))
 _AUTO_FAIL_SAVES = {n: tuple(c.get("auto_fail_saves") or ()) for n, c in _COND.items()}
 _SAVE_DISADVANTAGE = {n: tuple(c.get("save_disadvantage") or ()) for n, c in _COND.items()}
 # Engine-only markers that are not SRD conditions: "hidden" (after a successful
-# Hide) and "turned" (Turn Undead). They ride on Combatant.conditions too.
+# Hide), "turned" (Turn Undead) and "surprised" (SRD surprise: no move, action
+# or reaction until the creature's first turn of the combat ends). They ride on
+# Combatant.conditions too.
+SIDES_SURPRISABLE = ("party", "enemy")
 _TURN_FLAGS = (
     "dodging", "disengaged", "sneak_attack_used", "martial_advantage_used",
     "light_weapon_attacked", "cast_bonus_spell", "cast_action_spell",
-    "no_reactions", "multi_index", "moves_taken", "dashes_taken", "turn_ended",
+    "no_reactions", "multi_used", "moves_taken", "dashes_taken", "turn_ended", "aura_hits",
 )
 
 
@@ -114,7 +117,8 @@ def _can_act(c: Combatant) -> bool:
 
 def _can_react(c: Combatant) -> bool:
     return (_can_act(c) and not c.turn.get("reaction", False)
-            and not c.flags.get("no_reactions") and not c.has_condition("turned"))
+            and not c.flags.get("no_reactions") and not c.has_condition("turned")
+            and not c.has_condition("surprised"))
 
 
 def _hostile(a: Combatant, b: Combatant) -> bool:
@@ -398,18 +402,76 @@ def _best_melee_spec(c: Combatant) -> dict | None:
     return best[1] if best else None
 
 
+def _multiattack_options(c: Combatant) -> list[list[dict]]:
+    """monsters.json `multiattack`: the routines a creature's Attack action may be.
+
+    Either one routine — `["Scimitar", "Scimitar"]` — or, where the SRD says
+    "or", a list of them — `[["Scimitar", "Scimitar", "Dagger"], [...]]`. An
+    entry is an action name or `{"name": ..., "disadvantage": true, "mode":
+    "melee"|"ranged"}`; `mode` pins a melee_or_ranged action to one of its
+    two specs (the Bandit Captain's melee dagger is not its thrown one). A
+    routine is a multiset: the order the SRD lists the attacks in is not a
+    rule, and the entries are consumed name by name as the attacks are made,
+    which is what puts the Goblin Boss's disadvantage on its second scimitar.
+    """
+    raw = (c.stat_block or {}).get("multiattack") or []
+    options = raw if raw and all(isinstance(x, list) for x in raw) else [raw]
+    out: list[list[dict]] = []
+    for opt in options:
+        entries = [{"name": e} if isinstance(e, str) else dict(e) for e in opt]
+        if entries:
+            out.append(entries)
+    return out
+
+
 def _multiattack(c: Combatant) -> list[dict]:
-    """monsters.json: "multiattack": ["Scimitar", "Scimitar"] (ordered names)."""
+    """Every entry of every routine, flattened (the data check reads this)."""
+    return [e for opt in _multiattack_options(c) for e in opt]
+
+
+def _entry_fits(entry: dict, made: dict) -> bool:
+    """Does a routine entry describe an attack `made` = {"name", "ranged"}?"""
+    if entry.get("name") != made.get("name"):
+        return False
+    mode = entry.get("mode")
+    if mode == "ranged" and not made.get("ranged"):
+        return False
+    if mode == "melee" and made.get("ranged"):
+        return False
+    return True
+
+
+def _spec_made(spec: dict) -> dict:
+    return {"name": spec.get("weapon", spec["name"]), "ranged": bool(spec.get("ranged"))}
+
+
+def _routine_left(option: list[dict], used: list[dict]) -> list[dict] | None:
+    """What a routine still allows after the attacks in `used`, or None if they do not fit it."""
+    left = list(option)
+    for made in used:
+        for i, entry in enumerate(left):
+            if _entry_fits(entry, made):
+                left.pop(i)
+                break
+        else:
+            return None
+    return left
+
+
+def _multiattack_remaining(c: Combatant, used: list[dict]) -> list[list[dict]]:
+    """The leftovers of every routine the attacks made so far still fit."""
     out = []
-    for entry in (c.stat_block or {}).get("multiattack") or []:
-        out.append({"name": entry} if isinstance(entry, str) else dict(entry))
+    for opt in _multiattack_options(c):
+        left = _routine_left(opt, used)
+        if left is not None:
+            out.append(left)
     return out
 
 
 def _attacks_per_action(c: Combatant) -> int:
     if c.kind == "pc":
         return 2 if c.has_feature("extra_attack") else 1
-    return max(1, len(_multiattack(c)))
+    return max([len(opt) for opt in _multiattack_options(c)] or [1])
 
 
 def _spec_in_range(state: GameState, a: Combatant, t: Combatant, spec: dict) -> bool:
@@ -461,6 +523,9 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
     if not _can_act(actor) or actor.flags.get("lethargic"):
         add("end_turn", "End turn", {}, [], "free")
         return out
+    if actor.has_condition("surprised"):
+        add("end_turn", "End turn (surprised: no move, action or reaction until this turn ends)", {}, [], "free")
+        return out
 
     action_free = not turn.get("action", False)
     haste_free = bool(turn.get("haste_action", False))
@@ -475,12 +540,11 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
         # ---- weapon attacks
         if action_free or attacks_left > 0 or haste_free:
             specs = _attack_specs(actor)
-            seq = _multiattack(actor)
-            if attacks_left > 0 and seq:
-                idx = int(actor.flags.get("multi_index", 0))
-                if idx < len(seq):
-                    want = seq[idx]["name"]
-                    specs = [s for s in specs if s.get("weapon", s["name"]) == want]
+            used = actor.flags.get("multi_used")
+            if attacks_left > 0 and used is not None:
+                # Mid-routine: only what completes a routine the attacks so far fit.
+                remaining = [e for left in _multiattack_remaining(actor, used) for e in left]
+                specs = [s for s in specs if any(_entry_fits(e, _spec_made(s)) for e in remaining)]
             for spec in specs:
                 _attack_templates(state, actor, spec, add)
         # ---- off-hand (two-weapon fighting)
@@ -623,7 +687,8 @@ def _move_template(state: GameState, actor: Combatant, movement_left: int, add, 
     if not suggested:
         return
     label = f"Move up to {budget} ft" + (" (stand up first)" if stand else "") + " — pick a path or suggested square"
-    add("move", label, {"suggested": [list(p) for p in suggested], "max_ft": budget}, ["path"], "movement")
+    add("move", label, {"suggested": [list(p) for p, _ in suggested], "labels": [why for _, why in suggested],
+                        "max_ft": budget}, ["path"], "movement")
 
 
 def _reachable(state: GameState, actor: Combatant, budget: int) -> dict[tuple[int, int], int]:
@@ -652,9 +717,20 @@ def _reachable(state: GameState, actor: Combatant, budget: int) -> dict[tuple[in
 
 
 def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[int, int], int],
-                          flee: bool = False) -> list[tuple[int, int]]:
+                          flee: bool = False) -> list[tuple[tuple[int, int], str]]:
+    """Up to MAX_SUGGESTED squares the mover might want, each with a label saying why.
+
+    Approach squares first — the nearest reachable square to each of the
+    closest enemies — and the two squares farthest from every enemy only when
+    the actor is fleeing (turned) or below half its hit points. Offered
+    unconditionally, the far squares were taken as a matter of course: ten
+    corner retreats in six of seven runs of one scenario. The label is what a
+    chooser reads to tell "adjacent to Goblin 2" from "adjacent to Goblin 2,
+    also in reach of Goblin 3", which is the difference between joining a
+    fight and walking a cleric alone into one.
+    """
     enemies = [c for c in _enemy_targets(state, actor) if _alive(c)]
-    picks: list[tuple[int, int]] = []
+    picks: list[tuple[tuple[int, int], str]] = []
     if flee or not enemies:
         src = None
         turned = actor.get_condition("turned")
@@ -662,21 +738,68 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
             src = state.combatants[turned.source]
         refs = [src] if src else enemies
         scored = sorted(reach, key=lambda p: (-min((Grid.distance_ft(p, _pos(e)) for e in refs), default=0), p))
-        return scored[:MAX_SUGGESTED]
+        out = []
+        for p in scored[:MAX_SUGGESTED]:
+            if src:
+                out.append((p, f"away from {src.name} ({Grid.distance_ft(p, _pos(src))} ft)"))
+            elif refs:
+                out.append((p, f"away from all enemies (nearest {min(Grid.distance_ft(p, _pos(e)) for e in refs)} ft)"))
+            else:
+                out.append((p, "open ground"))
+        return out
     my_reach = actor.reach_ft()
+    taken: set[tuple[int, int]] = set()
     for e in enemies[:4]:
         best = min(reach, key=lambda p: (max(Grid.distance_ft(p, _pos(e)), my_reach), reach[p], p))
-        if Grid.distance_ft(best, _pos(e)) < _dist(actor, e) and best not in picks:
-            picks.append(best)
+        if Grid.distance_ft(best, _pos(e)) < _dist(actor, e) and best not in taken:
+            taken.add(best)
+            picks.append((best, _approach_label(state, actor, best, e, enemies)))
         if len(picks) >= 4:
             break
     far = sorted(reach, key=lambda p: (-min(Grid.distance_ft(p, _pos(e)) for e in enemies), p))
-    for p in far[:2]:
-        if len(picks) >= MAX_SUGGESTED:
-            break
-        if p not in picks:
-            picks.append(p)
+
+    def add_far() -> None:
+        for p in far[:2]:
+            if len(picks) >= MAX_SUGGESTED:
+                break
+            if p not in taken:
+                taken.add(p)
+                nearest = min(Grid.distance_ft(p, _pos(e)) for e in enemies)
+                picks.append((p, f"away from all enemies (nearest {nearest} ft)"))
+
+    # A fleeing (turned) actor returned above with only far squares.
+    if actor.hp * 2 < actor.max_hp:
+        add_far()
+    if not picks:
+        # Healthy and already engaged: nothing is closer. The chooser that
+        # picks a move from this list (the mock does) still needs a square, so
+        # offer up to two that stay in reach of the nearest enemy — a
+        # reposition that provokes nothing — and only if boxed in, the far ones.
+        nearest = enemies[0]
+        stay = sorted((p for p in reach if Grid.distance_ft(p, _pos(nearest)) <= my_reach),
+                      key=lambda p: (reach[p], p))
+        for p in stay[:2]:
+            taken.add(p)
+            picks.append((p, _label(_approach_label(state, actor, p, nearest, enemies) + " (stays in its reach)")))
+        if not picks:
+            add_far()
     return picks[:MAX_SUGGESTED]
+
+
+def _approach_label(state: GameState, actor: Combatant, p: tuple[int, int], e: Combatant,
+                    enemies: list[Combatant]) -> str:
+    d = Grid.distance_ft(p, _pos(e))
+    if d <= 5:
+        text = f"adjacent to {e.name}"
+    elif d <= actor.reach_ft():
+        text = f"{d} ft from {e.name}, in your reach"
+    else:
+        text = f"{d} ft from {e.name}" + (", out of its reach" if d > e.reach_ft() else "")
+    others = [o.name for o in enemies
+              if o.id != e.id and _can_act(o) and Grid.distance_ft(p, _pos(o)) <= o.reach_ft()]
+    if others:
+        text += ", also in reach of " + ", ".join(others[:3]) + (", …" if len(others) > 3 else "")
+    return _label(text)
 
 
 # ---------------------------------------------------------------- spells (reading the record)
@@ -1190,21 +1313,18 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
         spec["damage"] = spec["dice"] if spec["mod"] >= 0 else _with_mod(spec["dice"], spec["mod"])
         spec["offhand"] = True
     else:
-        seq = _multiattack(actor)
+        routines = _multiattack_options(actor)
         if int(actor.turn.get("attacks_left", 0)) > 0:
             actor.turn["attacks_left"] -= 1
-            if seq:
-                idx = int(actor.flags.get("multi_index", 0))
-                if idx < len(seq) and seq[idx].get("disadvantage"):
-                    spec = {**spec, "disadvantage": True}
-                actor.flags["multi_index"] = idx + 1
+            if routines:
+                spec = _multiattack_step(actor, spec)
         elif actor.turn.get("action") and actor.turn.get("haste_action"):
             actor.turn["haste_action"] = False  # Haste: one extra weapon attack
         else:
             actor.turn["action"] = True
-            if seq and spec.get("weapon", spec["name"]) == seq[0]["name"]:
-                actor.turn["attacks_left"] = len(seq) - 1
-                actor.flags["multi_index"] = 1
+            if routines:
+                actor.flags["multi_used"] = []
+                spec = _multiattack_step(actor, spec)
             else:
                 actor.turn["attacks_left"] = _attacks_per_action(actor) - 1
         if spec.get("light") and not spec["ranged"]:
@@ -1212,6 +1332,31 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
         if spec.get("recharge") is not None:
             actor.resources.setdefault("recharge", {})[spec.get("weapon", spec["name"])] = False
     _resolve_attack(new, events, rng, actor, target, spec)
+
+
+def _multiattack_step(actor: Combatant, spec: dict) -> dict:
+    """Record one attack of a monster's Attack action against its routines.
+
+    The attack consumes the first entry it fits in each routine the attacks
+    so far still fit; the entry it consumes in the first such routine lends
+    the attack its modifier (the Goblin Boss's second scimitar is at
+    disadvantage). `attacks_left` becomes the longest leftover among the
+    routines still fitting — zero when the attack fits none, which is the
+    Goblin Boss's javelin or the Hill Giant's rock: a single attack, not the
+    first of a multiattack.
+    """
+    made = _spec_made(spec)
+    used: list[dict] = list(actor.flags.get("multi_used") or [])
+    for left in _multiattack_remaining(actor, used):
+        entry = next((e for e in left if _entry_fits(e, made)), None)
+        if entry is not None:
+            if entry.get("disadvantage"):
+                spec = {**spec, "disadvantage": True}
+            break
+    used.append(made)
+    actor.flags["multi_used"] = used
+    actor.turn["attacks_left"] = max([len(left) for left in _multiattack_remaining(actor, used)] or [0])
+    return spec
 
 
 def _attack_mode(new: GameState, attacker: Combatant, target: Combatant, spec: dict) -> tuple[str, list[str]]:
@@ -1963,7 +2108,7 @@ def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
                                  extra={"repeat_save": repeat, "spell": name})
                 _add_condition(new, events, t, cond, name)
             if eff.get("push_ft"):
-                _push(new, events, actor, t, int(eff["push_ft"]))
+                _push(new, events, rng, actor, t, int(eff["push_ft"]))
 
 
 def _sphere_burn(new: GameState, events: list[Event], rng: RNG, caster: Combatant, point: tuple[int, int],
@@ -1998,7 +2143,7 @@ def _ram_flaming_sphere(new: GameState, events: list[Event], rng: RNG, actor: Co
     _sphere_burn(new, events, rng, actor, point)
 
 
-def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft: int) -> None:
+def _push(new: GameState, events: list[Event], rng: RNG, src: Combatant, t: Combatant, ft: int) -> None:
     sx, sy = _pos(src)
     tx, ty = _pos(t)
     dx = (tx > sx) - (tx < sx)
@@ -2016,6 +2161,7 @@ def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft:
         t.position = pos
         _ev(new, events, "move", f"{t.name} is pushed from ({tx},{ty}) to ({pos[0]},{pos[1]}).", t.id,
             **{"from": [tx, ty], "to": list(pos), "forced": True})
+        _enter_auras(new, events, rng, t)
 
 
 def _apply_buff(new: GameState, events: list[Event], rng: RNG, actor: Combatant, t: Combatant, row: dict,
@@ -2108,6 +2254,7 @@ def _cast_utility(new: GameState, events: list[Event], rng: RNG, actor: Combatan
         actor.position = point
         _ev(new, events, "move", f"{actor.name} teleports from ({old[0]},{old[1]}) to ({point[0]},{point[1]}).",
             actor.id, **{"from": list(old), "to": list(point), "teleport": True})
+        _enter_auras(new, events, rng, actor)
         return
     if eff.get("dispel_level"):
         for t in targets:
@@ -2196,6 +2343,56 @@ def threat_map(state: GameState, mover: Combatant) -> dict[tuple[int, int], froz
     return {sq: frozenset(ids) for sq, ids in out.items()}
 
 
+def _in_spirit_guardians(new: GameState, caster: Combatant, c: Combatant) -> bool:
+    """Is `c` inside a live Spirit Guardians aura that `caster` is holding and that affects it?"""
+    sg = caster.flags.get("spirit_guardians")
+    if not sg or not _alive(caster) or caster.id == c.id:
+        return False
+    if _dist(caster, c) > int(sg["radius"]):
+        return False
+    return _hostile(caster, c) or not sg.get("enemies_only")
+
+
+def _spirit_guardians_hit(new: GameState, events: list[Event], rng: RNG, caster: Combatant, c: Combatant) -> None:
+    """One save-and-damage from the aura, recorded against the current game turn.
+
+    SRD: the aura hits a creature "when it enters the area for the first time
+    on a turn or starts its turn there" — once per turn, whichever came first,
+    so a creature that starts inside, walks out and back in is not hit twice.
+    The mark is keyed by (round, turn_index) rather than cleared at the
+    creature's own turn reset because entry can happen on someone else's turn
+    (a push), and that turn is a different turn from the creature's own.
+    """
+    sg = caster.flags["spirit_guardians"]
+    c.flags.setdefault("aura_hits", {})[caster.id] = [new.round, new.turn_index]
+    ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
+    r = rng.roll(sg["damage"])
+    amount = (r.total // 2 if sg.get("half_on_save") else 0) if ok else r.total
+    if amount:
+        _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
+
+
+def _enter_auras(new: GameState, events: list[Event], rng: RNG, mover: Combatant) -> bool:
+    """Spirit Guardians' on-entry trigger for the square `mover` now stands on.
+
+    Called after every square of a move, a push and a teleport. Returns True
+    when the damage left the mover unable to go on. Only Spirit Guardians has
+    an entry trigger: spells.json marks Flaming Sphere `persistent_aura` too,
+    but that one burns a creature that *ends its turn* beside it, and the
+    data carries no field that says which — so the semantics are the spell's.
+    """
+    for caster in sorted(new.combatants.values(), key=lambda x: x.id):
+        if not _in_spirit_guardians(new, caster, mover):
+            continue
+        hits = mover.flags.get("aura_hits") or {}
+        if list(hits.get(caster.id) or []) == [new.round, new.turn_index]:
+            continue
+        _spirit_guardians_hit(new, events, rng, caster, mover)
+        if not _can_act(mover):
+            return True
+    return False
+
+
 def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tpl: ActionTemplate, params: dict) -> None:
     waypoints = _parse_path(params.get("path"))
     if not waypoints:
@@ -2210,16 +2407,29 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         _ev(new, events, "condition_remove", f"{actor.name} stands up ({cost} ft).", actor.id, condition="prone")
     budget = int(actor.turn.get("movement_left", 0))
     threat = threat_map(new, actor)
+    # The waypoint list is walked leg by leg and the longest reachable prefix is
+    # applied: a chain that overspends by its last leg (difficult terrain costs
+    # 10 where the chooser counted 5) or ends on another creature's square
+    # still moves the creature as far as it legally can, and the event says
+    # where the plan was cut and why. Only a first leg that cannot be walked
+    # at all is refused, with the reason rather than a bare "cannot reach".
     full: list[tuple[int, int]] = []
     pos = _pos(actor)
     spent = 0
+    requested: tuple[int, int] | None = None
+    truncated: tuple[tuple[int, int], str] | None = None
     for wp in waypoints:
         wp = (int(wp[0]), int(wp[1]))
+        requested = wp
         if wp == pos:
             continue
         seg = grid.path(new, pos, wp, budget - spent, mover_id=actor.id, threat=threat)
         if seg is None:
-            raise IllegalAction(f"{actor.name} cannot reach ({wp[0]},{wp[1]}) with {budget - spent} ft left")
+            reason = _move_refusal(new, actor, pos, wp, budget - spent)
+            if not full:
+                raise IllegalAction(f"{actor.name} cannot move to ({wp[0]},{wp[1]}): {reason}")
+            truncated = (wp, reason)
+            break
         full.extend(seg)
         spent += grid.path_cost(seg)
         pos = wp
@@ -2228,6 +2438,8 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
     actor.flags["moves_taken"] = int(actor.flags.get("moves_taken", 0)) + 1
     start = _pos(actor)
     stopped = False
+    charged = 0
+    walked: list[tuple[int, int]] = []
     for sq in full:
         prev = _pos(actor)
         trig = {"type": "move", "mover": actor.id, "from": prev, "to": sq}
@@ -2244,17 +2456,49 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         if stopped:
             break
         actor.position = sq
-        actor.turn["movement_left"] = int(actor.turn.get("movement_left", 0)) - grid.cost_of(sq)
+        walked.append(sq)
+        step = grid.cost_of(sq)
+        charged += step
+        actor.turn["movement_left"] = int(actor.turn.get("movement_left", 0)) - step
+        if _enter_auras(new, events, rng, actor):
+            stopped = True
+            break
     end = _pos(actor)
-    ft = grid.path_cost(full[: full.index(end) + 1]) if end in full else 0
+    data: dict[str, Any] = {"from": list(start), "to": list(end), "ft": charged}
+    if requested is not None:
+        data["requested"] = list(requested)
+    if truncated is not None:
+        data["truncated_at"] = list(pos)
+        data["truncated_reason"] = truncated[1]
     if end == start:
-        _ev(new, events, "move", f"{actor.name} is stopped before moving.", actor.id,
-            **{"from": list(start), "to": list(end), "ft": 0})
-    else:
-        _ev(new, events, "move",
-            f"{actor.name} moves from ({start[0]},{start[1]}) to ({end[0]},{end[1]}) ({ft} ft"
-            + (", interrupted" if stopped else "") + ").",
-            actor.id, **{"from": list(start), "to": list(end), "ft": ft, "path": [list(p) for p in full]})
+        _ev(new, events, "move", f"{actor.name} is stopped before moving.", actor.id, **data)
+        return
+    text = (f"{actor.name} moves from ({start[0]},{start[1]}) to ({end[0]},{end[1]}) ({charged} ft"
+            + (", interrupted" if stopped else "") + ")")
+    if truncated is not None and not stopped:
+        text += f"; could not continue to ({truncated[0][0]},{truncated[0][1]}): {truncated[1]}"
+    _ev(new, events, "move", text + ".", actor.id, path=[list(p) for p in walked], **data)
+
+
+def _move_refusal(new: GameState, actor: Combatant, src: tuple[int, int], wp: tuple[int, int], left: int) -> str:
+    """Why `Grid.path` found no route from `src` to `wp` within `left` ft.
+
+    `Grid.path` answers None for four different reasons and a chooser told only
+    "cannot reach" re-sends the same square: eleven of thirty-six refusals in
+    the live corpus were a destination another creature was standing on.
+    """
+    grid = new.grid
+    if not grid.in_bounds(wp):
+        return f"({wp[0]},{wp[1]}) is off the grid"
+    if wp in grid.walls:
+        return f"({wp[0]},{wp[1]}) is a wall"
+    occ = grid.occupied(new, ignore=actor.id)
+    if wp in occ:
+        return f"({wp[0]},{wp[1]}) is occupied by {new.combatants[occ[wp]].name}"
+    route = grid.path(new, src, wp, 1 << 30, mover_id=actor.id)
+    if route is None:
+        return f"there is no route to ({wp[0]},{wp[1]})"
+    return f"({wp[0]},{wp[1]}) is {grid.path_cost(route)} ft away; you have {left} ft"
 
 
 # ---------------------------------------------------------------- hide / turn undead
@@ -2355,14 +2599,8 @@ def _start_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) 
                 _ev(new, events, "roll", f"{c.name}'s {aname} does not recharge ({_roll_text(r)}).", c.id, action=aname)
     # Auras: Spirit Guardians around a caster; Stench around a ghast.
     for caster in sorted(new.combatants.values(), key=lambda x: x.id):
-        sg = caster.flags.get("spirit_guardians")
-        if sg and _alive(caster) and caster.id != c.id and _dist(caster, c) <= int(sg["radius"]) \
-                and (_hostile(caster, c) or not sg.get("enemies_only")):
-            ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
-            r = rng.roll(sg["damage"])
-            amount = (r.total // 2 if sg.get("half_on_save") else 0) if ok else r.total
-            if amount:
-                _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
+        if _in_spirit_guardians(new, caster, c):
+            _spirit_guardians_hit(new, events, rng, caster, c)
             if not _alive(c):
                 return False
         stench = _trait(caster, "stench_aura")
@@ -2388,6 +2626,8 @@ def _end_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) ->
     if not c.flags.get("turn_ended"):
         _ev(new, events, "turn_end", f"{c.name}'s turn ends.", c.id)
     c.flags.pop("turn_ended", None)
+    if c.has_condition("surprised"):
+        _remove_condition(new, events, c, "surprised", "its first turn is over")
     # Flaming Spheres: a creature that ends its turn within 5 ft of one burns.
     for caster in sorted(new.combatants.values(), key=lambda x: x.id):
         fs = caster.flags.get("flaming_sphere")
@@ -2469,6 +2709,12 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
     """Move to the next combatant who can take a turn, handling round wrap,
     dead creatures (skipped) and dying ones (auto death save, then skipped)."""
     n = len(new.initiative)
+    # Once a side has no one left standing the fight is over, and a dying
+    # creature's turn no longer comes round: the death saves that used to be
+    # rolled here while looking for the next actor were failures logged after
+    # the last enemy had already died. The orchestrator ends the combat on its
+    # next look; until then the downed are simply skipped.
+    over = combat_over(new) is not None
     for _ in range(n + 1):
         new.turn_index += 1
         if new.turn_index >= n:
@@ -2480,7 +2726,8 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
         if c is None or c.dead:
             continue
         if c.hp <= 0:
-            if not c.stable:
+            c.remove_condition("surprised")  # its first turn passes, dying
+            if not c.stable and not over:
                 _death_save(new, events, rng, c)
             if c.hp <= 0 or c.dead:
                 continue
@@ -2488,7 +2735,19 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
             return
 
 
-def start_combat(state: GameState, rng_state: dict | None = None) -> tuple[GameState, list[Event]]:
+def start_combat(state: GameState, rng_state: dict | None = None,
+                 surprised: str | None = None) -> tuple[GameState, list[Event]]:
+    """Roll initiative and open the first turn.
+
+    `surprised` names a side — "party" or "enemy" — that did not notice the
+    other (SRD: the DM decides who is surprised). Each living member of it is
+    marked `surprised`: `legal_actions` offers it only `end_turn` and it can
+    take no reaction, until its first turn of the combat ends and the marker
+    is consumed. The `combat_start` event carries `surprised` in its data and
+    a `condition_add` is emitted per creature so the DM can narrate it.
+    """
+    if surprised is not None and surprised not in SIDES_SURPRISABLE:
+        raise IllegalAction(f"surprised must be one of {SIDES_SURPRISABLE} or None, not {surprised!r}")
     new = state.copy()
     events: list[Event] = []
     rng = RNG.from_state(rng_state) if rng_state else _rng_of(new)
@@ -2504,9 +2763,16 @@ def start_combat(state: GameState, rng_state: dict | None = None) -> tuple[GameS
     for c in new.combatants.values():
         _reset_turn(c)
     order = ", ".join(f"{new.combatants[cid].name} {total}" for cid, total in new.initiative)
-    _ev(new, events, "combat_start", f"Roll for initiative! Order: {order}.", None,
+    caught = [c for c in new.combatants.values() if surprised and c.side == surprised and _alive(c)]
+    text = f"Roll for initiative! Order: {order}."
+    if caught:
+        text += " The party is surprised!" if surprised == "party" else " The enemies are surprised!"
+    _ev(new, events, "combat_start", text, None,
         initiative=[[cid, total] for cid, total in new.initiative],
-        rolls={cid: r.to_dict() for cid, _, _, r in rolled})
+        rolls={cid: r.to_dict() for cid, _, _, r in rolled},
+        surprised=surprised if caught else None)
+    for c in sorted(caught, key=lambda x: x.id):
+        _add_condition(new, events, c, Condition("surprised", source=None), None)
     new.round = 0
     new.turn_index = len(new.initiative) - 1
     _advance(new, events, rng)

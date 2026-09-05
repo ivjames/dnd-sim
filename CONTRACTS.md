@@ -136,10 +136,10 @@ class Action:                    # what a chooser returns
     actor: str; template_id: str; params: dict; speech: str | None = None
 
 def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]
-# exhaustive for this actor this turn, given remaining action/bonus/movement; includes "end_turn" always; attacks list one template per (weapon,target in reach/range); spells one per (spell, slot level, target) for single-target, one per spell for AoE with needs=["point"]; move as ONE template with needs=["path"] plus up to 6 suggested destinations in params["suggested"]
+# exhaustive for this actor this turn, given remaining action/bonus/movement; includes "end_turn" always (and only that for a surprised creature); attacks list one template per (weapon,target in reach/range); spells one per (spell, slot level, target) for single-target, one per spell for AoE with needs=["point"]; move as ONE template with needs=["path"] plus up to 6 suggested destinations in params["suggested"], each with a reason in params["labels"] (same length and order — 2026-09-05 amendment)
 def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]
 # validates (raise IllegalAction(msg)), resolves fully (rolls, damage, conditions, opportunity attacks on move, concentration checks, death), returns NEW state (do not mutate) + events
-def start_combat(state, rng_state) -> tuple[GameState, list[Event]]      # rolls initiative, sets mode, round=1, resets turn budgets
+def start_combat(state, rng_state, surprised=None) -> tuple[GameState, list[Event]]      # rolls initiative, sets mode, round=1, resets turn budgets; surprised ∈ {None, "party", "enemy"} marks that side surprised for its first turn (2026-09-05 amendment)
 def advance_turn(state) -> tuple[GameState, list[Event]]                  # end current turn effects, tick durations, start next (round_start when wrapping); handles unconscious actors (auto death save event) and dead ones (skip)
 def combat_over(state) -> str | None                                      # "party" | "enemy" | None (side with no conscious, non-fled members loses)
 def reactions_for(state, trigger: dict) -> list[ActionTemplate]           # opportunity attacks; Phase 1: engine auto-resolves opportunity attacks (no LLM ask)
@@ -2300,3 +2300,218 @@ launch stays as the second line of defence. Owner's decision, 2026-09-05.
 
 **Contract.** Nothing in `web/`, `orchestrator/`, `agents/` or `llm/`
 changes: the app reads `os.environ`, which `run.sh` fills from `.env`.
+
+### 2026-09-05 — engine — six rulings from sixteen live games
+
+`engine/actions.py` and `engine/data/monsters.json`. Every rejected action in
+the corpus was a move refused whole; death saves were logged after the last
+enemy died; five creatures walked into a Spirit Guardians aura unharmed; the
+Goblin Boss threw a javelin and followed it with a scimitar; the far-corner
+move suggestions were taken as a matter of course; and there was no surprise
+rule at all. What changed at the interface, item by item:
+
+1. **A move applies the longest reachable prefix of its waypoints.** Only a
+   first leg that cannot be walked raises `IllegalAction`, and the message
+   says why: `(x,y) is occupied by <name>`, `(x,y) is a wall`, `(x,y) is off
+   the grid`, `there is no route to (x,y)`, or `(x,y) is N ft away; you have
+   M ft`. A later leg that fails ends the move where the previous leg did.
+   The `move` event's data gains `requested: [x,y]` (the last waypoint asked
+   for — always present on a walked move) and, only when a leg was dropped,
+   `truncated_at: [x,y]` (where the mover stopped) and `truncated_reason`
+   (the same text a refusal would have carried), so the orchestrator can
+   tell the chooser what happened. `ft` is the movement actually charged
+   (a backtracking path reported the cost to its final square: 5 ft for a
+   15 ft walk) and `path` is the squares actually walked, not the plan.
+
+2. **No death save is rolled once the fight is decided.** `_advance` decides
+   once, at the top, whether either side still has anyone standing
+   (`combat_over`) and skips the dying without a roll when not. The
+   orchestrator checks `combat_over` right after `advance_turn`, so nothing
+   downstream changes; the two engine tests that fielded a one-PC party
+   whose only member was dying now keep a second PC standing.
+
+3. **Spirit Guardians triggers on entry.** SRD: "when the creature enters the
+   area for the first time on a turn or starts its turn there". Entry is
+   checked after every square of a `move`, after a push and after a
+   teleport; each aura hits a creature at most once per game turn, keyed on
+   the creature as `flags.aura_hits[<caster_id>] = [round, turn_index]` (a
+   per-turn flag; the key rather than the reset is what makes it correct,
+   because a push happens on someone else's turn). A creature the damage
+   drops mid-move stops on the square it entered (`interrupted`, as after an
+   opportunity attack). Flaming Sphere is the only other `persistent_aura`
+   in spells.json and burns a creature that *ends its turn* beside it; the
+   data carries no field to say which trigger an aura has, so the on-entry
+   semantics are Spirit Guardians' alone.
+
+4. **Multiattack routines.** `monsters.json` `multiattack` is either one
+   routine (`["Scimitar", "Scimitar"]`, as before) or, where the SRD says
+   "or", a list of routines (`[[...], [...]]`). An entry is a name or
+   `{"name", "disadvantage": true, "mode": "melee"|"ranged"}`; `mode` pins a
+   `melee_or_ranged` action to one of its two specs. A routine is a multiset:
+   the attacks made consume its entries name by name, what is offered
+   mid-routine is what still completes a routine the attacks so far fit, the
+   consumed entry lends the attack its modifier, and a first attack that fits
+   no routine is a single attack (the Goblin Boss's javelin, the Hill
+   Giant's rock — no longer the first of two). The per-turn flag is
+   `flags.multi_used` (a list of `{"name", "ranged"}`); `multi_index` is
+   gone. Records changed, against SRD 5.1: **Goblin Boss** second scimitar
+   at disadvantage (the gap the 2026-09-03 amendment recorded); **Bandit
+   Captain** two scimitars + a melee dagger *or* two thrown daggers;
+   **Wight** two longswords, longsword + Life Drain, *or* two longbows. The
+   other six (Owlbear, Black Bear, Brown Bear, Ettin, Hill Giant, Troll)
+   were audited and match as they were. `_multiattack()` still returns the
+   flattened entries; `_multiattack_options()` is the structured read.
+
+5. **Move suggestions carry labels, and the far squares are earned.** The
+   move template's `params` keep `suggested: [[x,y], ...]` exactly as
+   before and gain `labels: [str, ...]`, one per square, same order — e.g.
+   `"adjacent to Goblin 2"`, `"adjacent to Goblin 2, also in reach of Goblin
+   3"`, `"15 ft from Goblin 1, out of its reach"`, `"away from all enemies
+   (nearest 40 ft)"`, `"away from Cleric (30 ft)"` for a turned creature.
+   The two squares farthest from every enemy are offered only when the actor
+   is fleeing (turned) or below half its hit points. A healthy creature
+   already engaged, for which nothing is closer, is offered up to two
+   squares that stay in its nearest enemy's reach (`"... (stays in its
+   reach)"`) so the template — which the mock chooser picks a square from —
+   never carries an empty list; only a boxed-in creature falls back to the
+   far squares. `MAX_SUGGESTED` is unchanged at 6.
+
+6. **Surprise.** `start_combat(state, rng_state=None, surprised=None)`;
+   `surprised` is `None`, `"party"` or `"enemy"` (anything else raises
+   `IllegalAction`). Each living member of that side gets the engine-only
+   condition `surprised` (alongside `hidden` and `turned` — no data record):
+   `legal_actions` offers it only `end_turn`, `_can_react` is false for it
+   (so `reactions_for` and `threat_map` ignore it), and `_end_of_turn`
+   removes it with a `condition_remove` when its first turn of the combat
+   ends; a creature whose first turn passes while it is dying loses it
+   silently. The `combat_start` event's data gains `surprised` (the side, or
+   `null`) and its text says "The party is surprised!" / "The enemies are
+   surprised!"; one `condition_add` (`condition="surprised"`) is emitted per
+   creature, after `combat_start` and before the first `turn_start`, for the
+   DM to narrate. No new event kind, so `tests/audio`'s cue table is
+   untouched.
+
+**Why these shapes.** Prefix application rather than a closest-point walk
+because a waypoint is a decision the chooser made and a square short of it
+is not; per-turn keying on `(round, turn_index)` because "first time on a
+turn" is about the game's turn, not the creature's; multisets rather than
+sequences because the SRD's order of listing is not a rule, while the
+consumed entry still carries the modifier the Goblin Boss needs; a condition
+rather than a flag for surprise because it must survive `GameState`
+serialization mid-combat and be visible to the views that already read
+conditions.
+
+**Known cost.** Every engine change moves the seeded RNG stream, so the
+course of a seeded mock game changes with each of these. The one test that
+was bound to a course rather than a rule —
+`tests/audio/test_cues.py::test_the_cues_fire_on_a_real_mock_game`, which
+required a `roll` event inside 8 rounds of the seed-42 `goblin_ambush` game —
+now requires the dice cue only when the engine actually rolled, and proves
+the match rule against a synthetic roll event instead.
+
+### 2026-09-05 — agents + orchestrator — a refusal is re-asked, the DM sees the table, the player prefix caches
+
+The same sixteen live games, read at the agent layer. Four rulings.
+
+1. **Agents are re-asked when the engine refuses.**
+   `PlayerAgent.choose_action(view, templates, *, speak=True, rejected=None)`
+   and `DMAgent.monster_action(view, templates, monster_id, monster_name=None,
+   *, speak=True, rejected=None)`. `rejected` is the `IllegalAction` message
+   from the seat's previous choice; `agents/common.py:rejection_preamble`
+   prepends it to the **user** turn — never the system block, which must stay
+   byte-identical for the cache — as "The engine rejected your last action:
+   `<message>`. Choose again from the list." `Game._run_turn` supplies it once
+   per rejected action, with `speak=False` (a rejection is not a second
+   line), and ends the turn only if the retry is refused too; the first
+   rejection keeps its `error` event, a second says so, and both are
+   collected into the turn's events so the narrator learns the action failed.
+   Rationale: an engine rejection cost the rest of the turn on 8.7% of turns
+   (36 of 412), every one a move; the message names what was wrong and one
+   extra call buys a legal action.
+
+2. **The DM narrates from `system` and `error` events too.**
+   `agents/dm.py:_EVENT_KINDS_FOR_NARRATION` gains both. Three orchestrator
+   `system` lines are kept out by a `data` marker rather than by text:
+   `options` (the party's option list — narrating it reads the menu aloud),
+   `game_id` (the seed line a run opens with) and `round_cap` (a budget the
+   table set, which a narrator shown it writes into the fiction). Every
+   engine `system` event passes — Dodge, Dash, Disengage, Help, Hide, Action
+   Surge, Uncanny Dodge, potions, Undead Fortitude, Sculpt Spells — and so
+   does "Enemies appear". Rationale: the DM narrated "someone forces a
+   potion" because the giver was only in a `system` line, and a gnoll
+   "fleeing" whose move had been rejected. `agents/views._SKIP_KINDS` still
+   drops `system` from the players' RECENT block; that is a separate
+   decision about the size of the player view.
+
+3. **The player system block carries a per-seat SRD reference.**
+   `agents/reference.py:seat_reference(sheet)` is appended to the block
+   `PlayerAgent.system_blocks` returns: the SRD text of the sheet's spells,
+   its class features at level, weapons and armour, racial traits, the
+   conditions table, and the SRD's wording of the combat actions and the
+   dying rules (`agents/prompts/srd_combat_actions.txt`, `srd_dying.txt`).
+   It is a pure function of the `CharacterSheet` — no state, no round, no
+   clock — because the block is the cache key. Every seat of every
+   `examples/*.json` party renders 20–28k chars (was ~7.6k); the test floor
+   is 16,000. Rationale: Haiku 4.5 caches no prefix under 4,096 tokens and
+   the block was ~1,900, so `cache_control` was inert across 823 live player
+   calls ($2.67 of $9.81). Live this is cheaper — one 1.25x write, then 0.1x
+   reads, against 1.0x every call.
+
+4. **Views, and surprise decided by the scene.** `player_view`'s COMBATANTS
+   block is `name | pronouns | side | health | pos | dist | conditions`.
+   `render_actions` renders a template's `params["labels"]` on a
+   continuation line beneath the `[aN]` line, aligned by index with
+   `params["suggested"]`; nothing may follow `suggested=[...]` on that line,
+   because `MockLLMClient._params_for` is anchored to end-of-line. Both views
+   mark a surprised creature via `agents.views.surprised(c)` (attribute,
+   `flags["surprised"]` or the `surprised` condition the engine uses).
+   `Game._run_combat(encounter, grid_spec, surprised=None)` passes `surprised`
+   straight to `engine.start_combat`; `_exploration` decides it from the
+   scene's skill checks — a check that FAILS while the scene's scripted
+   encounter is pending ends the beat loop and fires it with
+   `surprised="party"`; a loop that completes with its last check successful
+   fires it with `surprised="enemy"`; no check, `None`. A DM-initiated
+   `start_combat` ruling is never surprised. `Game._resolve_skill_check`
+   returns `bool | None`. The rules digest (`engine/srd.py`) no longer says
+   the move `path` was filtered: it says the squares must be reachable within
+   the shown movement, that difficult terrain costs double and is unmarked,
+   and that a suggested square is always safe. Rationale: in 16 games no
+   skill check changed anything; the encounter fired after `beats_per_scene`
+   beats whatever the dice said.
+
+### 2026-09-05 — llm/ — the mock accounts for the cache, and sometimes asks for a check
+
+Two changes to `MockLLMClient`, both so a seeded mock game stands in for a
+live one where it is used as one.
+
+1. **Cache accounting.** The mock used to report `cache_read_tokens=0` on
+   every call, so a mock run billed the whole system block as plain input
+   every time. Live, Anthropic caches a system prefix at or above a
+   per-model floor — `CACHE_MIN_PREFIX_TOKENS` in `llm/client.py`, read from
+   the prompt-caching reference on 2026-09-05: 4,096 tokens for Haiku 4.5,
+   1,024 for Sonnet 5, 512 for Opus 5 and Fable 5 — and bills nothing for a
+   marker on a shorter one. The mock now does the same: a system prefix at
+   or above the floor is charged once as a cache write and afterwards as a
+   cache read (at the multipliers `llm/cost.py` already applies), keyed by
+   `(model, prefix)` per client; a shorter one stays plain input. This
+   matters now because the player block grew past the Haiku floor
+   (amendment above): without it a mock run would have billed ~30% *more*
+   for a change that costs less live. `cache_min_prefix_tokens(model)` is
+   the lookup; it is not a price and does not live in `cost.py`.
+
+   **What this does to budget sizing.** A mock total is now *below* live
+   rather than above it: the mock's outputs are one-line canned strings
+   where a live DM writes ~90 tokens a call, and its 4-chars-a-token
+   estimate is rough. Against the sixteen live games, live LLM spend ran
+   about 2–2.5× the same file's mock total. `budget_usd` is still sized
+   from the mock run as CLAUDE.md says, but the headroom is now ~4× the
+   mock total, not a margin over it; every shipped budget already clears
+   that and none was lowered.
+
+2. **A ruling in three is a skill check.** `dm_adjudication` used to always
+   resolve `narrative`, so no seeded mock game ever rolled a scene check,
+   and the surprise the checks now decide (amendment above) would have been
+   exercised only by the fakes. The mock now returns `skill_check` one time
+   in three, with a skill from `_SKILLS` and a DC of 10–16; the engine rolls
+   it. Every seeded mock game's course moves with this, as with any change
+   to the mock's draw order; no test compares a run against a stored course.

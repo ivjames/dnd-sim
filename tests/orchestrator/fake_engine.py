@@ -146,6 +146,9 @@ class Combatant:
     resources: dict = field(default_factory=dict)
     turn: dict = field(default_factory=dict)
     inventory: list = field(default_factory=list)
+    #: Set by `start_combat(surprised=...)`, cleared when this creature ends
+    #: its first turn. While it is set the only legal action is end_turn.
+    surprised: bool = False
 
 
 @dataclass
@@ -329,6 +332,8 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
     actor = state.combatants[actor_id]
     out: list[ActionTemplate] = []
     n = 0
+    if actor.surprised:
+        return [ActionTemplate(id="a1", type="end_turn", label="End turn", params={}, needs=[], cost="free")]
     if not actor.turn.get("action"):
         for cid, target in state.combatants.items():
             if target.side == actor.side or not _conscious(target):
@@ -348,13 +353,14 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
     if actor.turn.get("movement_left", 0) > 0:
         enemies = [c for c in state.combatants.values() if c.side != actor.side and _conscious(c)]
         suggested = [list(e.position) for e in enemies[:4]]
+        labels = [f"adjacent to {e.name}" for e in enemies[:4]]
         n += 1
         out.append(
             ActionTemplate(
                 id=f"a{n}",
                 type="move",
                 label="Move up to your speed",
-                params={"suggested": suggested},
+                params={"suggested": suggested, "labels": labels},
                 needs=["path"],
                 cost="movement",
             )
@@ -428,11 +434,14 @@ def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]:
         events.append(_ev(state, "turn_end", actor.id, f"{actor.name} ends their turn.", {}))
         actor.turn["action"] = True
         actor.turn["movement_left"] = 0
+        actor.surprised = False  # surprise lasts exactly one turn
     state.rng = rng.state()
     return state, events
 
 
-def start_combat(state: GameState, rng_state: dict) -> tuple[GameState, list[Event]]:
+def start_combat(
+    state: GameState, rng_state: dict, surprised: str | None = None
+) -> tuple[GameState, list[Event]]:
     rng = RNG.from_state(rng_state) if rng_state else _rng_of(state)
     state.mode = "combat"
     state.round = 1
@@ -446,8 +455,14 @@ def start_combat(state: GameState, rng_state: dict) -> tuple[GameState, list[Eve
         c.turn = {"action": False, "bonus": False, "reaction": False, "movement_left": c.speed, "attacks_left": 1}
     order.sort(key=lambda t: (-t[1], t[0]))
     state.initiative = order
+    if surprised in ("party", "enemy"):
+        for c in state.combatants.values():
+            c.surprised = c.side == surprised and not c.dead
     state.rng = rng.state()
-    events = [_ev(state, "combat_start", None, "Roll for initiative!", {"initiative": order})]
+    events = [
+        _ev(state, "combat_start", None, "Roll for initiative!",
+            {"initiative": order, "surprised": surprised})
+    ]
     events.append(_ev(state, "round_start", None, "Round 1 begins.", {"round": 1}))
     return state, events
 
