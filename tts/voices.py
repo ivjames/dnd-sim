@@ -80,6 +80,7 @@ __all__ = [
     "RATE_MAX_PCT",
     "MONSTER_GENDERS",
     "monster_gender",
+    "MONSTER_GENDER_SALT",
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_SIZE_BANDS",
@@ -258,9 +259,12 @@ _NUMERIC_AGE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\Z")
 #: dealt from, and nothing else — reached differently because there is nobody
 #: to ask: a monster has no party spec, no pronouns and no persona, so it used
 #: to be dealt from the whole roster and inherited whatever that roster is made
-#: of. Polly's English roster is about two women to every man (ten to five on
-#: `STANDARD_ENGLISH`, and the DM's own voice comes out of the men), so "the
-#: whole roster" came out female roughly three times in four. Over the two or
+#: of. Polly's English roster is about two women to every man, and the pool a
+#: monster is actually dealt from is worse than the roster: `STANDARD_ENGLISH`
+#: is ten to five, but `cast_for` has already dropped the children (Ivy, Kevin)
+#: and the DM's own voice (Brian, and the default DM is always a man) by the
+#: time the deal happens, leaving **nine to three**. So "the whole roster" came
+#: out female roughly three times in four. Over the two or
 #: three creatures a fight actually gives lines to, that is not a tendency a
 #: listener hears as a tendency — it is every monster in the game sounding like
 #: a woman with grit on her, most games.
@@ -282,8 +286,10 @@ MONSTER_GENDERS: tuple[str, ...] = ("female", "male")
 #: on: nine values agreeing exactly through bits 14 to 23, and again through
 #: bits 28 to 31. A slice inside either run is not a weak deal, it is a
 #: constant, and every monster in a game would have been dealt the same half of
-#: the roster — this bug wearing a different hat. Salting and rehashing puts
-#: the answer back in the low bits, which are the ones that move.
+#: the roster — this bug wearing a different hat.
+#:
+#: Salting and rehashing is half the answer; `_mix32` is the other half, and
+#: the low bits need it as badly as the high ones needed the salt. See there.
 #:
 #: The same arithmetic is why `MONSTER_TEMPO` is dealt `(h >> 16) % 4` and
 #: every creature in a game comes out at 90%: bits 16 and 17 are inside that
@@ -527,16 +533,47 @@ def accent_for(language: str) -> str:
     return ACCENTS.get(code.lower(), code)
 
 
+def _mix32(h: int) -> int:
+    """A finalizer over a 32-bit word: every output bit depends on every input bit.
+
+    Needed because `hash_key`'s LOW bit is as degenerate as its high ones, in a
+    way that is not visible until something takes it modulo two. FNV-1a xors a
+    code unit in and multiplies by an odd prime, and an odd multiplier preserves
+    the low bit — so `hash_key(s) & 1` is exactly the parity of the low bits of
+    `s`, and nothing else about `s` reaches it. Dealt straight, that makes the
+    half a monster is cast in the parity of its id: `mon_1` … `mon_9` strictly
+    alternate, every even slot in every game is one half and every odd slot the
+    other, and a one-character change to the id scheme flips all of them at
+    once. It looks like a good spread on the roster the site ships, which is
+    what makes it worth writing down rather than leaving to be discovered.
+
+    This is Wang/Stafford's lowbias32 avalanche, the tail of a hash rather than
+    a hash: `hash_key` still decides everything it decided before, and this is
+    only applied where a decision comes off very few of its bits.
+    """
+    h &= 0xFFFFFFFF
+    h ^= h >> 16
+    h = (h * 0x7FEB352D) & 0xFFFFFFFF
+    h ^= h >> 15
+    h = (h * 0x846CA68B) & 0xFFFFFFFF
+    h ^= h >> 16
+    return h
+
+
 def monster_gender(key: str) -> str:
     """Which half of the roster this monster is dealt from. See `MONSTER_GENDERS`.
 
     Deterministic in the voice key and nothing else, like every other thing a
     monster is dealt: `monster:mon_3` is cast the same way in every game, and
     two creatures in one fight are cast independently of each other. There is
-    no attempt to balance a table — the casting sees one seat at a time and a
-    fight of two is a coin flipped twice.
+    no attempt to balance a table — the casting sees one seat at a time, so a
+    fight of four is four independent deals and can come out three to one.
+    Independence is the property to want here rather than balance: a table that
+    was made to alternate would be a table whose next creature is known from
+    its last, which is the thing this is fixing.
     """
-    return MONSTER_GENDERS[hash_key(MONSTER_GENDER_SALT + str(key or "")) % len(MONSTER_GENDERS)]
+    h = hash_key(MONSTER_GENDER_SALT + str(key or ""))
+    return MONSTER_GENDERS[_mix32(h) % len(MONSTER_GENDERS)]
 
 
 def normalize_gender(gender: str) -> str:

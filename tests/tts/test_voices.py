@@ -30,6 +30,7 @@ from tts.voices import (
     MONSTER_GROWL,
     MONSTER_GROWL_ALWAYS,
     MONSTER_GENDERS,
+    MONSTER_GENDER_SALT,
     MONSTER_SIZE,
     MONSTER_SIZE_BANDS,
     MONSTER_TEMPO,
@@ -404,7 +405,10 @@ def test_the_skew_of_the_roster_does_not_reach_the_table():
         assert any(v in women for v in cast), cast
         assert any(v in men for v in cast), cast
 
-    # And specifically the two slots most fights ever fill.
+    # And specifically the two slots most fights ever fill. Contingent on the
+    # deal rather than guaranteed by it — a fight of two CAN come out as two of
+    # the same half, and `test_the_half_is_not_the_parity_of_the_id` is why
+    # that has to stay possible — but these two are the ones a listener meets.
     assert monster_gender("monster:mon_1") != monster_gender("monster:mon_2")
 
 
@@ -423,6 +427,35 @@ def test_the_half_is_dealt_off_bits_that_actually_move():
     assert len({(h >> 14) & 0x3FF for h in hs}) == 1, "bits 14-23 do move after all"
     assert len({h >> 28 for h in hs}) == 1, "bits 28-31 do move after all"
     assert len({monster_gender(k) for k in SLOTS}) == 2
+
+
+def test_the_half_is_not_the_parity_of_the_id():
+    """And why the low bits need `_mix32` as badly as the high ones needed salt.
+
+    FNV-1a xors a code unit in and multiplies by an odd prime, and an odd
+    multiplier preserves the low bit — so `hash_key(s) & 1` carries the parity
+    of `s`'s low bits and nothing else about `s`. Taken straight, the half
+    became the parity of the id: `mon_1` … `mon_9` strictly alternating, every
+    even slot in every game one half and every odd slot the other, a
+    one-character change to the id scheme flipping all of them at once. It
+    looks like a fine spread on the roster the site ships, which is exactly why
+    it needs a test rather than an eye.
+
+    The first assertion is the arithmetic — it holds forever, and is here so
+    the second one reads as a consequence rather than a coincidence.
+    """
+    for key in SLOTS + ["monster:goblin_a", "monster:goblin_b"]:
+        salted = MONSTER_GENDER_SALT + key
+        parity = 0
+        for ch in salted:
+            parity ^= ord(ch) & 1
+        # 1 is the low bit of FNV-1a's own offset basis, 0x811C9DC5.
+        assert hash_key(salted) & 1 == parity ^ 1, key
+
+    dealt = [monster_gender(k) for k in SLOTS]
+    assert any(a == b for a, b in zip(dealt, dealt[1:])), (
+        f"the deal alternates with spawn order, so it is the id's parity: {dealt}"
+    )
 
 
 def test_a_monster_keeps_its_half_for_as_long_as_its_id_does():

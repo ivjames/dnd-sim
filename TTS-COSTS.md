@@ -552,13 +552,23 @@ seconds; the worst case is a seventh of that.
 
 A monster had no gender constraint on it, because nothing can state one for a
 gnoll: it was dealt from the whole roster. That is not neutral. Polly's English
-roster is about two women to every man — ten to five on the built-in
-`STANDARD_ENGLISH`, and the DM's own voice comes out of the men — so "the whole
-roster" came out female roughly three times in four, and over the two or three
+roster is about two women to every man, and the pool a monster is dealt from is
+worse than the roster: the built-in `STANDARD_ENGLISH` is ten to five, but
+`cast_for` drops the children (Ivy, Kevin) and the DM's own voice (Brian, and
+the default DM is a man) before the deal, leaving **nine to three**. So "the
+whole roster" came out female roughly three times in four, and over the two or three
 creatures a fight actually gives lines to that is not heard as a tendency. It is
 heard as every monster in the game being the same woman with grit on her.
 `MONSTER_GENDERS` deals the half off the key's own hash and the pick happens
-within it, so the seat still keeps its voice for as long as its id does.
+within it, so the seat still keeps its voice for as long as its id does. Three
+male voices is a thin half, and it shows: on the built-in roster `mon_5` and
+`mon_6` are both Joey, so two creatures side by side in the same fight can
+share a voice more often than they did when the pool was whole. That is the
+trade, and it is the right way round — a repeated voice under a different size,
+grit and room is still a different creature, where a table cast entirely out of
+one half of the roster is not. The suite holds every shipped scenario to no two
+of its creatures being dealt the same voice, size, grit, room and tempo at
+once, which is the property that actually has to hold.
 
 **The cost is the monster clips on disk, once.** `cache_key_for` keys on the
 engine, the voice id and the SSML document, so changing which voice a creature

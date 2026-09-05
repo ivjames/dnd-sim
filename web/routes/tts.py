@@ -71,8 +71,14 @@ def _member_for(entry: Any, row: Any, key: str) -> dict:
     spends money, and a voice trait in the query string would be a way to pick
     any voice on the roster (and to mint a fresh cache entry per pick). Only a
     party member has pronouns or an age to state — `dm`, `npc` and
-    `monster:<id>` have no character record, and are cast as an adult from the
-    whole pool.
+    `monster:<id>` have no character record, and are cast as adults.
+
+    The empty gender this returns for them is not a neutral value on a monster
+    seat: `cast_for` reads it as "nothing was stated" and deals that seat a half
+    of the roster off its own hash (`tts.voices.MONSTER_GENDERS`), because no
+    constraint is not neutral against a roster that is nine women to three men
+    once the children and the DM are out of it. `dm` and `npc` are still cast
+    from the whole pool.
     """
     for member in _config_of(entry, row).get("party") or []:
         if isinstance(member, dict) and str(member.get("id") or "") == key:

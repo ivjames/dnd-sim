@@ -189,16 +189,20 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   **A monster is dealt a half of the roster, and a character never is.** A
   gnoll has no party spec to state pronouns in, so it used to be dealt from the
   whole roster — which is not neutral, because Polly's English roster is about
-  two women to every man and the DM's voice comes out of the men. Over the two
+  two women to every man, and the pool a monster is dealt from is worse than
+  the roster: the children and the DM's own voice come out of it before the
+  deal, leaving nine to three on the built-in roster. Over the two
   or three creatures a fight gives lines to, that was heard as every monster in
   the game being the same woman with grit on her. `MONSTER_GENDERS` in
   `tts/voices.py` deals the half off the key's own hash and the voice is picked
   within it, so a seat still keeps its voice for as long as its id does. The
-  hash is a second one over a salted key, **not** a slice of the hash the rest
-  of the casting uses, and that is load-bearing: FNV-1a over ids differing in
-  their last character leaves bits 14-23 and 28-31 identical across
-  `monster:mon_1` … `monster:mon_9`, so a slice up there deals every monster in
-  a game the same half. The same arithmetic is why `MONSTER_TEMPO` reads
+  hash is a second one over a salted key **and** is finalized through `_mix32`,
+  neither of which is decoration: FNV-1a over ids differing in their last
+  character leaves bits 14-23 and 28-31 identical across `monster:mon_1` …
+  `monster:mon_9`, so a slice up there deals every monster in a game the same
+  half — and its low bit is the parity of the key's characters, so a slice down
+  there alternates the halves in lockstep with spawn order. A test fails on
+  either one coming back. The same arithmetic is why `MONSTER_TEMPO` reads
   `(h >> 16) % 4` and every creature in a game talks at 90% — a real defect,
   knowingly left alone, written down in `TTS-COSTS.md` §6 with what fixing it
   costs. Changing which voice a creature is dealt retires its cached clips
