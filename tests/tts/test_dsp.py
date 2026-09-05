@@ -22,6 +22,7 @@ import pytest
 from tts.dsp import (
     CAVE_DELAY_S,
     MAX_SIZE_PCT,
+    RING_HZ,
     SAMPLE_RATE,
     MonsterFX,
     apply,
@@ -184,6 +185,167 @@ def test_growl_is_monotonic_and_arrives_at_something():
     assert got[-1] > got[0] * 2, got
 
 
+# -- the four character effects that are not growl or cave --------------------
+
+#: The sliders added after growl and cave, each dealt as a percentage that has
+#: to be audible at the bottom of its range and clearly more so at the top.
+NEW_EFFECTS = ("ring_pct", "tremolo_pct", "muffle_pct", "crush_pct")
+
+
+@pytest.mark.parametrize("field", NEW_EFFECTS)
+def test_every_new_slider_uses_its_whole_range(field):
+    """A control with a dead half is dealt from a hash and heard as nothing
+    for half the deals it makes.
+
+    So: more percentage is more effect, the lowest position worth dealing
+    already does something, and the top is several times the bottom rather
+    than the bottom again. `crush` failed all three until the step it
+    quantises to was measured against the clip instead of against full scale:
+    it moved the audio by 0.1% at 25 and 3.5% at 75, which is a control whose
+    entire travel is its last quarter.
+    """
+    pcm = speechy(0.4)
+    got = [change(pcm, MonsterFX(**{field: p})) for p in (25, 50, 75, 100)]
+    assert got == sorted(got), f"{field} is not monotonic: {got}"
+    assert got[0] > 0.02, f"{field} at a quarter is inaudible: {got}"
+    assert got[-1] > 0.25, f"{field} at the top is barely a treatment: {got}"
+    assert got[-1] > got[0] * 4, f"{field} has no resolution in it: {got}"
+
+
+def test_crush_does_the_same_thing_however_quietly_the_line_was_spoken():
+    """The regression `growl` has, one effect further down the same chain.
+
+    Bit depth was measured against the format: 16 bits down to 4 across full
+    scale. A Polly line reaches a quarter or so of full scale, so the first
+    half of that sweep rounded to steps below the noise the line already
+    carried, and the quieter the line the further along the slider anything
+    began to happen. Measured against the clip's own level, a dealt `crush`
+    means the same treatment whatever level arrives.
+    """
+    for pct in (25, 60, 100):
+        changes = [change(speechy(frac), MonsterFX(crush_pct=pct))
+                   for frac in (0.9, 0.5, 0.25, 0.1)]
+        assert min(changes) > 0.02, f"crush {pct} is inaudible somewhere: {changes}"
+        assert max(changes) - min(changes) < 0.01, changes
+
+
+def test_the_new_effects_are_a_different_voice_not_a_louder_one():
+    """The requirement growl and cave are already held to, for the four that
+    came after them — and each breaks it in its own direction: a ring
+    modulator halves the average level, a tremolo digs holes in it, a low-pass
+    throws away everything above its corner, a quantiser rounds samples
+    outward. What comes out is the level that went in, inside the format."""
+    pcm = speechy(0.4)
+    before = rms(pcm)
+    for fx in (MonsterFX(ring_pct=70), MonsterFX(tremolo_pct=80),
+               MonsterFX(muffle_pct=90), MonsterFX(crush_pct=85),
+               # And all seven at once, the arrangement most able to overshoot:
+               # saturation and a comb both add energy on top of the rest.
+               MonsterFX(24, 80, 55, 60, 50, 40, 30)):
+        treated, _rate = apply(pcm, fx)
+        assert rms(treated) == pytest.approx(before, rel=0.02), fx
+        assert peak(treated) <= 32767, fx
+        assert treated != pcm, fx
+
+
+def two_tone(low_hz: int = 200, high_hz: int = 3000, seconds: int = 1,
+             rate: int = SAMPLE_RATE) -> bytes:
+    """Two equal tones far enough apart to watch a filter act on one of them.
+
+    `tone()` cannot do this job: both its partials sit below `MUFFLE_HZ_SHUT`,
+    so even a fully shut muffle barely touches it. 3 kHz is above the corner at
+    every slider position and 200 Hz is below all of them.
+    """
+    return array("h", [
+        int(6000 * (math.sin(2 * math.pi * low_hz * i / rate)
+                    + math.sin(2 * math.pi * high_hz * i / rate)))
+        for i in range(seconds * rate)
+    ]).tobytes()
+
+
+def band(data, hz: float, rate: int = SAMPLE_RATE) -> float:
+    """The amplitude at one frequency: a single DFT bin, computed directly.
+
+    One bin is O(n) and needs nothing but `math`, where an FFT would be either
+    a dependency or a hundred lines of fixture. Every clip measured here is a
+    whole number of cycles long at every frequency asked about, so the bin is
+    exact and no window is called for.
+    """
+    values = samples(data) if isinstance(data, bytes) else data
+    real = imag = 0.0
+    step = 2 * math.pi * hz / rate
+    for i, v in enumerate(values):
+        real += v * math.cos(step * i)
+        imag += v * math.sin(step * i)
+    return 2 * math.hypot(real, imag) / len(values)
+
+
+def test_muffle_takes_the_top_off_rather_than_turning_the_whole_thing_down():
+    """That `muffle` is a filter and not a fader.
+
+    The two are indistinguishable on the level — which is held either way —
+    and both register in `change()`. What separates them is balance: the 3 kHz
+    tone loses ground to the 200 Hz one as the corner comes down, while the
+    200 Hz one is not attenuated at all. It comes out louder, in fact, because
+    holding the clip's RMS makes room for what the filter took away.
+    """
+    pcm = two_tone()
+    low_before, high_before = band(pcm, 200), band(pcm, 3000)
+    ratios = []
+    for pct in (25, 50, 75, 100):
+        treated, _rate = apply(pcm, MonsterFX(muffle_pct=pct))
+        low, high = band(treated, 200), band(treated, 3000)
+        assert low > low_before, f"muffle {pct} is attenuating the bottom too"
+        ratios.append(high / low)
+    assert ratios == sorted(ratios, reverse=True), ratios
+    assert ratios[-1] < 0.35 * (high_before / low_before), ratios
+
+
+def test_ring_replaces_the_fundamental_rather_than_scaling_it():
+    """That `ring` is modulation — which nothing with lungs does — rather than
+    a gain change dressed up as one.
+
+    Multiplying by a sine moves every partial to a pair of sidebands `RING_HZ`
+    either side of it and leaves nothing where it was. So at full depth the
+    180 Hz fundamental of `tone()` is not reduced but gone, and its energy is
+    at 125 and 235 Hz instead: an arrangement no fader reaches at any setting.
+    """
+    pcm = tone()
+    plain = band(pcm, 180)
+    assert plain > 0
+
+    full, _rate = apply(pcm, MonsterFX(ring_pct=100))
+    assert band(full, 180) < plain * 0.01
+    for side in (180 - RING_HZ, 180 + RING_HZ):
+        assert band(full, side) > plain * 0.5
+
+    # Half depth is a crossfade against the dry signal, so the fundamental is
+    # still there and the sidebands are already up: the control sweeps between
+    # the two rather than switching from one to the other.
+    half, _rate = apply(pcm, MonsterFX(ring_pct=50))
+    assert plain * 0.4 < band(half, 180) < plain * 0.95
+    assert band(half, 180 + RING_HZ) > plain * 0.25
+
+    # A tremolo is amplitude modulation too, but unipolar: it dips the level
+    # instead of inverting it, so the fundamental survives. The two effects
+    # must not have become each other.
+    wobbled, _rate = apply(pcm, MonsterFX(tremolo_pct=100))
+    assert band(wobbled, 180) > plain * 0.5
+
+
+def test_a_dealt_character_effect_reaches_the_samples():
+    """`apply` hands back Polly's bytes untouched unless `character()` reports
+    something, so a field missing from that tuple is an effect that silently
+    does nothing. The size shift is the one that is meant to skip the pass."""
+    pcm = tone(1)
+    for field in NEW_EFFECTS:
+        fx = MonsterFX(**{field: 50})
+        assert fx, field                            # dealt at all
+        assert apply(pcm, fx)[0] != pcm, field      # and it reached the audio
+    # While the effect that lives in the header still costs no pass at all.
+    assert apply(pcm, MonsterFX(size_pct=24))[0] == pcm
+
+
 def test_the_room_is_the_same_size_whatever_the_creature_is():
     """The comb delay is counted in samples of the PLAYBACK rate, so a monster
     shifted down is standing in the same cave as one shifted up rather than in
@@ -245,6 +407,29 @@ def test_the_token_names_the_treatment_and_the_code_that_applies_it():
     assert source_fingerprint() in token
     assert token != MonsterFX(24, 55, 0).token()
     assert MonsterFX(24, 55, 35).token() == token
+
+
+def test_the_token_names_the_new_fields_without_renaming_the_old_treatments():
+    """Both halves of what `token()` owes the cache.
+
+    A field the token cannot see is a different clip served from an unchanged
+    key, for as long as the cache keeps it — so each of the four has to move
+    the token on its own. And a treatment that deals only the three original
+    fields has to key exactly as it did before the other four existed, or the
+    clips already on disk are orphaned in the same edit that adds a slider
+    nobody has dealt yet.
+    """
+    old = MonsterFX(24, 55, 35)
+    assert old.token() == f"fx:24:55:35:{source_fingerprint()}"
+
+    seen = {old.token()}
+    for field in NEW_EFFECTS:
+        token = MonsterFX(24, 55, 35, **{field: 40}).token()
+        assert token not in seen, f"{field} does not reach the cache key"
+        seen.add(token)
+    # And they are distinguished from each other, not merely from the original:
+    # four fields folded into one number would pass the loop above.
+    assert len(seen) == len(NEW_EFFECTS) + 1
 
 
 # -- the container -----------------------------------------------------------

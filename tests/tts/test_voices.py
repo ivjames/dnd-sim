@@ -30,6 +30,8 @@ from tts.voices import (
     MONSTER_TEMPO,
     MONSTER_VTL,
     STANDARD_ENGLISH,
+    VOLUME_MAX_DB,
+    VOLUME_MIN_DB,
     Cast,
     Voice,
     allowed_ssml,
@@ -42,7 +44,9 @@ from tts.voices import (
     normalize_creature_size,
     normalize_gender,
     accent_for,
+    retune,
     ssml_for,
+    tune_from,
 )
 
 CHILDREN = {v.id for v in STANDARD_ENGLISH if is_child_voice(v)}
@@ -533,3 +537,224 @@ def test_no_two_monsters_in_a_shipped_scenario_sound_alike():
                         f"{seen[heard]}"
                     )
                     seen[heard] = who
+
+
+# -- the listener's own controls ---------------------------------------------
+
+def test_volume_and_the_compressor_are_written_where_the_engine_reads_them():
+    """The two controls that survive a table leaving the standard engine.
+
+    `<prosody volume>` and `<amazon:effect name="drc">` are documented on
+    standard, neural and long-form; generative reads neither, because its
+    prosody tag is full-sentences-only and drc is "Not available" there. Polly
+    errors on a tag the engine cannot read rather than dropping it, so what is
+    asserted here is the document, not the field on the cast.
+    """
+    assert {"volume", "drc"} <= ENGINE_SSML["standard"]
+    assert {"volume", "drc"} <= ENGINE_SSML["neural"] == ENGINE_SSML["long-form"]
+    assert not ENGINE_SSML["generative"]
+
+    # The DM is the seat with nothing else on it, so the whole document is the
+    # two controls and the words.
+    plain = cast_for("dm", STANDARD_ENGLISH, "Brian")
+    dm = retune(plain, tune_from(volume=3, drc="on"), STANDARD_ENGLISH)
+    assert dm.volume_db == 3 and dm.drc is True
+
+    loud = ('<speak><prosody volume="+3dB">'
+            '<amazon:effect name="drc">Thorin swings.</amazon:effect>'
+            "</prosody></speak>")
+    assert ssml_for("Thorin swings.", dm, "standard") == loud
+    assert ssml_for("Thorin swings.", dm, "neural") == loud
+    assert ssml_for("Thorin swings.", dm, "long-form") == loud
+    assert ssml_for("Thorin swings.", dm, "generative") == "<speak>Thorin swings.</speak>"
+
+    # A cut is signed the same way — "+3dB" and "-6dB" are relative to the
+    # voice as recorded, where a bare "6dB" is an absolute.
+    quiet = retune(plain, tune_from(volume=-6), STANDARD_ENGLISH)
+    assert ssml_for("Thorin swings.", quiet) == \
+        '<speak><prosody volume="-6dB">Thorin swings.</prosody></speak>'
+
+    # A seat that asks for neither writes exactly the document it always wrote.
+    assert ssml_for("Thorin swings.", plain) == "<speak>Thorin swings.</speak>"
+
+    # The compressor wraps the words and the prosody wraps it, so the volume
+    # the listener asked for is applied over the levelling rather than being
+    # the thing it levels away.
+    monster = retune(cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian"),
+                     tune_from(volume=-3, drc="1"), STANDARD_ENGLISH)
+    said = ssml_for("Fee fi fo.", monster)
+    assert said == (
+        f'<speak><prosody rate="{monster.rate_pct}%" volume="-3dB">'
+        '<amazon:effect name="drc">Fee fi fo.</amazon:effect>'
+        "</prosody></speak>"
+    )
+
+
+def test_a_cast_that_asks_for_neither_keys_exactly_as_it_used_to():
+    """A clip is cached under this string and served from it for a year.
+
+    So a field that changed the spelling for a cast that does not use it would
+    silently retire every clip on the box — a re-render of the whole game, paid
+    for again, for a control nobody in that game touched. The two are appended
+    and only when set, which is the rule `fx` already follows.
+    """
+    dm = cast_for("dm", STANDARD_ENGLISH, "Brian")
+    assert dm.cache_key() == "standard|Brian|0|100|0"
+
+    pc = cast_for("pc_1", STANDARD_ENGLISH, "Brian")
+    assert pc.cache_key() == f"standard|{pc.voice_id}|{pc.pitch_pct}|100|0"
+
+    ogre = cast_for("monster:ogre_1", STANDARD_ENGLISH, "Brian")
+    assert ogre.cache_key() == \
+        f"standard|{ogre.voice_id}|0|{ogre.rate_pct}|0|{ogre.fx.token()}"
+
+    # And when they are asked for, they are written on the end of that — never
+    # into the five fields, where a sixth would have moved every key at once.
+    loud = retune(dm, tune_from(volume=3, drc="on"), STANDARD_ENGLISH)
+    assert loud.cache_key() == dm.cache_key() + "|vol+3dB|drc"
+    assert retune(dm, tune_from(volume=-6), STANDARD_ENGLISH).cache_key() == \
+        dm.cache_key() + "|vol-6dB"
+    assert retune(dm, tune_from(drc="on"), STANDARD_ENGLISH).cache_key() == \
+        dm.cache_key() + "|drc"
+    # A treated seat keeps the treatment's token where it was, too.
+    assert retune(ogre, tune_from(drc="on"), STANDARD_ENGLISH).cache_key() == \
+        ogre.cache_key() + "|drc"
+
+
+def test_an_accent_re_deals_a_seat_inside_one_language():
+    """"Make the innkeeper Welsh" is a set of voices, not a voice.
+
+    Which of them the seat gets is the module's own hash over the seat's key,
+    so the answer survives a restart, a deploy and any reordering of the
+    roster — a listener who set an accent an hour ago hears the same voice now.
+    """
+    british = {v.id for v in STANDARD_ENGLISH if v.language == "en-GB"}
+    for key in ("npc", "pc_1", "pc_2", "monster:goblin_1"):
+        cast = cast_for(key, STANDARD_ENGLISH, "Brian")
+        tuned = retune(cast, tune_from(accent="en-GB"), STANDARD_ENGLISH)
+        assert tuned.voice_id in british and tuned.language == "en-GB", key
+        # Same seat, same accent, same voice — whatever order the roster
+        # arrives in, and however many times it is asked.
+        assert retune(cast, tune_from(accent="en-GB"), STANDARD_ENGLISH) == tuned
+        assert retune(cast, tune_from(accent="en-GB"),
+                      list(reversed(STANDARD_ENGLISH))) == tuned
+        # Case is Polly's spelling, not the listener's.
+        assert retune(cast, tune_from(accent="EN-gb"), STANDARD_ENGLISH) == tuned
+
+    seat = cast_for("npc", STANDARD_ENGLISH, "Brian")
+    # Welsh-accented English is its own code and its own voice, exactly as
+    # `ACCENTS` keys it: en-GB-WLS is not en-GB.
+    welsh = retune(seat, tune_from(accent="en-GB-WLS"), STANDARD_ENGLISH)
+    assert welsh.voice_id == "Geraint" and accent_for(welsh.language) == "Welsh"
+    # And an accent recasts the seat rather than rewriting it: everything else
+    # about how it is spoken is the casting's still.
+    assert (welsh.pitch_pct, welsh.rate_pct, welsh.vtl_pct, welsh.engine, welsh.fx) == \
+        (seat.pitch_pct, seat.rate_pct, seat.vtl_pct, seat.engine, seat.fx)
+
+
+def test_a_language_the_pool_cannot_serve_is_ignored_like_a_voice_it_has_lost():
+    """A stored tune outlives the roster it was made against.
+
+    An engine that serves no Welsh serves the one Welsh voice there is, so an
+    accent goes stale at least as easily as a voice id — and neither may turn
+    every line of that seat into an error. Falling back to the casting is the
+    answer `speech.js` gives for a browser voice that has gone.
+    """
+    american = [v for v in STANDARD_ENGLISH if v.language == "en-US"]
+    cast = cast_for("npc", american, "Joanna")
+    for said in ("fr-FR", "en-GB", "en-GB-WLS", "en", "de-DE", "  "):
+        assert retune(cast, tune_from(accent=said), american) == cast, said
+    assert retune(cast, tune_from(voice_id="Amy"), american) == cast
+
+    # An ignored voice id is nothing said, so an accent behind it still stands.
+    both = retune(cast, tune_from(voice_id="Amy", accent="en-US"), american)
+    assert both.voice_id in {v.id for v in american} and both.language == "en-US"
+
+
+def test_a_named_voice_beats_an_accent():
+    """Naming one is the more specific answer, and it is the way out when the
+    deal inside a language lands somewhere the listener does not want."""
+    cast = cast_for("npc", STANDARD_ENGLISH, "Brian")
+    named = retune(cast, tune_from(voice_id="Aditi", accent="en-GB"), STANDARD_ENGLISH)
+    assert named.voice_id == "Aditi"
+    # Naming a voice has always left the language the casting dealt, and still
+    # does — pinned here as the behaviour that was, not as the one to want:
+    # `/api/tts/cast` reports the accent from it, so this seat says Australian
+    # while an Indian voice reads it. The accent path is the one that had to
+    # move the language, because moving it is all an accent is.
+    assert named.language == cast.language
+
+    # The accent alone would have gone somewhere else entirely.
+    assert retune(cast, tune_from(accent="en-GB"), STANDARD_ENGLISH).voice_id != "Aditi"
+
+
+def test_the_four_new_treatments_reach_a_monster_and_nobody_else():
+    """A treatment exists on a monster seat alone: `fx` is None everywhere
+    else, and switching it on for a PC would change what the clip *is* — pcm
+    and a WAV rather than Polly's own MP3."""
+    monster = cast_for("monster:goblin_1", STANDARD_ENGLISH, "Brian")
+    tuned = retune(monster, tune_from(ring=40, tremolo=25, muffle=60, crush=15),
+                   STANDARD_ENGLISH)
+    assert (tuned.fx.ring_pct, tuned.fx.tremolo_pct,
+            tuned.fx.muffle_pct, tuned.fx.crush_pct) == (40, 25, 60, 15)
+    # What the casting dealt is kept where the tune says nothing about it...
+    assert tuned.fx.size_pct == monster.fx.size_pct
+    assert tuned.fx.growl_pct == monster.fx.growl_pct
+    assert tuned.fx.cave_pct == monster.fx.cave_pct
+    # ...including the tempo, which none of the four touches: only the size
+    # shift has a duration to compensate for.
+    assert tuned.rate_pct == monster.rate_pct
+    # A different treatment is a different clip.
+    assert tuned.cache_key() != monster.cache_key()
+
+    # Each of them alone, because "any of the four" is what turns the fx on.
+    for one in ("ring", "tremolo", "muffle", "crush"):
+        got = retune(monster, tune_from(**{one: 50}), STANDARD_ENGLISH)
+        assert getattr(got.fx, one + "_pct") == 50, one
+
+    # A PC has no treatment to touch, so the four are ignored outright.
+    pc = cast_for("pc_1", STANDARD_ENGLISH, "Brian")
+    assert pc.fx is None
+    assert retune(pc, tune_from(ring=90, tremolo=90, muffle=90, crush=90),
+                  STANDARD_ENGLISH) == pc
+    # Volume and the compressor are not the treatment: they are markup, and
+    # every seat can carry them.
+    quiet = retune(pc, tune_from(volume=-3, drc="on"), STANDARD_ENGLISH)
+    assert quiet.volume_db == -3 and quiet.drc is True and quiet.fx is None
+
+
+def test_a_slider_past_the_end_is_clamped_and_a_switch_off_is_not_a_switch_unset():
+    """These arrive from a slider and a checkbox, and the useful answer to one
+    dragged past the end is the end. The switch has three states, not two: a
+    stored tune has to be able to turn the compressor back OFF, which a bool
+    that reads "off" and "not mentioned" as one answer cannot say.
+    """
+    assert tune_from(volume=99).volume_db == VOLUME_MAX_DB
+    assert tune_from(volume=-99).volume_db == VOLUME_MIN_DB
+    assert VOLUME_MIN_DB < 0 < VOLUME_MAX_DB
+    assert tune_from(volume=3).volume_db == 3 and tune_from(volume="-6").volume_db == -6
+    assert tune_from(volume=0).volume_db == 0          # the middle is an answer
+    assert tune_from(volume="not a number").volume_db is None
+    assert tune_from().volume_db is None
+
+    for said in (999, "150", 100.4):
+        assert tune_from(ring=said).ring_pct == 100, said
+    for said in (-5, "-1"):
+        assert tune_from(crush=said).crush_pct == 0, said
+    assert tune_from(muffle="").muffle_pct is None and tune_from(tremolo=None).tremolo_pct is None
+
+    for said in ("1", "true", "TRUE", " on ", "yes", "y", True):
+        assert tune_from(drc=said).drc is True, said
+    for said in ("0", "false", "off", "no", "n", False):
+        assert tune_from(drc=said).drc is False, said
+    for said in ("", None, "  ", "maybe", "please"):
+        assert tune_from(drc=said).drc is None, said
+
+    # And the three states are three answers at the seat: on, off, and leave it.
+    on = retune(cast_for("dm", STANDARD_ENGLISH, "Brian"),
+                tune_from(drc="on"), STANDARD_ENGLISH)
+    assert on.drc is True
+    assert retune(on, tune_from(drc="off"), STANDARD_ENGLISH).drc is False
+    assert retune(on, tune_from(), STANDARD_ENGLISH).drc is True
+    # An empty tune is still the casting itself, which is what "auto" saves.
+    assert not tune_from() and tune_from(drc="off") and tune_from(volume=0)

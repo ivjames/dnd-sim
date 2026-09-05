@@ -44,6 +44,7 @@ app. `tts/voices.py` deals the treatment, this applies it.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 import sys
 from array import array
@@ -57,6 +58,14 @@ __all__ = [
     "source_fingerprint",
     "CAVE_DELAY_S",
     "MAX_SIZE_PCT",
+    "DRIVE_REF",
+    "RING_HZ",
+    "TREMOLO_HZ",
+    "MUFFLE_HZ_OPEN",
+    "MUFFLE_HZ_SHUT",
+    "CRUSH_BITS_OPEN",
+    "CRUSH_BITS_MIN",
+    "CRUSH_CREST",
 ]
 
 #: What we ask Polly for, and the most `pcm` will give: "Valid values for pcm
@@ -98,6 +107,57 @@ MAX_DRIVE = 5.0
 #: a creature rather than a recording.
 DRIVE_REF = 0.25
 
+#: The carrier a ring modulator multiplies the voice by, in Hz of *heard*
+#: time (as `CAVE_DELAY_S` is: a creature shifted down is not also detuned).
+#:
+#: Low, and deliberately near where a voice's own fundamental sits: the sum and
+#: difference tones it produces then land inside the voice rather than above it,
+#: which is the difference between a creature that speaks wrongly and a radio
+#: with a fault. This is the one effect here that nothing about a human throat
+#: could produce, which is exactly what it is for.
+RING_HZ = 55.0
+
+#: How fast a tremolo wobbles, Hz of heard time. Slow enough to hear as an
+#: unsteady voice rather than as roughness — past about 20 Hz amplitude
+#: modulation stops being a wobble and becomes another ring modulator.
+TREMOLO_HZ = 5.5
+
+#: What `muffle` sweeps between: a one-pole low-pass corner, in Hz, at 0% and
+#: at 100%. The open end is above the top of what a 16 kHz clip carries, so
+#: `muffle=0` is transparent by construction rather than by a special case.
+MUFFLE_HZ_OPEN = 8000.0
+MUFFLE_HZ_SHUT = 700.0
+
+#: What `crush` sweeps between, in bits — but bits across the clip's own level
+#: rather than across the format. `CRUSH_CREST` below sets the span they divide.
+#:
+#: The depth used to run the format's 16 bits down to 4, measured against full
+#: scale. That reads sensibly and sweeps nothing. A Polly line sits an order
+#: below full scale, so the first half of the slider was rounding to steps
+#: smaller than the noise the line already carries, and the whole control
+#: happened in its last quarter — measured on a speech-like clip at a quarter
+#: of full scale, as a fraction of its own RMS: 25% -> 0%, 50% -> 0%,
+#: 75% -> 4%, 100% -> 26%.
+#:
+#: This is the lesson `DRIVE_REF` records one effect up, in the other
+#: direction: quantisation error is heard against the signal sitting on top of
+#: it, not against a full scale nothing here reaches. Referred to the clip the
+#: useful range is narrow and low — 7 bits down to 2, which is a step running
+#: from a sixteenth of the clip's own level to twice it. Below that the error
+#: goes under the line rather than on it, and above it there is no voice left
+#: to break. Each quarter of the slider then roughly doubles the error it
+#: adds: 4%, 10%, 22%, 42% by the same measure as the figures above.
+CRUSH_BITS_OPEN = 7.0
+CRUSH_BITS_MIN = 2.0
+
+#: The peak-to-RMS ratio the quantiser sizes its range against: speech stands
+#: some four times its own RMS at the syllables (the same figure `_saturate`
+#: drives against), so `2**bits` steps across `CRUSH_CREST * rms` is `bits`
+#: bits across the part of the waveform anyone hears. Approximate on purpose —
+#: a line whose real crest is five rather than four moves the step by a third
+#: of a bit, where the range itself is five bits wide.
+CRUSH_CREST = 4.0
+
 #: The comb's feedback at `cave_pct = 100`. Below 1 by construction (the comb
 #: is `y[n] = x[n] + fb·y[n-d]`, which decays geometrically and is stable for
 #: any fb < 1), and well below it in practice: at 0.6 the peak gain is 2.5x and
@@ -124,6 +184,10 @@ class MonsterFX:
     size_pct: int = 0       # + is bigger/deeper; the whole spectrum scales
     growl_pct: int = 0      # soft saturation: harmonics, grit
     cave_pct: int = 0       # a feedback comb: the room it is standing in
+    ring_pct: int = 0       # ring modulation: a throat no animal has
+    tremolo_pct: int = 0    # amplitude wobble: an unsteady, failing voice
+    muffle_pct: int = 0     # one-pole low-pass: behind a door, under water
+    crush_pct: int = 0      # bit-depth reduction: a construct, a bad channel
 
     def __post_init__(self) -> None:
         # Clamped rather than rejected: these are dealt from a hash, and a
@@ -132,9 +196,20 @@ class MonsterFX:
         object.__setattr__(self, "size_pct", _clamp(self.size_pct, -MAX_SIZE_PCT, MAX_SIZE_PCT))
         object.__setattr__(self, "growl_pct", _clamp(self.growl_pct, 0, 100))
         object.__setattr__(self, "cave_pct", _clamp(self.cave_pct, 0, 100))
+        for extra in ("ring_pct", "tremolo_pct", "muffle_pct", "crush_pct"):
+            object.__setattr__(self, extra, _clamp(getattr(self, extra), 0, 100))
+
+    def character(self) -> tuple[int, ...]:
+        """Everything that touches samples, in the order `apply` runs it.
+
+        The size shift is not here: it is the sample rate in the header and
+        costs nothing, which is the distinction the whole module is built on.
+        """
+        return (self.growl_pct, self.ring_pct, self.muffle_pct,
+                self.tremolo_pct, self.crush_pct, self.cave_pct)
 
     def __bool__(self) -> bool:
-        return bool(self.size_pct or self.growl_pct or self.cave_pct)
+        return bool(self.size_pct or any(self.character()))
 
     def token(self) -> str:
         """The part of a cache key this treatment is responsible for.
@@ -144,7 +219,14 @@ class MonsterFX:
         go on being served from disk, for a year, from a key that still
         described it correctly.
         """
-        return f"fx:{self.size_pct}:{self.growl_pct}:{self.cave_pct}:{source_fingerprint()}"
+        # The three originals keep their places so that a clip treated with
+        # nothing else keys as it always did; the rest are appended, and only
+        # when set, for the same reason.
+        base = f"fx:{self.size_pct}:{self.growl_pct}:{self.cave_pct}"
+        extra = (self.ring_pct, self.tremolo_pct, self.muffle_pct, self.crush_pct)
+        if any(extra):
+            base += ":" + ":".join(str(v) for v in extra)
+        return f"{base}:{source_fingerprint()}"
 
     def rate_pct(self) -> int:
         """The speaking rate that undoes what `playback_rate` will do to duration.
@@ -198,19 +280,33 @@ def apply(pcm: bytes, fx: MonsterFX, in_rate: int = SAMPLE_RATE) -> tuple[bytes,
     """
     rate = fx.playback_rate(in_rate)
     samples = _samples(pcm)
-    if not samples or not (fx.growl_pct or fx.cave_pct):
+    if not samples or not any(fx.character()):
         # The size shift is the header, so a monster with no character effects
         # is answered without touching a sample. Most of them are.
         return _bytes(samples), rate
     work = [float(v) for v in samples]
-    # Held across the treatment: saturation is a compressor and a comb adds
-    # energy, so both make a clip LOUDER as a side effect of changing its
-    # shape. A monster ten decibels over the narrator reading the line before
-    # it is a mixing fault, not a costume — so the level that comes out is the
-    # level that went in, and only the timbre has moved.
+    # Held across the treatment: saturation is a compressor, a comb adds energy
+    # and a low-pass takes it away, so all of them change the level as a side
+    # effect of changing the shape. A monster ten decibels over the narrator
+    # reading the line before it is a mixing fault, not a costume — so the
+    # level that comes out is the level that went in, and only the timbre has
+    # moved. It is measured on what Polly sent, so a seat that asked to be
+    # quieter (`<prosody volume>`) still is.
     level = _rms(work)
+    # The order is a signal chain, not a list: what the throat does, then what
+    # the body does to it, then the room it all happens in. Each is one pass
+    # over the samples, in place — nothing here copies the clip, which is what
+    # keeps the whole treatment affordable inside a request.
     if fx.growl_pct:
         _saturate(work, fx.growl_pct)
+    if fx.ring_pct:
+        _ring(work, fx.ring_pct, rate)
+    if fx.muffle_pct:
+        _muffle(work, fx.muffle_pct, rate)
+    if fx.tremolo_pct:
+        _tremolo(work, fx.tremolo_pct, rate)
+    if fx.crush_pct:
+        _crush(work, fx.crush_pct)
     if fx.cave_pct:
         _cave(work, fx.cave_pct, rate)
     return _bytes(_to_pcm(work, level)), rate
@@ -291,6 +387,80 @@ def _cave(work: list[float], pct: int, rate: int) -> None:
     feedback = (pct / 100.0) * MAX_FEEDBACK
     for i in range(delay, len(work)):
         work[i] += feedback * work[i - delay]
+
+
+def _ring(work: list[float], pct: int, rate: int) -> None:
+    """Ring modulation, in place: the voice times a low sine.
+
+    A multiply, not a mix — but crossfaded against the dry signal by `pct`, so
+    the control sweeps from the voice to the fully modulated version of it
+    rather than switching between two things. At full depth the fundamental
+    disappears and only the sum and difference tones are left, which is the
+    sound nothing with lungs makes.
+    """
+    depth = pct / 100.0
+    step = 2.0 * math.pi * RING_HZ / rate
+    for i, v in enumerate(work):
+        work[i] = v * (1.0 - depth + depth * math.sin(step * i))
+
+
+def _tremolo(work: list[float], pct: int, rate: int) -> None:
+    """Amplitude wobble, in place: a voice that cannot hold itself steady.
+
+    The modulator is unipolar — it dips the level rather than inverting it —
+    so at full depth the voice is cut to silence at the bottom of each cycle
+    instead of coming back phase-flipped, which is a ring modulator again.
+    """
+    depth = pct / 100.0
+    step = 2.0 * math.pi * TREMOLO_HZ / rate
+    for i, v in enumerate(work):
+        work[i] = v * (1.0 - depth * 0.5 * (1.0 - math.cos(step * i)))
+
+
+def _muffle(work: list[float], pct: int, rate: int) -> None:
+    """One-pole low-pass, in place: heard through a door, a helm, or water.
+
+    The corner sweeps geometrically rather than linearly, because pitch is
+    geometric: half the slider should be half the distance in octaves, or the
+    whole control happens in its last quarter.
+    """
+    frac = pct / 100.0
+    corner = MUFFLE_HZ_OPEN * (MUFFLE_HZ_SHUT / MUFFLE_HZ_OPEN) ** frac
+    alpha = 1.0 - math.exp(-2.0 * math.pi * corner / rate)
+    prev = 0.0
+    for i, v in enumerate(work):
+        prev += alpha * (v - prev)
+        work[i] = prev
+
+
+def _crush(work: list[float], pct: int) -> None:
+    """Bit-depth reduction, in place: a voice arriving down a bad channel.
+
+    Quantisation error is the effect, so this is one rounding per sample, and
+    the only decision is how large a step to round to.
+
+    **The step is measured against the clip's own level, not against full
+    scale** (`CRUSH_BITS_OPEN`, `CRUSH_CREST`), for the reason `DRIVE_REF`
+    records above: the error is heard against the signal that would otherwise
+    mask it. Sixteen bits of a format a line only uses a fifth of is not
+    sixteen bits of that line, and quantising below what the line's own noise
+    floor already hides is a slider position that costs a pass and changes
+    nothing.
+
+    Linear in bits is geometric in step, which is the shape a slider wants —
+    each quarter of the range doubles the error again, as `_muffle` sweeps its
+    corner in octaves rather than in Hz. It was the reference, not the shape,
+    that made the old mapping dead below three quarters.
+    """
+    ref = _rms(work)
+    if ref <= 0.0:
+        return
+    bits = CRUSH_BITS_OPEN - (CRUSH_BITS_OPEN - CRUSH_BITS_MIN) * (pct / 100.0)
+    # `2**bits` steps across the whole span, which is symmetric about zero, so
+    # the step is half of it per bit.
+    step = ref * CRUSH_CREST / (2.0 ** (bits - 1.0))
+    for i, v in enumerate(work):
+        work[i] = round(v / step) * step
 
 
 def _to_pcm(work: list[float], level: float = 0.0) -> array:

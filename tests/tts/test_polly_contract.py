@@ -51,7 +51,7 @@ from tts.voices import (
     ssml_for,
 )
 
-DOCS_READ = "2026-09-04"
+DOCS_READ = "2026-09-05"
 
 
 # -- what Amazon documents ---------------------------------------------------
@@ -70,15 +70,34 @@ DOCS_READ = "2026-09-04"
 #:    the prosody tag can be used only around full sentences."
 #: https://docs.aws.amazon.com/polly/latest/dg/vocaltractlength-tag.html
 #:   "This tag is currently supported only by the standard TTS format."
+#: https://docs.aws.amazon.com/polly/latest/dg/supportedtags.html (read
+#: 2026-09-05, for `volume` and `drc`):
+#:   "All tags except for `<amazon:domain name="news">` are supported for
+#:    Standard voices."
+#:   <amazon:effect name="drc">  Neural: "Full availability" · Long-Form:
+#:                               "Full availability" · Generative: "Not available"
+#: `volume` rides on the same prosody row and the same prosody-tag sentence
+#: quoted above: it is one of the two attributes the non-standard engines take.
 DOCUMENTED_ENGINE_SSML = {
-    "standard": frozenset({"pitch", "rate", "vtl"}),
-    "neural": frozenset({"rate"}),
-    "long-form": frozenset({"rate"}),
-    # `rate` is documented as available and is deliberately not used: a chunk
-    # can be a mid-sentence fragment and generative's prosody tag is
-    # "only around full sentences". See ENGINE_SSML's own note.
+    "standard": frozenset({"pitch", "rate", "vtl", "volume", "drc"}),
+    "neural": frozenset({"rate", "volume", "drc"}),
+    "long-form": frozenset({"rate", "volume", "drc"}),
+    # `rate`, `volume` and `drc` are all documented as available here and are
+    # deliberately not used. `drc` is not a prosody attribute and could be
+    # written on its own — but the reason the rest are excluded is that a chunk
+    # can be a mid-sentence fragment and generative's prosody tag is "only
+    # around full sentences", and a document carrying the compressor alone
+    # would be a fourth arrangement nothing on this box produces or tests.
+    # See ENGINE_SSML's own note.
     "generative": frozenset(),
 }
+
+#: `<prosody volume>`: "+ndB or -ndB: Changes the volume … A value of +0dB
+#: means no change, +6dB is approximately twice the current amplitude, and
+#: -6dB is approximately half." (prosody-tag.html). The signed decibel form is
+#: the one written here; the named values (`loud`, `x-soft` …) are not used,
+#: so the grammar is the whole of the check.
+VOLUME_DB = re.compile(r"^[+-][0-9]+dB$")
 
 #: `<prosody pitch>`: "+n% or -n%: Adjusts pitch by a relative percentage."
 #: The percentage form is documented with a sign and with no stated numeric
@@ -199,10 +218,18 @@ def treatments_in(doc: str) -> set[str]:
         if node.tag == "speak":
             continue
         if node.tag == "{urn:amazon}effect":
-            assert set(node.attrib) == {"vocal-tract-length"}, node.attrib
-            used.add("vtl")
+            # Two different effects share this tag and are told apart by which
+            # attribute they carry: the timbre one takes a percentage, the
+            # compressor takes `name="drc"`. Anything else under this tag is a
+            # document nobody meant to write.
+            if node.attrib.get("name") == "drc":
+                assert set(node.attrib) == {"name"}, node.attrib
+                used.add("drc")
+            else:
+                assert set(node.attrib) == {"vocal-tract-length"}, node.attrib
+                used.add("vtl")
         elif node.tag == "prosody":
-            assert set(node.attrib) <= {"pitch", "rate"}, node.attrib
+            assert set(node.attrib) <= {"pitch", "rate", "volume"}, node.attrib
             assert node.attrib, "<prosody> must carry at least one attribute"
             used.update(node.attrib)
         else:  # pragma: no cover - a tag nobody meant to write
@@ -225,6 +252,9 @@ def assert_documented(doc: str, engine: str) -> None:
         if rate is not None:
             assert RATE_PCT.match(rate), f"{rate!r} is not the documented unsigned n%"
             assert RATE_MIN <= int(rate[:-1]) <= RATE_MAX, f"{rate!r} is outside 20-200%"
+        volume = node.get("volume")
+        if volume is not None:
+            assert VOLUME_DB.match(volume), f"{volume!r} is not the documented +ndB/-ndB"
 
     allowed = DOCUMENTED_ENGINE_SSML[engine]
     assert treatments_in(doc) <= allowed, f"{engine} cannot read {doc!r}"
@@ -397,6 +427,39 @@ def test_every_monster_a_game_can_deal_is_documented_ssml(engine, monster_fx):
         seen += 1
     assert seen == ((len(MONSTER_SIZE) * len(MONSTER_GROWL) * len(MONSTER_CAVE)
                      * len(MONSTER_TEMPO)) if monster_fx else len(MONSTER_VTL) * 7 * 4)
+
+
+@pytest.mark.parametrize("engine", sorted(DOCUMENTED_ENGINE_SSML))
+def test_every_seat_a_LISTENER_can_ask_for_is_documented_ssml(engine):
+    """The casting is no longer the only thing that writes a document.
+
+    A seat can be retuned from the voice lab — a volume, the compressor, a
+    rate, a pitch, and on a monster the treatment — and those values reach
+    `ssml_for` by the same path a dealt cast does. Everything above walks what
+    `cast_for` can DEAL, which is exactly the set that never carries a volume
+    or a `drc`: an unsupported tag is an `InvalidSsmlException`, one 502, and a
+    seat silently back on the browser's voices, so the tuned documents need the
+    same grammar check the dealt ones get.
+
+    The corners of the tune, not a sample of it: both ends of the volume clamp
+    and zero, the compressor on and off, against a plain seat and a treated
+    one.
+    """
+    from tts.voices import VOLUME_MAX_DB, VOLUME_MIN_DB, retune, tune_from
+
+    seats = [
+        cast_for("dm", STANDARD_ENGLISH, "Brian", "", engine),
+        cast_for("pc_1", STANDARD_ENGLISH, "Brian", "", engine),
+        cast_for("monster:ogre_2", STANDARD_ENGLISH, "Brian", "", engine, size="L"),
+    ]
+    seen = 0
+    for cast in seats:
+        for volume in (VOLUME_MIN_DB, 0, VOLUME_MAX_DB, None):
+            for drc in (True, False, None):
+                tuned = retune(cast, tune_from(volume=volume, drc=drc), STANDARD_ENGLISH)
+                assert_documented(ssml_for("The gate groans open.", tuned, engine), engine)
+                seen += 1
+    assert seen == len(seats) * 4 * 3
 
 
 @pytest.mark.parametrize("engine", sorted(DOCUMENTED_ENGINE_SSML))
