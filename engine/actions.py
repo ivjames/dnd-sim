@@ -50,7 +50,7 @@ _SAVE_DISADVANTAGE = {n: tuple(c.get("save_disadvantage") or ()) for n, c in _CO
 _TURN_FLAGS = (
     "dodging", "disengaged", "sneak_attack_used", "martial_advantage_used",
     "light_weapon_attacked", "cast_bonus_spell", "cast_action_spell",
-    "no_reactions", "multi_index", "moves_taken", "dashes_taken", "turn_ended",
+    "no_reactions", "multi_index", "moves_taken", "dashes_taken", "turn_ended", "aura_hits",
 )
 
 
@@ -1963,7 +1963,7 @@ def _cast_save(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
                                  extra={"repeat_save": repeat, "spell": name})
                 _add_condition(new, events, t, cond, name)
             if eff.get("push_ft"):
-                _push(new, events, actor, t, int(eff["push_ft"]))
+                _push(new, events, rng, actor, t, int(eff["push_ft"]))
 
 
 def _sphere_burn(new: GameState, events: list[Event], rng: RNG, caster: Combatant, point: tuple[int, int],
@@ -1998,7 +1998,7 @@ def _ram_flaming_sphere(new: GameState, events: list[Event], rng: RNG, actor: Co
     _sphere_burn(new, events, rng, actor, point)
 
 
-def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft: int) -> None:
+def _push(new: GameState, events: list[Event], rng: RNG, src: Combatant, t: Combatant, ft: int) -> None:
     sx, sy = _pos(src)
     tx, ty = _pos(t)
     dx = (tx > sx) - (tx < sx)
@@ -2016,6 +2016,7 @@ def _push(new: GameState, events: list[Event], src: Combatant, t: Combatant, ft:
         t.position = pos
         _ev(new, events, "move", f"{t.name} is pushed from ({tx},{ty}) to ({pos[0]},{pos[1]}).", t.id,
             **{"from": [tx, ty], "to": list(pos), "forced": True})
+        _enter_auras(new, events, rng, t)
 
 
 def _apply_buff(new: GameState, events: list[Event], rng: RNG, actor: Combatant, t: Combatant, row: dict,
@@ -2108,6 +2109,7 @@ def _cast_utility(new: GameState, events: list[Event], rng: RNG, actor: Combatan
         actor.position = point
         _ev(new, events, "move", f"{actor.name} teleports from ({old[0]},{old[1]}) to ({point[0]},{point[1]}).",
             actor.id, **{"from": list(old), "to": list(point), "teleport": True})
+        _enter_auras(new, events, rng, actor)
         return
     if eff.get("dispel_level"):
         for t in targets:
@@ -2196,6 +2198,56 @@ def threat_map(state: GameState, mover: Combatant) -> dict[tuple[int, int], froz
     return {sq: frozenset(ids) for sq, ids in out.items()}
 
 
+def _in_spirit_guardians(new: GameState, caster: Combatant, c: Combatant) -> bool:
+    """Is `c` inside a live Spirit Guardians aura that `caster` is holding and that affects it?"""
+    sg = caster.flags.get("spirit_guardians")
+    if not sg or not _alive(caster) or caster.id == c.id:
+        return False
+    if _dist(caster, c) > int(sg["radius"]):
+        return False
+    return _hostile(caster, c) or not sg.get("enemies_only")
+
+
+def _spirit_guardians_hit(new: GameState, events: list[Event], rng: RNG, caster: Combatant, c: Combatant) -> None:
+    """One save-and-damage from the aura, recorded against the current game turn.
+
+    SRD: the aura hits a creature "when it enters the area for the first time
+    on a turn or starts its turn there" — once per turn, whichever came first,
+    so a creature that starts inside, walks out and back in is not hit twice.
+    The mark is keyed by (round, turn_index) rather than cleared at the
+    creature's own turn reset because entry can happen on someone else's turn
+    (a push), and that turn is a different turn from the creature's own.
+    """
+    sg = caster.flags["spirit_guardians"]
+    c.flags.setdefault("aura_hits", {})[caster.id] = [new.round, new.turn_index]
+    ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
+    r = rng.roll(sg["damage"])
+    amount = (r.total // 2 if sg.get("half_on_save") else 0) if ok else r.total
+    if amount:
+        _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
+
+
+def _enter_auras(new: GameState, events: list[Event], rng: RNG, mover: Combatant) -> bool:
+    """Spirit Guardians' on-entry trigger for the square `mover` now stands on.
+
+    Called after every square of a move, a push and a teleport. Returns True
+    when the damage left the mover unable to go on. Only Spirit Guardians has
+    an entry trigger: spells.json marks Flaming Sphere `persistent_aura` too,
+    but that one burns a creature that *ends its turn* beside it, and the
+    data carries no field that says which — so the semantics are the spell's.
+    """
+    for caster in sorted(new.combatants.values(), key=lambda x: x.id):
+        if not _in_spirit_guardians(new, caster, mover):
+            continue
+        hits = mover.flags.get("aura_hits") or {}
+        if list(hits.get(caster.id) or []) == [new.round, new.turn_index]:
+            continue
+        _spirit_guardians_hit(new, events, rng, caster, mover)
+        if not _can_act(mover):
+            return True
+    return False
+
+
 def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tpl: ActionTemplate, params: dict) -> None:
     waypoints = _parse_path(params.get("path"))
     if not waypoints:
@@ -2210,16 +2262,29 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         _ev(new, events, "condition_remove", f"{actor.name} stands up ({cost} ft).", actor.id, condition="prone")
     budget = int(actor.turn.get("movement_left", 0))
     threat = threat_map(new, actor)
+    # The waypoint list is walked leg by leg and the longest reachable prefix is
+    # applied: a chain that overspends by its last leg (difficult terrain costs
+    # 10 where the chooser counted 5) or ends on another creature's square
+    # still moves the creature as far as it legally can, and the event says
+    # where the plan was cut and why. Only a first leg that cannot be walked
+    # at all is refused, with the reason rather than a bare "cannot reach".
     full: list[tuple[int, int]] = []
     pos = _pos(actor)
     spent = 0
+    requested: tuple[int, int] | None = None
+    truncated: tuple[tuple[int, int], str] | None = None
     for wp in waypoints:
         wp = (int(wp[0]), int(wp[1]))
+        requested = wp
         if wp == pos:
             continue
         seg = grid.path(new, pos, wp, budget - spent, mover_id=actor.id, threat=threat)
         if seg is None:
-            raise IllegalAction(f"{actor.name} cannot reach ({wp[0]},{wp[1]}) with {budget - spent} ft left")
+            reason = _move_refusal(new, actor, pos, wp, budget - spent)
+            if not full:
+                raise IllegalAction(f"{actor.name} cannot move to ({wp[0]},{wp[1]}): {reason}")
+            truncated = (wp, reason)
+            break
         full.extend(seg)
         spent += grid.path_cost(seg)
         pos = wp
@@ -2228,6 +2293,8 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
     actor.flags["moves_taken"] = int(actor.flags.get("moves_taken", 0)) + 1
     start = _pos(actor)
     stopped = False
+    charged = 0
+    walked: list[tuple[int, int]] = []
     for sq in full:
         prev = _pos(actor)
         trig = {"type": "move", "mover": actor.id, "from": prev, "to": sq}
@@ -2244,17 +2311,49 @@ def _do_move(new: GameState, events: list[Event], rng: RNG, actor: Combatant, tp
         if stopped:
             break
         actor.position = sq
-        actor.turn["movement_left"] = int(actor.turn.get("movement_left", 0)) - grid.cost_of(sq)
+        walked.append(sq)
+        step = grid.cost_of(sq)
+        charged += step
+        actor.turn["movement_left"] = int(actor.turn.get("movement_left", 0)) - step
+        if _enter_auras(new, events, rng, actor):
+            stopped = True
+            break
     end = _pos(actor)
-    ft = grid.path_cost(full[: full.index(end) + 1]) if end in full else 0
+    data: dict[str, Any] = {"from": list(start), "to": list(end), "ft": charged}
+    if requested is not None:
+        data["requested"] = list(requested)
+    if truncated is not None:
+        data["truncated_at"] = list(pos)
+        data["truncated_reason"] = truncated[1]
     if end == start:
-        _ev(new, events, "move", f"{actor.name} is stopped before moving.", actor.id,
-            **{"from": list(start), "to": list(end), "ft": 0})
-    else:
-        _ev(new, events, "move",
-            f"{actor.name} moves from ({start[0]},{start[1]}) to ({end[0]},{end[1]}) ({ft} ft"
-            + (", interrupted" if stopped else "") + ").",
-            actor.id, **{"from": list(start), "to": list(end), "ft": ft, "path": [list(p) for p in full]})
+        _ev(new, events, "move", f"{actor.name} is stopped before moving.", actor.id, **data)
+        return
+    text = (f"{actor.name} moves from ({start[0]},{start[1]}) to ({end[0]},{end[1]}) ({charged} ft"
+            + (", interrupted" if stopped else "") + ")")
+    if truncated is not None and not stopped:
+        text += f"; could not continue to ({truncated[0][0]},{truncated[0][1]}): {truncated[1]}"
+    _ev(new, events, "move", text + ".", actor.id, path=[list(p) for p in walked], **data)
+
+
+def _move_refusal(new: GameState, actor: Combatant, src: tuple[int, int], wp: tuple[int, int], left: int) -> str:
+    """Why `Grid.path` found no route from `src` to `wp` within `left` ft.
+
+    `Grid.path` answers None for four different reasons and a chooser told only
+    "cannot reach" re-sends the same square: eleven of thirty-six refusals in
+    the live corpus were a destination another creature was standing on.
+    """
+    grid = new.grid
+    if not grid.in_bounds(wp):
+        return f"({wp[0]},{wp[1]}) is off the grid"
+    if wp in grid.walls:
+        return f"({wp[0]},{wp[1]}) is a wall"
+    occ = grid.occupied(new, ignore=actor.id)
+    if wp in occ:
+        return f"({wp[0]},{wp[1]}) is occupied by {new.combatants[occ[wp]].name}"
+    route = grid.path(new, src, wp, 1 << 30, mover_id=actor.id)
+    if route is None:
+        return f"there is no route to ({wp[0]},{wp[1]})"
+    return f"({wp[0]},{wp[1]}) is {grid.path_cost(route)} ft away; you have {left} ft"
 
 
 # ---------------------------------------------------------------- hide / turn undead
@@ -2355,14 +2454,8 @@ def _start_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) 
                 _ev(new, events, "roll", f"{c.name}'s {aname} does not recharge ({_roll_text(r)}).", c.id, action=aname)
     # Auras: Spirit Guardians around a caster; Stench around a ghast.
     for caster in sorted(new.combatants.values(), key=lambda x: x.id):
-        sg = caster.flags.get("spirit_guardians")
-        if sg and _alive(caster) and caster.id != c.id and _dist(caster, c) <= int(sg["radius"]) \
-                and (_hostile(caster, c) or not sg.get("enemies_only")):
-            ok, _ = _saving_throw(new, events, rng, c, sg["save"], int(sg["dc"]), source_name=sg["spell"], is_spell=True)
-            r = rng.roll(sg["damage"])
-            amount = (r.total // 2 if sg.get("half_on_save") else 0) if ok else r.total
-            if amount:
-                _deal_damage(new, events, rng, c, amount, sg["damage_type"], caster.id)
+        if _in_spirit_guardians(new, caster, c):
+            _spirit_guardians_hit(new, events, rng, caster, c)
             if not _alive(c):
                 return False
         stench = _trait(caster, "stench_aura")
