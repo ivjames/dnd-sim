@@ -190,6 +190,54 @@ def test_a_rewrite_that_loses_one_unmanaged_line_is_refused(tmp_path):
     assert read(str(vhost)) == before
 
 
+def test_a_tab_indented_vhost_rewrites_cleanly(tmp_path):
+    """provision-site-shaped: tab indentation, the generic proxy directives
+    the block replaces. grep reads `[ \\t]` as space-backslash-t, so a shared
+    pattern spelled that way excluded nothing tab-indented and every such
+    vhost was refused as 'dropped N line(s)' forever."""
+    bindir, vhost, calls, env = sse_fixture(tmp_path, None)
+    write(str(vhost), (
+        "server {\n"
+        "\tlisten 80;\n"
+        "\tserver_name test.example;\n"
+        "\tlocation / {\n"
+        "\t\tproxy_pass http://127.0.0.1:8099;\n"
+        "\t\tproxy_http_version 1.1;\n"
+        "\t\tproxy_set_header Upgrade $http_upgrade;\n"
+        "\t\tproxy_set_header Connection \"upgrade\";\n"
+        "\t\tproxy_set_header Host $host;\n"
+        "\t\tproxy_read_timeout 60s;\n"
+        "\t\tproxy_buffering on;\n"
+        "\t}\n"
+        "\tgzip on;\n"
+        "}\n"))
+    out = run("ensure_sse", path=str(bindir), **env)
+    assert out.returncode == 0, out.stderr
+    body = read(str(vhost))
+    assert "\t\t" + SSE_BEGIN in body
+    assert "proxy_read_timeout 60s" not in body and 'Connection "upgrade"' not in body
+    assert "\t\tproxy_set_header Host $host;" in body and "\tgzip on;" in body
+    assert read(calls).splitlines() == ["-t", "reload nginx"]
+    again = run("ensure_sse", path=str(bindir), **env)
+    assert again.returncode == 0 and "nothing to change" in again.stdout
+
+
+def test_markers_with_stray_whitespace_or_a_cr_are_still_markers(tmp_path):
+    """The rewrite recognises a marker after strip(); the check has to agree,
+    or the block between them is dropped by one and demanded by the other."""
+    bindir, vhost, calls, env = sse_fixture(tmp_path, None)
+    src = read(FALLBACK_VHOST)
+    begin_line = "# dndsim-sse begin (managed by dndsim setup; do not edit between markers)\n"
+    assert begin_line in src
+    sloppy = (src.replace(begin_line, begin_line[:-1] + "  \n", 1)
+                 .replace("# dndsim-sse end\n", "# dndsim-sse end\r\n", 1))
+    assert sloppy != src and sloppy.count("\r") == 1
+    write(str(vhost), sloppy)
+    out = run("ensure_sse", path=str(bindir), **env)
+    assert out.returncode == 0, out.stderr
+    assert read(str(vhost)) == src, "the sloppy block is replaced by the canonical one"
+
+
 def test_a_vhost_full_of_stale_blocks_is_still_rewritten(tmp_path):
     """Several stale marker blocks make the correct output far shorter than
     the input; a size guard refused that. The structural one must not."""
@@ -574,7 +622,7 @@ STALE = ("env -u", "keys unset", "launch unsets", "pm2_unset_names", "pm2 unsets
 def test_the_docs_describe_the_allowlist_not_an_unset_list():
     src = read(CLI)
     for doc in ("bin/dndsim", "DEPLOY.md", "ecosystem.config.js", "CLAUDE.md",
-                "web/app.py", "web/auth.py", "PLAN.md", "README.md"):
+                "web/app.py", "web/auth.py", "PLAN.md", "README.md", "CONTRACTS.md"):
         body = read(os.path.join(ROOT, doc))
         for phrase in STALE:
             assert phrase not in body, "%s still says %r" % (doc, phrase)
