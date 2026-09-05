@@ -914,7 +914,7 @@ because most of it is CC BY and attribution is a condition of playing it.
 
 Picking a bed by ear is easier with something to pick from, so `python -m
 tools.audio catalog build` normalises incompetech's whole catalogue — 1442 CC
-BY pieces, one request — into a local SQLite database, and `catalog query`
+BY pieces, two requests — into a local SQLite database, and `catalog query`
 filters it on tempo, duration, feel combinations, collection and upload date,
 none of which the catalogue's own page can do. The database is a build
 artefact and is not committed. Full notes, the source table and the licence

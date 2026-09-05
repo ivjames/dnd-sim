@@ -18,17 +18,19 @@ htmlcov/
 
 # audio sourcing tool. The picked audio, the manifest, the credits and the
 # config that produced them are tracked: they ship with the game, and a deploy
-# hard-resets the checkout, so anything untracked would not survive one. Only
-# the two build artefacts are ignored — `candidates.json` is a search dump and
-# `picker.html` is generated from it, both re-made by one `harvest`.
+# hard-resets the checkout, so anything untracked would not survive one. The
+# build artefacts are ignored — `candidates.json` is a search dump and
+# `picker.html` is generated from it, both re-made by one `harvest`; the
+# catalogue database below is the third.
 /audio/candidates.json
 /audio/picker.html
 
-# The incompetech catalogue database. Derived: one command and one HTTP
-# request rebuild it, and it is a dev-tool artefact rather than part of the
-# pack the runtime serves, so it is not committed — vendoring someone else's
-# 1442-row catalogue into git would only go stale and churn. (`*.sqlite3`
-# below already catches it; it is named here so the reason is written down.)
+# The incompetech catalogue database. Derived: one command rebuilds it (two
+# requests — the catalogue JSON and the page its lookup tables are checked
+# against), and it is a dev-tool artefact rather than part of the pack the
+# runtime serves, so it is not committed — vendoring someone else's 1442-row
+# catalogue into git would only go stale and churn. (`*.sqlite3` above already
+# catches it; it is named here so the reason is written down.)
 /audio/incompetech.sqlite3
 /audio/incompetech.json
 

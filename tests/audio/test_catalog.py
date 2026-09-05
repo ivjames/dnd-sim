@@ -190,6 +190,9 @@ def test_lengths_parse_and_zero_means_unknown(raw, secs):
 @pytest.mark.parametrize("raw,bpm", [
     ("70", 70), (" 128 ", 128), ("0", None), (None, None), ("", None),
     ("fast", None), ("120.0", 120),
+    # These two parse as floats and then refuse to be integers, which is an
+    # OverflowError and not the ValueError "fast" raises.
+    ("inf", None), ("1e400", None), ("-inf", None),
 ])
 def test_tempos_parse_and_zero_means_not_measured(raw, bpm):
     assert I.parse_bpm(raw) == bpm
@@ -261,6 +264,23 @@ def test_the_same_instrument_spelled_three_ways_is_one_instrument(db):
                    "ON i.instrument_id = pi.instrument_id "
                    "WHERE i.key = 'piano'").fetchone()[0]
     assert n == 5, "Piano, PIano and piano are the same filter"
+
+
+def test_a_tie_between_two_spellings_goes_to_the_one_seen_first(db):
+    """Not to the lexicographically greatest, which is lowercase in ASCII.
+
+    Three real instruments are spelled both ways exactly once — Tambourine,
+    Tenor Drum, Plucked Strings — and the catalogue's own capitalisation is
+    the better display name of the two.
+    """
+    for first, second in (("Tambourine", "tambourine"), ("tambourine", "Tambourine")):
+        conn = CAT.connect(":memory:")
+        CAT.build(conn, [row(title="One", filename="One.mp3", instruments=first),
+                         row(title="Two", filename="Two.mp3", instruments=second)])
+        got = conn.execute(
+            "SELECT name FROM instrument WHERE key = 'tambourine'").fetchone()["name"]
+        assert got == first, "one each, so the first spelling wins"
+        conn.close()
 
 
 def test_off_vocabulary_feels_are_kept_and_flagged(db):
@@ -353,8 +373,47 @@ def test_full_text_searches_title_and_description(db):
 
 
 def test_full_text_survives_punctuation_that_fts_treats_as_syntax(db):
-    for text in ("stone -ceiling", 'a "quote', "NOT", "AND OR", "*", "x:y"):
+    for text in ("stone -ceiling", 'a "quote', "NOT", "AND OR", "x:y"):
         CAT.search(db, CAT.Filters(text=text))       # must not raise
+
+
+def test_a_text_filter_holding_no_word_is_refused_and_not_dropped(db):
+    """"*" tokenises to nothing. Dropped, `--text '*'` reported every piece in
+    the catalogue as a match for it, on either search path."""
+    for fts in ("5", ""):
+        db.execute("UPDATE meta SET value = ? WHERE key = 'fts'", (fts,))
+        with pytest.raises(ValueError, match="no word to search for"):
+            CAT.search(db, CAT.Filters(text="*"))
+
+
+def test_both_search_paths_ask_for_every_word(db):
+    """FTS5 ANDs its terms, so the fallback ANDs a clause per word.
+
+    As one substring "stone dread" is a phrase that appears nowhere, and a
+    fallback that answers a different question than the index is worse than no
+    fallback at all.
+    """
+    for text, want in (("dread", ["Dungeon Descent"]),
+                       ("stone dread", ["Dungeon Descent"]),
+                       ("descent ceiling", ["Dungeon Descent"]),
+                       ("tavern dread", []),
+                       ("olden tavern", ["The Britons"])):
+        db.execute("UPDATE meta SET value = '5' WHERE key = 'fts'")
+        assert titles(db, text=text) == want, f"index: {text!r}"
+        db.execute("UPDATE meta SET value = '' WHERE key = 'fts'")
+        assert titles(db, text=text) == want, f"fallback: {text!r}"
+
+
+def test_a_wildcard_typed_into_a_filter_is_a_character_and_not_a_wildcard(db):
+    """LIKE's "%" and "_" leaking out of a filter turn it into no filter."""
+    db.execute("UPDATE meta SET value = '' WHERE key = 'fts'")   # the LIKE path
+    assert titles(db, text="%") == []
+    assert titles(db, text="d_ead") == [], "a literal underscore, not any character"
+    assert titles(db, collections=("%",)) == []
+    assert titles(db, categories=("%",)) == []
+    assert titles(db, instruments=("%",)) == []
+    # and the ordinary substring match still matches
+    assert titles(db, collections=("Hard Electronic",)) == ["Dungeon Descent"]
 
 
 def test_text_search_falls_back_where_the_interpreter_has_no_fts5(db):
@@ -362,6 +421,20 @@ def test_text_search_falls_back_where_the_interpreter_has_no_fts5(db):
     db.execute("UPDATE meta SET value = '' WHERE key = 'fts'")
     assert titles(db, text="dread") == ["Dungeon Descent"]
     assert titles(db, text="Britons") == ["The Britons"]
+
+
+@pytest.mark.skipif(not CAT.have_fts5(CAT.connect(":memory:")),
+                    reason="needs FTS5 to build the database this one simulates")
+def test_a_database_built_with_fts5_is_readable_without_the_module(db, monkeypatch):
+    """`meta.fts` is what the *building* interpreter had; the file is portable.
+
+    Dropping the index is what an absent FTS5 module amounts to for this
+    query: either way MATCH cannot run, and the fallback has to.
+    """
+    monkeypatch.setattr(CAT, "have_fts5", lambda conn: False)
+    db.execute("DROP TABLE piece_fts")
+    assert CAT.meta(db)["fts"] == "5", "the file still says it was built with one"
+    assert titles(db, text="dread") == ["Dungeon Descent"]
 
 
 def test_a_sqlite_without_fts5_still_builds(monkeypatch):
@@ -374,6 +447,23 @@ def test_a_sqlite_without_fts5_still_builds(monkeypatch):
     assert [r["title"] for r in CAT.search(conn, CAT.Filters(text="dread"))] == \
         ["Dungeon Descent"]
     conn.close()
+
+
+def test_bpm_unknown_and_a_tempo_range_cannot_both_be_asked_for(db):
+    """They ask opposite things, and the range used to be silently discarded."""
+    for f in (CAT.Filters(bpm_unknown=True, bpm_min=200),
+              CAT.Filters(bpm_unknown=True, bpm_max=90)):
+        with pytest.raises(ValueError, match="bpm-unknown"):
+            CAT.search(db, f)
+
+
+def test_a_date_bound_has_to_be_a_date(db):
+    """They compare as text, so "2019" sorts before "2019-01-01" and quietly
+    excludes the whole year it looks like it asks for."""
+    for f in (CAT.Filters(uploaded_from="2019-01-01", uploaded_to="2019"),
+              CAT.Filters(uploaded_from="last tuesday")):
+        with pytest.raises(ValueError, match="not a date"):
+            CAT.search(db, f)
 
 
 def test_sorting_puts_the_unknowns_last_both_ways(db):
@@ -412,6 +502,29 @@ def test_hms_reads_as_a_duration():
 def test_the_view_joins_the_same_way_the_query_does(db):
     r = db.execute("SELECT * FROM piece_full WHERE title = 'Dungeon Descent'").fetchone()
     assert (r["genre"], r["collection"]) == ("Horror", "Hard Electronic")
+
+
+def test_the_cli_says_what_is_wrong_instead_of_raising(tmp_path, capsys):
+    """A typo in a filter is a message and an exit code, not a traceback."""
+    from tools.audio.__main__ import _duration, main
+
+    assert _duration("3:30") == 210 and _duration("210") == 210
+    with pytest.raises(ValueError, match="not a duration"):
+        _duration("abc")
+
+    path = tmp_path / "incompetech.sqlite3"
+    conn = CAT.connect(path)
+    CAT.build(conn, CATALOG)
+    conn.close()
+
+    for argv, said in ((["--min-length", "abc"], "not a duration"),
+                       (["--text", "*"], "no word to search for"),
+                       (["--bpm-unknown", "--bpm-min", "200"], "bpm-unknown"),
+                       (["--since", "2019"], "not a date")):
+        assert main(["catalog", "query", "--db", str(path), *argv]) == 2
+        assert said in capsys.readouterr().err
+
+    assert main(["catalog", "query", "--db", str(path), "--text", "dread"]) == 0
 
 
 def test_the_schema_says_no_to_a_dangling_reference(db):

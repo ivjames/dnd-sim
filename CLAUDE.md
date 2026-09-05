@@ -294,8 +294,10 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   -0.7 dBFS, both re-encoded); ffmpeg is not a dependency and its absence only
   means the files are kept as downloaded. The picked audio, manifest and
   credits are **committed** (a deploy hard-resets the checkout, so untracked
-  files would not survive); only `audio/candidates.json` and `audio/picker.html`
-  are ignored, both re-made by one `harvest`. The cue
+  files would not survive); only the build artefacts are ignored —
+  `audio/candidates.json` and `audio/picker.html`, re-made by one `harvest`,
+  and `audio/incompetech.sqlite3`, the local mirror of incompetech's catalogue
+  that `catalog build` remakes. The cue
   table is held to `engine.events.EVENT_KINDS` by `tests/audio`, so a new event
   kind fails the suite until someone decides whether it makes a noise. Only
   public-domain and attribution licences are accepted, and CC BY credits are an

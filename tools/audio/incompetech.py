@@ -276,13 +276,19 @@ def parse_bpm(v) -> int | None:
     238 rows say "0" and eight say null. Zero beats per minute is not a tempo
     — it is the same "no idea" the nulls are — so both land as None rather
     than as a number that would sort to the front of every tempo filter.
+
+    Anything else the field can hold is an unknown too, and that includes the
+    two strings `float` accepts and `int` then refuses: "inf" and "1e400" parse
+    and overflow, which is an `OverflowError` rather than the `ValueError` the
+    word "fast" raises. A parser whose job is surviving dirty input must not be
+    the thing that fails a build.
     """
     s = clean(v)
     if not s:
         return None
     try:
         n = int(float(s))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     return n if n > 0 else None
 

@@ -17,8 +17,9 @@ relations, because "pieces with a choir and no drums" is a join and not a
 substring search. `piece_fts` is an FTS5 index over title and description
 where the interpreter has FTS5, and a LIKE scan where it does not.
 
-The database is a **build artefact**: one command and one HTTP request rebuild
-it, so it is gitignored rather than committed. That is deliberately unlike
+The database is a **build artefact**: one command rebuilds it (two requests —
+the catalogue JSON, and the page whose lookup tables it is checked against), so
+it is gitignored rather than committed. That is deliberately unlike
 `audio/manifest.json`, which is on the runtime path and must survive a
 deploy's hard reset; nothing here is. `tools/` is a dev tier and the runtime
 imports none of it.
@@ -35,7 +36,7 @@ import datetime as _dt
 import json
 import sqlite3
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 from . import incompetech as I
 
@@ -191,7 +192,6 @@ class Stats:
     with_bpm: int = 0
     with_length: int = 0
     fts: bool = False
-    drift: tuple[str, ...] = field(default_factory=tuple)
 
     def lines(self) -> list[str]:
         out = [
@@ -210,16 +210,14 @@ class Stats:
                if self.non_canonical_feels else ""),
             f"  full-text index     {'FTS5' if self.fts else 'none — LIKE fallback'}",
         ]
-        out += [f"  lookup drift: {d}" for d in self.drift]
         return out
 
 
-def build(conn: sqlite3.Connection, rows, *, fetched_at: str | None = None,
-          drift: tuple[str, ...] = ()) -> Stats:
+def build(conn: sqlite3.Connection, rows, *, fetched_at: str | None = None) -> Stats:
     """Normalise raw catalogue rows into an empty connection. Returns `Stats`.
 
     The database is rebuilt whole rather than updated: it is derived from one
-    file, and a rebuild is one request. That is also why nothing here worries
+    file, and a rebuild is one command. That is also why nothing here worries
     about migrations.
     """
     conn.executescript(SCHEMA)
@@ -285,7 +283,6 @@ def build(conn: sqlite3.Connection, rows, *, fetched_at: str | None = None,
     stats.feels = len(feel_names)
     stats.non_canonical_feels = tuple(
         name for key, name in feel_names.items() if key not in canonical)
-    stats.drift = tuple(drift)
 
     conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?)", [
         ("source", I.CATALOG_URL),
@@ -316,7 +313,11 @@ def _canonical_names(lists) -> dict[str, str]:
     for names in lists:
         for name in names:
             counts.setdefault(name.casefold(), Counter())[name] += 1
-    return {key: max(c.items(), key=lambda kv: (kv[1], kv[0]))[0]
+    # `max` keeps the first of equally large items and a Counter counts in
+    # first-seen order, so a tie goes to the spelling the catalogue used first
+    # — not to the lexicographically greatest one, which would make a stray
+    # lowercase "tambourine" beat the "Tambourine" every other row spells.
+    return {key: max(c.items(), key=lambda kv: kv[1])[0]
             for key, c in sorted(counts.items())}
 
 
@@ -368,23 +369,43 @@ class Filters:
     desc: bool = False
 
 
+def _words(text: str) -> list[tuple[str, bool]]:
+    """The words a text filter asks for, each with whether it ended in "*".
+
+    Both search paths tokenise here, because both have to answer the same
+    question — every word must appear — and a phrase that means one thing
+    under FTS5 and another under the fallback would be worse than no fallback.
+    A text with no word in it at all ("*") yields none, and `search` refuses
+    it rather than quietly searching for everything.
+    """
+    out: list[tuple[str, bool]] = []
+    for word in text.split():
+        star = word.endswith("*")
+        body = word[:-1] if star else word
+        if body:
+            out.append((body, star))
+    return out
+
+
 def _fts_query(text: str) -> str:
     """A plain phrase as an FTS5 MATCH that cannot be a syntax error.
 
     Each word is quoted, so "-", ":" and "NOT" are searched for rather than
     obeyed; a trailing "*" is kept outside the quotes so prefix search still
-    works. Words AND, which is what someone typing two words means. Text with
-    no word in it at all ("*") yields "", and the caller drops the filter —
-    FTS5 raises on an empty MATCH.
+    works. Words AND, which is what someone typing two words means.
     """
-    parts = []
-    for word in text.split():
-        star = word.endswith("*")
-        body = word[:-1] if star else word
-        body = body.replace('"', '""')
-        if body:
-            parts.append(f'"{body}"' + ("*" if star else ""))
-    return " ".join(parts)
+    return " ".join('"' + body.replace('"', '""') + '"' + ("*" if star else "")
+                    for body, star in _words(text))
+
+
+def _like(value: str) -> str:
+    """A user's string as the body of a LIKE pattern, wildcards defused.
+
+    "%" and "_" are LIKE's own wildcards, so without this `--collection '%'`
+    returns the whole catalogue rather than nothing. Every LIKE below pairs
+    this with ESCAPE '\\'.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def search(conn: sqlite3.Connection, f: Filters) -> list[dict]:
@@ -393,19 +414,29 @@ def search(conn: sqlite3.Connection, f: Filters) -> list[dict]:
     args: list = []
 
     if f.text:
-        fts = bool(meta(conn).get("fts"))
-        match = _fts_query(f.text) if fts else ""
-        if match:
+        words = _words(f.text)
+        if not words:
+            # Every character was punctuation the search treats as syntax
+            # ("*"). Dropping the filter here would answer a question nobody
+            # asked — the whole catalogue, reported as a match — so say so.
+            raise ValueError(f"--text {f.text!r} holds no word to search for")
+        # Whether *this* interpreter can query the index, not whether the one
+        # that built the file could: a .sqlite3 is portable and FTS5 is an
+        # optional module, so `meta.fts` alone would MATCH against a table
+        # this SQLite cannot read.
+        if have_fts5(conn) and meta(conn).get("fts"):
             where.append("p.piece_id IN (SELECT rowid FROM piece_fts "
                          "WHERE piece_fts MATCH ?)")
-            args.append(match)
-        elif not fts:
-            # No FTS5 here: a LIKE scan over 1442 rows costs nothing, and the
-            # semantics match the catalogue page's own single-substring search.
-            where.append("(p.title LIKE ? OR p.description LIKE ?)")
-            args += [f"%{f.text}%"] * 2
-        # Otherwise FTS5 is present but the text held no word to search for
-        # ("*"), and an empty MATCH is a syntax error: ask for nothing.
+            args.append(_fts_query(f.text))
+        else:
+            # No FTS5 here: a LIKE scan over 1442 rows costs nothing. One
+            # clause per word, ANDed, because that is what MATCH does — a
+            # single `%dark forest%` would ask for the phrase and find nothing.
+            # A trailing "*" needs nothing: `%word%` is already a prefix match.
+            for body, _star in words:
+                where.append(r"(p.title LIKE ? ESCAPE '\' "
+                             r"OR p.description LIKE ? ESCAPE '\')")
+                args += [f"%{_like(body)}%"] * 2
 
     # One EXISTS per feel: N clauses ANDed is the AND, unambiguously.
     for name in f.feels:
@@ -424,8 +455,8 @@ def search(conn: sqlite3.Connection, f: Filters) -> list[dict]:
     for name in f.instruments:
         where.append("EXISTS (SELECT 1 FROM piece_instrument pi JOIN instrument ins "
                      "ON ins.instrument_id = pi.instrument_id "
-                     "WHERE pi.piece_id = p.piece_id AND ins.key LIKE ?)")
-        args.append(f"%{name.casefold()}%")
+                     r"WHERE pi.piece_id = p.piece_id AND ins.key LIKE ? ESCAPE '\')")
+        args.append(f"%{_like(name.casefold())}%")
 
     if f.genres:
         where.append(f"(g.name COLLATE NOCASE IN ({_marks(f.genres)}) "
@@ -433,16 +464,24 @@ def search(conn: sqlite3.Connection, f: Filters) -> list[dict]:
         args += list(f.genres)
         args += [_int_or_none(x) for x in f.genres]
     if f.collections:
-        where.append("(" + " OR ".join(["c.name LIKE ?"] * len(f.collections)) + ")")
-        args += [f"%{n}%" for n in f.collections]
+        where.append("(" + " OR ".join(
+            [r"c.name LIKE ? ESCAPE '\'"] * len(f.collections)) + ")")
+        args += [f"%{_like(n)}%" for n in f.collections]
     if f.categories:
-        where.append("(" + " OR ".join(["c.category LIKE ?"] * len(f.categories)) + ")")
-        args += [f"%{n}%" for n in f.categories]
+        where.append("(" + " OR ".join(
+            [r"c.category LIKE ? ESCAPE '\'"] * len(f.categories)) + ")")
+        args += [f"%{_like(n)}%" for n in f.categories]
 
     # A NULL bpm or length is "the catalogue does not know", so a range must
     # not return it — SQL does that for us, and `--bpm-unknown` is how you ask
     # for those rows on purpose.
     if f.bpm_unknown:
+        if f.bpm_min is not None or f.bpm_max is not None:
+            # Silently winning would report a tempo range that was never
+            # applied: these ask for opposite things, so neither wins.
+            raise ValueError("--bpm-unknown asks for the pieces with no tempo at "
+                             "all, so it cannot be combined with --bpm-min or "
+                             "--bpm-max")
         where.append("p.bpm IS NULL")
     else:
         if f.bpm_min is not None:
@@ -457,6 +496,13 @@ def search(conn: sqlite3.Connection, f: Filters) -> list[dict]:
     if f.length_max is not None:
         where.append("p.length_s <= ?")
         args.append(f.length_max)
+    # `uploaded` is stored as an ISO date and compared as text, so a bound
+    # that is not one compares wrong rather than failing: "2019" sorts before
+    # "2019-01-01" and quietly excludes the whole year it looks like it asks
+    # for. Same shape `parse_date` holds the column itself to.
+    for flag, bound in (("--since", f.uploaded_from), ("--until", f.uploaded_to)):
+        if bound and I.parse_date(bound) is None:
+            raise ValueError(f"{flag} {bound!r} is not a date; write it YYYY-MM-DD")
     if f.uploaded_from:
         where.append("p.uploaded >= ?")
         args.append(f.uploaded_from)
@@ -534,11 +580,11 @@ def hms(secs) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def format_rows(rows: list[dict], *, wide: bool = False) -> str:
+def format_rows(rows: list[dict]) -> str:
     """A readable table. `--json` is the scriptable form; this one is for eyes."""
     if not rows:
         return "no pieces match"
-    width = 44 if wide else 34
+    width = 34
     out = [f"{'TITLE':<{width}} {'LEN':>7} {'BPM':>4}  {'GENRE':<17} "
            f"{'COLLECTION':<20} FEELS"]
     for r in rows:

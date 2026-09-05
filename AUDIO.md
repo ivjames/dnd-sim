@@ -26,8 +26,9 @@ open audio/picker.html                  # audition, assign, tune, Copy configura
 **The picked audio is committed.** `audio/assets/`, `manifest.json`,
 `CREDITS.md` and the `config.json` that produced them are tracked, because a
 deploy hard-resets the checkout from git and anything untracked would not
-survive one. Only two build artefacts are ignored — `candidates.json` (a search
-dump) and `picker.html` (generated from it), both re-made by one `harvest`.
+survive one. Only the build artefacts are ignored — `candidates.json` (a search
+dump) and `picker.html` (generated from it), both re-made by one `harvest`, and
+the catalogue database below, re-made by one `catalog build`.
 That makes size a real cost, which is half of why `fetch` re-encodes: a
 five-minute bed off incompetech is ~10 MB as published and about a fifth of
 that afterwards.
@@ -94,7 +95,7 @@ all**. Those are exactly the axes a bed is chosen on.
 So the catalogue gets a local database:
 
 ```bash
-.venv/bin/python -m tools.audio catalog build          # one request, ~1 MB, no key
+.venv/bin/python -m tools.audio catalog build          # two requests, ~1 MB, no key
 .venv/bin/python -m tools.audio catalog query \
     --feel Dark --feel Mysterious --bpm-max 90 --min-length 3:00 --sort bpm
 ```

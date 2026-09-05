@@ -14,8 +14,9 @@
               catalogue's own page does not offer (tempo, duration, date)
 
 Everything writes under `audio/` unless told otherwise. What lands there is
-tracked apart from the two build artefacts — see AUDIO.md, which also carries
-the licence rules and the levelling profiles.
+tracked apart from the build artefacts — `candidates.json`, `picker.html` and
+the catalogue database — see AUDIO.md, which also carries the licence rules and
+the levelling profiles.
 """
 
 from __future__ import annotations
@@ -102,10 +103,18 @@ DEFAULT_DB = DEFAULT_OUT / "incompetech.sqlite3"
 
 
 def _duration(text: str) -> int:
-    """A duration as seconds, written "210", "3:30" or "1:02:03"."""
+    """A duration as seconds, written "210", "3:30" or "1:02:03".
+
+    A bad one is a `ValueError` with the accepted forms in it, because the
+    caller turns that into a message; unhandled it is a traceback over a typo.
+    """
     total = 0
     for part in str(text).split(":"):
-        total = total * 60 + int(part or 0)
+        try:
+            total = total * 60 + int(part or 0)
+        except ValueError:
+            raise ValueError(f"{text!r} is not a duration; write it as 210, "
+                             "3:30 or 1:02:03") from None
     return total
 
 
@@ -207,30 +216,38 @@ def _cmd_catalog_query(args) -> int:
         print(f"no database at {args.db}; run `python -m tools.audio catalog build` first",
               file=sys.stderr)
         return 2
-    f = CAT.Filters(
-        text=args.text,
-        feels=tuple(args.feel),
-        feels_any=tuple(args.feel_any),
-        instruments=tuple(args.instrument),
-        genres=tuple(args.genre),
-        collections=tuple(args.collection),
-        categories=tuple(args.category),
-        bpm_min=args.bpm_min,
-        bpm_max=args.bpm_max,
-        bpm_unknown=args.bpm_unknown,
-        length_min=_duration(args.min_length) if args.min_length else None,
-        length_max=_duration(args.max_length) if args.max_length else None,
-        uploaded_from=args.since,
-        uploaded_to=args.until,
-        limit=args.limit,
-        sort=args.sort,
-        desc=args.desc,
-    )
+    try:
+        f = CAT.Filters(
+            text=args.text,
+            feels=tuple(args.feel),
+            feels_any=tuple(args.feel_any),
+            instruments=tuple(args.instrument),
+            genres=tuple(args.genre),
+            collections=tuple(args.collection),
+            categories=tuple(args.category),
+            bpm_min=args.bpm_min,
+            bpm_max=args.bpm_max,
+            bpm_unknown=args.bpm_unknown,
+            length_min=_duration(args.min_length) if args.min_length else None,
+            length_max=_duration(args.max_length) if args.max_length else None,
+            uploaded_from=args.since,
+            uploaded_to=args.until,
+            limit=args.limit,
+            sort=args.sort,
+            desc=args.desc,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
     conn = CAT.connect(args.db)
     try:
         rows = CAT.search(conn, f)
         total = CAT.count(conn, f)
         info = CAT.meta(conn)
+    except ValueError as exc:       # a filter that cannot mean anything
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     finally:
         conn.close()
 
