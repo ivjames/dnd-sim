@@ -162,6 +162,30 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   lines from the droplet, with `.env` sourced first the way `run.sh` does
   (`--dry-run` anywhere else; `--ab --out DIR` renders the monster line both
   ways to listen to, which is the only way to judge it).
+  **The treatment is seventeen knobs now, and fourteen of them nothing deals.**
+  `EFFECT_CHAIN` in `tts/dsp.py` is the list and the order a signal chain wants
+  them in — sub-octave and breath, then the nonlinearities, the filters,
+  modulation, the room, and the two that chop the level last — and `FIELDS` is
+  the bounds, read by the clamp, by the cache token and by the lab's sliders
+  rather than by a second list that would drift. What the casting deals has not
+  moved: `voices.py` still gives a monster `size_pct` from its SRD size band and
+  grit and a room from the hash, so no monster on the site sounds different than
+  it did. The other fourteen are reachable only through a `Tune` — the voice lab
+  — deliberately, because what a gnoll or an ooze or a swarm should sound like
+  is settled by ear before it is written into the casting; **which creature
+  types get dealt which of them is the next decision and is not made.**
+  `formant_pct` is the one worth naming: a single peaking bell, a cue rather
+  than a transform, and the only knob here that moves an emphasis without moving
+  pitch with it — which is the axis `vocal-tract-length` owned, bought back in
+  part. **Editing `dsp.py` retires every monster clip on disk**, because
+  `MonsterFX.token()` folds in a hash of the module's own source: a changed
+  curve must not go on being served from a key that still describes it
+  correctly. The dealt monsters re-render identically — same three knobs, same
+  arithmetic — but they do re-render, and Polly charges the neural rate for each
+  again; a one-off, bounded by dialogue, costed in `TTS-COSTS.md` §6. The token
+  spells only what is dealt (`fx:size=20,growl=55:<fp>`) instead of joining
+  every field positionally, so adding a knob nobody turned on moves no key by
+  itself.
   **A party spec states `pronouns`, not a gender.** `he/him` narrows the pool
   to Polly's male voices, `she/her` to its female ones, and `they/them` — or
   any other set, or nothing said — is dealt from the whole roster, because the

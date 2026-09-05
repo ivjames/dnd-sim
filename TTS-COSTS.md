@@ -492,3 +492,41 @@ once more. It is bounded by dialogue, which is a small share of a game's
 characters — every mechanics and narration clip keeps its key. The orphans are
 not deleted; `AudioCache.prune` is size-triggered LRU, so they wait until the
 directory passes its ceiling and are then the first to go.
+
+### Fourteen more knobs, and the clip cache turning over once
+
+The treatment `tts/dsp.py` shipped with was three effects — size, grit, a stone
+room — and it is seventeen now: `FIELDS` holds every knob with its bounds and
+`EFFECT_CHAIN` the order a signal chain wants them applied in.
+
+**None of that changes what a game costs**, because none of it changes what a
+game renders. All fourteen new knobs default to 0, and `tts/voices.py` still
+deals a monster exactly what it dealt before — a `size_pct` from the creature's
+SRD size band, grit and a room from the hash of its voice key. The fourteen are
+reachable only through a `Tune`, which is to say the voice lab, so they are
+heard before they are dealt; what a creature type should be given is the open
+question here and is deliberately not answered in the code.
+
+**There is a one-off, and it is the cache turning over.** `MonsterFX.token()`
+folds in `source_fingerprint()`, a digest of `dsp.py`'s own source, so any edit
+to that module orphans every monster clip already on disk. Currently-dealt
+monsters re-render byte-identically — same three knobs, same arithmetic — but
+what the cache holds is the treated WAV, not the speech underneath it, so an
+orphaned key is a fresh `SynthesizeSpeech` billed at the neural $16/1M like any
+other rather than a second pass over audio already on disk. It is the same shape
+as the attribution rewording above and bounded the same way: monsters are a
+small share of a game's spoken characters, as the engine split noted, every
+narration and mechanics clip keeps its key, and the orphans are not deleted but
+wait for `AudioCache.prune`'s size-triggered LRU. Every edit to the module pays
+it again, which is a reason to land the effects together rather than one at a
+time.
+
+**The CPU cost is unchanged and is still paid once per distinct line.** The
+dealt three-knob treatment measures ~90 ms for a 20-second clip in pure Python
+(the ~150 ms above was measured on other hardware; the arithmetic has not
+changed), and a size-only monster — most of them — is still answered without a
+pass over the samples at all. What a fully-dealt treatment costs cannot be
+measured yet: the fourteen new effects are stubs raising `NotImplementedError`
+as this is written. The chain applies one function per dealt knob, each a pass
+or a few over the clip, so the cost should grow with how many a creature is
+given, not with how many exist.
