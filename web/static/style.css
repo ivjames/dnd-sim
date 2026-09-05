@@ -301,6 +301,36 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible {
 .modal-card .lbl { display: block; margin: 12px 0 4px; }
 .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.modal-card-wide { max-width: 620px; }
+
+/* ---------- voice lab ---------- */
+.vl-rows { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 4px; }
+.vl-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "head head" "voice reset" "sliders sliders";
+  gap: 6px 10px;
+  padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--bg-sunken);
+}
+.vl-head { grid-area: head; display: flex; align-items: center; gap: 8px; }
+.vl-name { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+.vl-tag { font-size: 10px; }
+.vl-head .btn { margin-left: auto; }
+.vl-voice { grid-area: voice; font-family: var(--mono); font-size: 13px; }
+.vl-auto { grid-area: reset; align-self: center; }
+.vl-sliders { grid-area: sliders; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.vl-slider { display: grid; grid-template-columns: 38px 1fr 34px; align-items: center; gap: 6px; }
+.vl-slabel { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+.vl-val { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); text-align: right; }
+/* the global input reset strips a range's track/thumb in WebKit — put them back */
+.vl-slider input[type="range"] {
+  width: 100%; min-height: 0; padding: 0; background: none; border: 0;
+  -webkit-appearance: auto; appearance: auto; accent-color: var(--amber);
+}
+@media (max-width: 560px) {
+  .vl-sliders { grid-template-columns: 1fr; }
+}
 
 /* ---------- responsive: iPad portrait & phones ---------- */
 @media (max-width: 1100px) {

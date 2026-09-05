@@ -34,6 +34,8 @@
         <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
       <button id="voice-skip" class="btn btn-small" type="button" disabled
               title="Skip the line being read">skip</button>
+      <button id="voice-lab" class="btn btn-small" type="button"
+              title="Hear each role and set its voice, pitch and rate">voices&hellip;</button>
       <span id="voice-hint" class="pill pill-quiet" hidden>tap to start</span>
     </div>
     <div id="cost-meter" class="cost" title="Spend against budget">
@@ -148,6 +150,25 @@
         <button type="submit" id="ng-start" class="btn btn-primary">Start game</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- VOICE LAB -->
+<div id="voicelab" class="modal" hidden>
+  <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="vl-title">
+    <h2 id="vl-title">Voice lab</h2>
+    <p class="hint">Give each role a voice you can tell apart. <b>test</b> speaks a sample,
+      the sliders take effect as you move them, and <b>auto</b> hands the row back to the
+      automatic pick. Choices are saved on this device and used for the narration; the
+      slow/normal/fast setting in the top bar still multiplies the rate below.</p>
+    <p id="vl-novoices" class="hint" hidden>This browser has not reported any voices yet.
+      Close the lab and open it again in a moment.</p>
+    <div id="vl-rows" class="vl-rows"></div>
+    <p id="vl-empty" class="hint" hidden>Party voices appear here once a game is loaded.</p>
+    <div class="modal-actions">
+      <button type="button" id="vl-reset" class="btn">Reset all</button>
+      <button type="button" id="vl-close" class="btn btn-primary">Done</button>
+    </div>
   </div>
 </div>
 
