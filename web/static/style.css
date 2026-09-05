@@ -70,15 +70,16 @@
      it is declared once here and re-declared only by the size queries at the
      foot of the file.
 
-     The middle term is arithmetic, not taste: 470px is what the page owes
-     everything that is not the board — the top bar, the padding and the gaps,
-     the row of narration and controls, and the transcript's own 220px floor —
-     and the board takes what is left. So it grows with the viewport exactly as
-     fast as it can without pushing the transcript under its floor and the page
-     into a scroll. Clamped at both ends because a board under ~300px is a map
-     the size of a stamp, and over ~640px the map has stopped needing the
-     height and the transcript has better uses for it. */
-  --board-h: clamp(300px, calc(100vh - 470px), 640px);
+     The middle term is arithmetic, not taste: 560px is what the page owes
+     everything above the fold that is not the board — the top bar, the padding
+     and the gaps, the thin narration bar, and the transcript's own 340px floor
+     — and the board takes what is left. The score and the controls are NOT in
+     that sum: they are a card column under the narration bar and are allowed
+     below the fold, which is where the transcript's extra height came from.
+     Clamped at both ends because a board under ~280px is a map the size of a
+     stamp, and over ~560px the map has stopped needing the height and the
+     transcript has better uses for it. */
+  --board-h: clamp(280px, calc(100vh - 560px), 560px);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -248,8 +249,12 @@ body {
    the fold, and the roster scrolls inside itself instead.
 
    Under it the FEED: the transcript, which takes what the viewport has left
-   over and scrolls internally so a live game never lengthens the page, and
-   beneath that the narrator's transport with the table controls beside it. */
+   over and scrolls internally so a live game never lengthens the page; then
+   the narrator's transport as one thin bar the full width of it; then the
+   score and the table controls as a column of cards. Those two are the only
+   things on the page allowed under the fold — they are set once a game is
+   running and read rarely after, and the height they used to hold beside the
+   narration bar is worth more to the story. */
 .layout {
   flex: 1 1 auto;
   display: flex; flex-direction: column; gap: 12px;
@@ -263,18 +268,23 @@ body {
    takes what is left. On a wide screen the map stops at 60% of the board so
    the two panels stay a pair rather than a picture with a margin.
 
-   The board is also the one band on the page that may SHRINK: whatever the
-   feed actually needs — a transcript at its floor, and a controls panel that
-   is 150px taller once a write token is in — comes out of the board rather
-   than out of the bottom of the viewport, down to the floor below. */
+   Its height is `--board-h` and it neither grows nor shrinks. It used to give
+   way to whatever the feed asked for, which was right while the whole feed had
+   to fit above the fold; now that the score and the controls are allowed below
+   it, shrinking the map bought nothing — the page scrolled anyway and the map
+   was smaller for it. Spare height goes to the transcript instead, which is
+   the only thing on the page that can use an arbitrary amount of it. */
 .board {
   /* Painted above the feed, though the feed is written first: see the source
      order note in index.html. */
   order: 1;
   display: grid; gap: 12px;
   grid-template-columns: minmax(260px, min(var(--board-h), 60%)) minmax(0, 1fr);
-  flex: 0 1 var(--board-h);
-  min-height: 260px;
+  /* `min-height: 0` because a flex item's automatic minimum is its content,
+     and the map's own content minimum is taller than the short-viewport
+     `--board-h`: without this the board quietly ignores the smaller sizes the
+     queries at the foot of the file ask it for. */
+  flex: 0 0 var(--board-h); min-height: 0;
 }
 .quad {
   display: flex; flex-direction: column;
@@ -294,12 +304,12 @@ body {
    `auto` basis the feed would ask for the whole transcript, thousands of
    pixels of it, and take the board with it. */
 .feed { order: 2; flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
-/* Narration and controls share the line under the transcript; with no
-   narration on this game the controls take the whole of it. */
-.under { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; flex: 0 0 auto; }
-.under > #voice-panel { flex: 3 1 380px; }
-.under > #score-panel { flex: 1 1 240px; }
-.under > .panel-controls { flex: 1 1 300px; }
+/* A column, not a row: the narration bar is the full width of the transcript
+   and only as tall as its transport, and the score and the controls stack
+   beneath it as cards. Side by side they were three columns of a panel each,
+   and the tallest of them — the controls, once a write token is in — set the
+   height of the whole band and took it off the transcript. */
+.under { display: flex; flex-direction: column; gap: 12px; flex: 0 0 auto; }
 
 .panel {
   background: var(--bg-panel);
@@ -438,9 +448,27 @@ body {
   min-height: 0;
   padding-right: 6px;
 }
-/* The basis is the floor, not the content: this is what the feed asks the
-   board for, and it grows from there into whatever the viewport has spare. */
-.feed .panel-fill { flex: 1 1 220px; min-height: 220px; }
+/* The basis is what the viewport has left once the board and everything above
+   the narration bar is placed, so the bar lands on the fold and the transcript
+   takes all the height a tall screen has rather than sitting at a fixed floor
+   with the page scrolled. 151px is measured, not guessed: the top bar, the
+   page padding, the two gaps and the narration bar itself. It only has to be
+   about right — the basis flexes, and the floor below is what a short viewport
+   actually gets. Under the fold from here on is the card column. */
+.feed .panel-fill {
+  flex: 1 1 calc(100vh - 151px - var(--board-h));
+  min-height: 340px;
+}
+/* A game with no narration has no bar under the transcript, and the 68px it
+   would have taken is the transcript's. `:has` or nothing: a browser without
+   it simply leaves the gap, which is the layout as it was a line above. The
+   query is not decoration — a phone sets this panel from `height` further
+   down, and a bare `flex-basis` here would beat it. */
+@media (min-width: 641px) {
+  .feed:has(> .under > #voice-panel[hidden]) .panel-fill {
+    flex-basis: calc(100vh - 83px - var(--board-h));
+  }
+}
 .transcript-tools {
   display: flex; gap: 14px; align-items: center;
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -565,7 +593,12 @@ body {
 .btn-danger { border-color: var(--danger); color: var(--danger); }
 .btn-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 .btn-theme { font-family: var(--mono); text-transform: lowercase; min-width: 62px; }
-.note-form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+/* The form is a column of full-width fields, and the card it sits in is now
+   the width of the page: capped, or a two-line note gets a 1400px box and the
+   Send button stretches into a banner. `align-self` keeps the button the size
+   of its label rather than the size of the field above it. */
+.note-form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-width: 560px; }
+.note-form .btn { align-self: flex-start; }
 .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-dim); }
 .chk { font-size: 12px; color: var(--ink-dim); font-family: var(--mono); cursor: pointer; }
 
@@ -605,13 +638,17 @@ body {
 .transcript.voice-clickable .dmnote { cursor: pointer; }
 
 /* ---------- narration transport ----------
-   Under the transcript and the width of it, so the row reads left to right as
-   one sentence: what it is, the transport, the line being read, the settings.
+   Under the transcript and the full width of it, so the row reads left to
+   right as one sentence: what it is, the transport, the line being read, the
+   settings. One line tall wherever the width allows — the padding is trimmed
+   and nothing inside it is taller than a transport button — because every
+   pixel of it comes off the transcript above.
    `display: flex` beats the UA stylesheet's `[hidden]`, so the hidden case is
    spelled out — without it a page with no narration shows an empty bar. */
 #voice-panel {
   display: flex; flex-wrap: wrap; align-items: center;
-  gap: 8px 16px;
+  gap: 6px 16px;
+  padding: 6px 11px;
 }
 #voice-panel[hidden] { display: none; }
 #voice-panel .panel-title { margin: 0; flex: 0 0 auto; }
@@ -623,7 +660,7 @@ body {
 .btn-live { font-size: 12px; font-family: var(--mono); }
 .btn-transport.on { border-color: var(--accent); color: var(--accent); }
 .vt-now {
-  flex: 1 1 170px; margin: 0; min-height: 2.4em;
+  flex: 1 1 170px; margin: 0; min-height: 0;
   display: flex; align-items: center;
   font-size: 12px; font-family: var(--mono); color: var(--ink-dim);
   overflow-wrap: anywhere;
@@ -800,10 +837,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 @media (max-height: 820px) {
   /* Under this there is nothing left to give — the floors alone come to more
      than the viewport — so the board takes a fixed slice of it and the page
-     scrolls the last of the controls rather than squeezing the map away. */
-  :root { --board-h: clamp(260px, 40vh, 420px); }
+     scrolls the card column rather than squeezing the map away. */
+  :root { --board-h: clamp(240px, 36vh, 380px); }
   .board { grid-template-columns: minmax(230px, 22vw) minmax(0, 1fr); }
-  .feed .panel-fill { flex: 1 1 200px; min-height: 200px; }
+  .feed .panel-fill { min-height: 300px; }
 }
 @media (max-width: 640px) {
   /* Map over roster, both full width, and the transcript above them: neither
@@ -820,7 +857,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   .roster { columns: auto 1; }
   .feed { order: 0; flex: 0 0 auto; min-height: auto; }
   :root { --board-h: 300px; }
-  .feed .panel-fill { flex: 0 0 auto; height: 58vh; min-height: 280px; }
+  .feed .panel-fill { flex: 0 0 auto; height: 66vh; min-height: 320px; }
   .row, .row-4 { grid-template-columns: 1fr; }
   /* three columns leave a phone about 90px for the name; stack instead */
   .party-seat { grid-template-columns: 1fr 1fr; }
@@ -837,7 +874,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
    live somewhere a listener can actually read them: most of the pack is CC BY,
    and attribution is a condition of playing it at all, not a nicety. Closed by
    default — it is a list nobody needs open, but it must be one click away
-   whenever the music is on. */
+   whenever the music is on. It sits in the card column under the narration
+   bar, above the controls, and may be under the fold: a credit has to be
+   reachable, not permanently on screen. */
 #score-panel { display: flex; flex-direction: column; gap: 4px; }
 #score-panel[hidden] { display: none; }
 #score-now { flex: 0 0 auto; min-height: 0; }
