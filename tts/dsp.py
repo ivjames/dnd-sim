@@ -10,12 +10,24 @@ This module is the trade in the other direction: monsters render on whatever
 engine the table uses, and the size of the creature is made here, out of the
 audio, after Polly has finished with it.
 
-Three things make that cheap enough to do in Python, in the request, with no
-new dependency:
+What that costs is worth being exact about, because the module has grown:
+there are seventeen knobs here (`FIELDS`), sixteen of which are a pass over
+the samples (`EFFECT_CHAIN`). The **casting deals three of them** — size,
+growl, room — and has since there were only three; the other fourteen are
+character rather than size and are reachable only through a `Tune`, which is
+the voice lab, so that what a creature type should sound like is settled by
+ear before it is written into `voices.py`. A monster taken off the casting
+today therefore pays for at most two passes over its audio, and the thirteen
+sliders it has never been dealt cost it nothing.
+
+Three things keep even the top of that affordable in Python, in the request,
+with no new dependency:
 
   * **A clip is synthesized once and cached forever** (`tts/cache.py`), so this
     runs once per distinct line and never again — not once per playback, and
-    not once per spectator.
+    not once per spectator. Everything below is amortized over every spectator
+    who ever hears that line, which is the fact that makes a per-sample Python
+    loop a reasonable thing to write at all.
   * **The size shift costs nothing at all.** Playing a recording at a different
     sample rate scales the whole spectrum — pitch *and* formants together,
     which is what "a bigger creature" means and is what VTL was bought for — so
@@ -24,9 +36,15 @@ new dependency:
     would. What it also scales is duration, and that is undone before the audio
     exists: `<prosody rate>` is supported on every engine we use, so the line
     is spoken faster by exactly the factor the playback rate will slow it by
-    (`MonsterFX.rate_pct`).
-  * **Only the character effects touch samples**, and a monster gets at most
-    two of them.
+    (`MonsterFX.rate_pct`). A treatment that is only a size shift is answered
+    by `apply` without reading a sample, and most of them are.
+  * **A monster pays only for what it is dealt.** Every effect is skipped
+    unless its knob is non-zero, and each is one pass: measured on a 14-second
+    clip (224,000 samples), the cheap ones — the combs, the gate — are under
+    10 ms and the dear ones — the granular sub-octave, the four-stage phaser —
+    are 60-70 ms. All sixteen at once, which nothing on the casting does and
+    only the voice lab can even ask for, is about half a second. The two knobs
+    a monster actually gets are a few tens of milliseconds, once, ever.
 
 `pcm` is the one Polly output format that is decodable without a codec:
 "signed 16-bit, 1 channel (mono), little-endian format", at 8000 or 16000 Hz
@@ -44,6 +62,7 @@ app. `tts/voices.py` deals the treatment, this applies it.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 import sys
 from array import array
@@ -92,6 +111,197 @@ MAX_DRIVE = 5.0
 #: any fb < 1), and well below it in practice: at 0.6 the peak gain is 2.5x and
 #: everything else in the clip is normalized down to make room for it.
 MAX_FEEDBACK = 0.6
+
+# -- the character effects' constants ---------------------------------------
+# Every one of these is a number picked for a 16 kHz clip of a human voice,
+# and the doc-comment is where the picking is recorded: the value on its own
+# is unarguable-with, and someone who wants a different monster needs to know
+# what the current one was aiming at before they move it.
+
+#: The grain the sub-octave is built from. It has to hold several cycles of
+#: the thing it is halving — a 180 Hz fundamental is 5.6 ms, so 50 ms is nine
+#: of them — or the half-speed read has a fragment rather than a waveform. The
+#: ceiling is the other way: a grain much longer than a phoneme cross-fades
+#: one sound over the next and the line stops being words. 50 ms is the usual
+#: granular compromise and this is no cleverer than usual.
+SUBOCTAVE_GRAIN_S = 0.050
+
+#: How much sub-octave is mixed under a dry voice held at 1.0, at
+#: `suboctave_pct = 100`. Under, never level with: the intelligibility of the
+#: line is the dry signal's, and an octave-down grain train loud enough to
+#: compete with it stops being weight underneath a voice and becomes a second,
+#: worse voice.
+SUBOCTAVE_MAX_MIX = 0.75
+
+#: `_noise`'s generator, in full, at module level so that it is obvious there
+#: is no clock and no `random` in it. Numerical Recipes' LCG constants
+#: (`a = 1664525`, `c = 1013904223`, modulus 2**32): unremarkable arithmetic
+#: whose only virtues here are that it is four lines and that it will produce
+#: the same stream on every Python that ever runs this. The seed is a constant
+#: — any constant; this one is the golden-ratio word everyone's hash uses —
+#: because a clip is written to disk once and served for a year, and a breath
+#: that was different the second time it rendered would be a bug with no
+#: observer.
+NOISE_SEED = 0x9E3779B9
+NOISE_LCG_A = 1664525
+NOISE_LCG_C = 1013904223
+NOISE_LCG_M = 2 ** 32
+
+#: The breath envelope's time constant. Fast enough to open on a syllable
+#: (12 ms is well inside the ~40 ms a consonant occupies) and slow enough not
+#: to follow the waveform itself, which at 180 Hz would turn the follower into
+#: a rectifier and the breath into a buzz.
+NOISE_ENV_S = 0.012
+
+#: Breath depth at `noise_pct = 100`, against a voice at 1.0. Short of parity
+#: on purpose: at 1.0 the hiss is as loud as the vowel that shaped it, which
+#: reads as a broken recording rather than a damaged throat.
+NOISE_MAX_MIX = 0.6
+
+#: Where `_bandgrowl` splits. Below this is the vowel body — pitch, chest,
+#: everything a growl is made of; above it are the fricatives and stop bursts
+#: that carry which word was said. 800 Hz is under the second formant of every
+#: vowel and over almost no consonant energy, which is exactly the trade the
+#: split is for.
+BANDGROWL_SPLIT_HZ = 800.0
+
+#: How hard the low band is driven at `bandgrowl_pct = 100` — far past
+#: `MAX_DRIVE`, which is a limit on saturating the WHOLE signal and is set by
+#: what the consonants can survive. The consonants are not in this band, so
+#: they survive anything done to it.
+BANDGROWL_DRIVE = 12.0
+
+#: How far into the fold the signal is driven at `fold_pct = 100`. Above 1 the
+#: peaks reflect off the ceiling instead of leaning on it; at 3.2 a loud vowel
+#: folds twice and a quiet one not at all, so the effect arrives with the
+#: syllable rather than sitting under the whole line.
+FOLD_DRIVE = 3.2
+
+#: The corner of the DC blocker on `_rectify`'s wet path. `|x|` is
+#: one-sided, so rectification hands back a large DC offset along with the
+#: octave — inaudible, and it would eat the headroom `_to_pcm` then normalizes
+#: away, quietly costing the clip level. 20 Hz is under everything a voice
+#: does and above zero, which is the whole specification for a DC blocker.
+RECTIFY_DC_HZ = 20.0
+
+#: The one-pole highpass corner at either end of the slider, swept
+#: geometrically (frequency is heard in ratios, and a linear sweep would spend
+#: half the knob between 700 Hz and 1400 Hz). 25 Hz is below anything in a
+#: voice, so the bottom of the range is a DC blocker and audibly nothing;
+#: 1400 Hz has taken every vowel's first formant out and leaves a voice that
+#: is all edge and no chest.
+HIGHPASS_MIN_HZ = 25.0
+HIGHPASS_MAX_HZ = 1400.0
+
+#: `_formant`'s bell at full deflection. 9 dB is about the most a single
+#: peaking filter can add before it stops reading as a resonance of the
+#: speaker and starts reading as an EQ someone left on.
+FORMANT_GAIN_DB = 9.0
+
+#: Where the bell sits for a bigger creature and for a smaller one. 320 Hz is
+#: the first-formant region — the part of the spectrum a long vocal tract
+#: pushes energy into — and 2200 Hz is where a short one puts it, near the
+#: third formant, which is why a small speaker sounds bright rather than
+#: merely high. Neither centre moves with the knob; only the gain does.
+FORMANT_BIG_HZ = 320.0
+FORMANT_SMALL_HZ = 2200.0
+
+#: The bell's Q. 1.0 is a little under an octave wide: broad enough to be
+#: heard as a vocal tract rather than as a whistle at one frequency, narrow
+#: enough that it is still a formant and not a tilt.
+FORMANT_Q = 1.0
+
+#: The telephone band, and it is these two numbers rather than any other two
+#: because every listener alive has heard exactly this band and knows what it
+#: means. G.712's passband, borrowed whole.
+PHONE_LOW_HZ = 300.0
+PHONE_HIGH_HZ = 3400.0
+
+#: The vibrato rate. 5.5 Hz is where a singer's vibrato sits, which is the
+#: point: slower reads as a tape fault and faster as a tremolo on the wrong
+#: parameter. It is counted in heard time, so a creature shifted down wavers
+#: at the same rate as one shifted up.
+VIBRATO_HZ = 5.5
+
+#: The most the read pointer is moved at `vibrato_pct = 100`. A delay that
+#: sweeps 3 ms at 5.5 Hz is a peak pitch deviation of about 5% — a semitone,
+#: near enough — which is a voice not holding its shape rather than a voice
+#: singing.
+VIBRATO_DEPTH_S = 0.003
+
+#: How many all-pass sections the phaser cascades. Each is a whole pass over
+#: the clip, so this is a cost as much as a sound: four sections give two
+#: notches, which is the classic phaser everyone recognises, and the cost of
+#: the six that would give three is not worth the difference.
+PHASER_STAGES = 4
+
+#: The phaser's sweep rate and the band it sweeps. Slow — 0.45 Hz is one
+#: sweep every couple of seconds — because the effect is the movement, and a
+#: sentence is only a few seconds long: sweep it faster and a listener hears a
+#: warble instead of a slow wrongness. The band is the middle of the voice,
+#: where the notches land on something worth notching.
+PHASER_HZ = 0.45
+PHASER_MIN_HZ = 300.0
+PHASER_MAX_HZ = 2400.0
+
+#: How finely the swept coefficient is tabulated over one LFO cycle. The
+#: alternative is a `tan` per sample per stage — a million of them on a long
+#: clip — and 512 steps over a 2.2-second sweep moves the corner by well under
+#: a cent between steps, which is nothing anyone can hear.
+PHASER_TABLE = 512
+
+#: The feedforward comb's delay. 1.2 ms puts its first notch at about 420 Hz
+#: and the rest every 840 Hz above it — close enough together that the ear
+#: reads the comb as the timbre of the thing speaking rather than as a repeat
+#: of what it said. Anything past about 10 ms and this becomes `_slap`.
+METAL_DELAY_S = 0.0012
+
+#: The comb's gain at `metal_pct = 100`. Short of 1.0 so the notches are deep
+#: and not infinite: at exactly 1.0 the nulls are total and the vowel
+#: frequencies that land in one disappear outright.
+METAL_MAX_GAIN = 0.85
+
+#: The single early reflection. Under about 30 ms a reflection fuses with the
+#: sound that made it and is heard as a surface rather than as an echo, and
+#: 24 ms is inside that with room to spare. Deliberately not near
+#: `CAVE_DELAY_S`: the two are meant to stack into a room with a wall in it
+#: rather than to double one comb.
+SLAP_DELAY_S = 0.024
+
+#: The reflection's level at `slap_pct = 100`. A wall that returned as much as
+#: it was given would be a wall made of nothing, and it is one tap with no
+#: feedback, so this can be generous without ringing.
+SLAP_MAX_GAIN = 0.65
+
+#: The tremolo rate. 4.5 Hz is slow enough to be heard as pulsing — breath, or
+#: something not quite sustaining itself — and an order of magnitude below the
+#: ~20 Hz where amplitude modulation stops being a tremolo and becomes
+#: sidebands, which would be a ring modulator and a different effect.
+TREMOLO_HZ = 4.5
+
+#: How deep the pulse goes at `tremolo_pct = 100`. Not 1.0: full depth takes
+#: the voice to silence at the bottom of every cycle, which chops words in
+#: half rather than making them waver.
+TREMOLO_MAX_DEPTH = 0.9
+
+#: The stutter grid. 11 Hz is above the rate a syllable arrives at and below
+#: the ~20 Hz where a gate stops being rhythm and starts being a buzz, so what
+#: is heard is a voice made of more than one throat rather than a voice with a
+#: tone on top of it.
+STUTTER_HZ = 11.0
+
+#: How long each gate edge is ramped over. A hard gate on a 16 kHz clip
+#: clicks, and a click is the one artefact a listener hears as a broken file
+#: rather than as a monster; 4 ms is short enough to still read as a gate and
+#: long enough that there is no step in the waveform to click on.
+STUTTER_RAMP_S = 0.004
+
+#: How much of each window is gated, and how far down, at `stutter_pct = 100`.
+#: Both are short of everything: gating more than 60% of the grid, or all the
+#: way to silence, removes more of the line than a listener can reconstruct,
+#: and an unintelligible monster is a failed one however good the effect is.
+STUTTER_MAX_DUTY = 0.6
+STUTTER_MAX_CUT = 0.92
 
 
 #: Every knob, with the bounds it is clamped to. One table, because seventeen
@@ -446,8 +656,42 @@ def _suboctave(work: list[float], pct: int, rate: int) -> None:
     next to a phase vocoder and much cheaper — and mixed *under* the dry voice
     at `pct`, never replacing it, so the intelligibility of the line is the dry
     signal's and only the weight underneath it is this.
+
+    The hop is half a grain, which is why the window is Hann: two Hann windows
+    overlapped 50% sum to exactly 1, so the cross-fade neither dips nor bulges
+    between grains and no per-grain gain correction is needed. The first half
+    grain has only one window over it, so the sub-octave fades in over 25 ms
+    rather than starting at full weight — inaudible under a dry voice that
+    does not, and cheaper than the special case that would remove it.
+
+    Reading at half speed means the source index advances by a half sample,
+    which is either a sample or the midpoint of two — so the interpolation is
+    one branch and one average rather than the general fractional read
+    `_vibrato` needs.
+
+    Written into a separate buffer and added at the end: a grain reads samples
+    the write pointer has already passed, and reading them back out of `work`
+    would make this a feedback loop rather than a pitch shift.
     """
-    raise NotImplementedError
+    n = len(work)
+    grain = max(4, int(rate * SUBOCTAVE_GRAIN_S))
+    grain -= grain % 2          # even, so the half-grain hop is exact
+    half = grain // 2
+    window = [0.5 - 0.5 * math.cos(2.0 * math.pi * j / grain) for j in range(grain)]
+    sub = [0.0] * n
+    for start in range(0, n, half):
+        stop = min(grain, n - start)
+        for j in range(stop):
+            src = start + (j >> 1)
+            if j & 1:
+                nxt = src + 1 if src + 1 < n else src
+                value = 0.5 * (work[src] + work[nxt])
+            else:
+                value = work[src]
+            sub[start + j] += window[j] * value
+    mix = (pct / 100.0) * SUBOCTAVE_MAX_MIX
+    for i in range(n):
+        work[i] += mix * sub[i]
 
 
 def _noise(work: list[float], pct: int, rate: int) -> None:
@@ -459,8 +703,30 @@ def _noise(work: list[float], pct: int, rate: int) -> None:
     damaged throat. The generator is seeded from a constant, not from the
     clock or the id: a clip is cached, and a cached clip that was different the
     second time it was rendered would be a bug nobody could see.
+
+    The generator is written out here rather than taken from `random` for the
+    same reason it is not taken from the clock. `random`'s stream is a CPython
+    implementation detail and has moved between versions before; this one is
+    `x = (a·x + c) mod 2³²` with the constants in view, so the breath a clip
+    was rendered with is the breath it will be rendered with on any Python
+    that can run this file. (The modulus is a power of two, so the `and` mask
+    below is that `mod`, spelled the way that costs less.)
+
+    The follower is one pole with a single time constant rather than the usual
+    fast-attack/slow-release pair: the difference is audible on a compressor,
+    where the envelope is the gain, and not here, where it is the loudness of
+    a hiss underneath a voice that is louder.
     """
-    raise NotImplementedError
+    mix = (pct / 100.0) * NOISE_MAX_MIX
+    coefficient = 1.0 - math.exp(-1.0 / (rate * NOISE_ENV_S))
+    mask = NOISE_LCG_M - 1
+    scale = 2.0 / NOISE_LCG_M
+    state = NOISE_SEED
+    envelope = 0.0
+    for i, v in enumerate(work):
+        envelope += coefficient * ((v if v >= 0.0 else -v) - envelope)
+        state = (NOISE_LCG_A * state + NOISE_LCG_C) & mask
+        work[i] = v + mix * envelope * (state * scale - 1.0)
 
 
 def _bandgrowl(work: list[float], pct: int, rate: int) -> None:
@@ -471,8 +737,29 @@ def _bandgrowl(work: list[float], pct: int, rate: int) -> None:
     split at `BANDGROWL_SPLIT_HZ` with a one-pole, saturate the low half, add
     the untouched high half back. The same curve as `_saturate`, driven much
     harder, at an intelligibility cost of nearly nothing.
+
+    Same `_shape` and the same unity-scaling as `_saturate`, because it is the
+    same nonlinearity and a second curve here would be a second thing to keep
+    true. What is different is that the wet low band is cross-faded against the
+    dry one at `pct` rather than only driven harder: `_saturate` at drive 1 is
+    already a slight compression, which is fine as the bottom of a slider that
+    starts at "some growl" and wrong as the bottom of one that has to start at
+    nothing, since a knob at 1% would otherwise tilt the whole voice by the
+    2 dB the low band came up.
+
+    The high band is `x - low` rather than a second filter: complementary by
+    construction, so the two halves sum back to exactly the input when the
+    slider is at zero, which no pair of independently designed filters would.
     """
-    raise NotImplementedError
+    mix = pct / 100.0
+    drive = 1.0 + mix * (BANDGROWL_DRIVE - 1.0)
+    scale = PEAK / (_shape(drive) or 1.0)
+    coefficient = 1.0 - math.exp(-2.0 * math.pi * BANDGROWL_SPLIT_HZ / rate)
+    dry = 1.0 - mix
+    low = 0.0
+    for i, v in enumerate(work):
+        low += coefficient * (v - low)
+        work[i] = (v - low) + dry * low + mix * _shape(drive * low / PEAK) * scale
 
 
 def _fold(work: list[float], pct: int, rate: int) -> None:
@@ -483,8 +770,30 @@ def _fold(work: list[float], pct: int, rate: int) -> None:
     went in with rather than fewer, and the result reads as a thing wearing a
     voice rather than a person with a rough one. Triangular folding, `pct`
     setting how hard the signal is driven into the fold.
+
+    The fold is the triangle wave of the driven signal, which is what makes it
+    cheap: `(t + 1) mod 4` maps the whole real line onto one period, and one
+    subtract and one comparison bend that period into the triangle. No `asin`,
+    no table, and — because the triangle is bounded by ±1 by construction —
+    nothing here can hand `_to_pcm` a value it has to clip rather than scale,
+    however hard the drive is.
+
+    Cross-faded against the dry signal at `pct` as well as driven by it, so
+    that the bottom of the slider is the untreated voice exactly. Both, rather
+    than either alone: drive alone would leave a fold at 1% (the signal already
+    reaches ±1 at full scale, which is already the first fold), and mix alone
+    would put a fully folded signal at 1% weight, which is a quiet buzz added
+    to a voice rather than a voice beginning to fold.
     """
-    raise NotImplementedError
+    mix = pct / 100.0
+    dry = 1.0 - mix
+    drive = 1.0 + mix * (FOLD_DRIVE - 1.0)
+    for i, v in enumerate(work):
+        phase = (drive * v / PEAK + 1.0) % 4.0     # one period of the triangle
+        folded = phase - 1.0                       # rising limb: -1 .. +1
+        if folded > 1.0:
+            folded = 2.0 - folded                  # falling limb, reflected
+        work[i] = dry * v + mix * PEAK * folded
 
 
 def _rectify(work: list[float], pct: int, rate: int) -> None:
@@ -494,8 +803,23 @@ def _rectify(work: list[float], pct: int, rate: int) -> None:
     blended against the dry signal at `pct` it is an edge rather than a
     transformation. Cheap — one comparison a sample — and the only effect here
     that adds energy specifically at the top of the band.
+
+    Doubled and DC-blocked before it is blended. Doubled because `|x|` of a
+    sine has half the peak-to-peak swing of the sine, so an undoubled wet path
+    would arrive quieter than the dry one it is being crossfaded against and
+    the slider would read as a fade rather than as an effect. DC-blocked
+    because a one-sided signal carries a large offset that is inaudible and
+    still occupies headroom — `_to_pcm` normalizes on the peak, so the offset
+    would come straight off the level of the finished clip.
     """
-    raise NotImplementedError
+    mix = (pct / 100.0)
+    dry = 1.0 - mix
+    coefficient = 1.0 - math.exp(-2.0 * math.pi * RECTIFY_DC_HZ / rate)
+    offset = 0.0
+    for i, v in enumerate(work):
+        rectified = 2.0 * (v if v >= 0.0 else -v)
+        offset += coefficient * (rectified - offset)
+        work[i] = dry * v + mix * (rectified - offset)
 
 
 def _highpass(work: list[float], pct: int, rate: int) -> None:
@@ -506,8 +830,25 @@ def _highpass(work: list[float], pct: int, rate: int) -> None:
     incorporeal, or a long way off. The complement of the muffle that would
     take the metallic edge off `_cave`, and deliberately gentle: one pole, 6 dB
     an octave, because a steep highpass on a 16 kHz clip sounds like a fault.
+
+    The slide is geometric rather than linear because frequency is heard in
+    ratios: a linear sweep from 25 Hz to 1400 Hz spends its whole bottom half
+    above 700 Hz, where every step is already a big change, and its top half
+    doing nothing. Geometrically, each percent is the same musical interval and
+    the bottom of the slider is genuinely inaudible.
+
+    `y[n] = r·(y[n-1] + x[n] - x[n-1])` with `r = exp(-2π·fc/rate)`: one pole
+    strictly inside the unit circle for any positive corner, so the recursion
+    decays and cannot run away.
     """
-    raise NotImplementedError
+    corner = HIGHPASS_MIN_HZ * (HIGHPASS_MAX_HZ / HIGHPASS_MIN_HZ) ** (pct / 100.0)
+    pole = math.exp(-2.0 * math.pi * corner / rate)
+    last_in = 0.0
+    last_out = 0.0
+    for i, v in enumerate(work):
+        last_out = pole * (last_out + v - last_in)
+        last_in = v
+        work[i] = last_out
 
 
 def _formant(work: list[float], pct: int, rate: int) -> None:
@@ -522,8 +863,49 @@ def _formant(work: list[float], pct: int, rate: int) -> None:
 
     Gain scales with `|pct|` rather than the centre sliding, so 0 is no filter
     at all rather than a bell parked in the middle doing nothing audible.
+    That is not only a nicety about the slider: at `A = 1` the cookbook's
+    numerators and denominators are equal term by term, so the transfer
+    function is exactly 1 and the filter is provably transparent rather than
+    approximately so.
+
+    The coefficients are the peaking-EQ entry of the RBJ audio cookbook,
+    written out rather than reduced so they can be checked against it:
+
+        A     = 10^(dBgain/40)          amplitude, and note the /40 — a
+                                        peaking filter's gain is A² at the
+                                        centre, so A is the half of it
+        w0    = 2π·f0/rate              centre, in radians a sample
+        alpha = sin(w0)/(2·Q)           bandwidth
+
+        b0 = 1 + alpha·A    b1 = -2·cos(w0)    b2 = 1 - alpha·A
+        a0 = 1 + alpha/A    a1 = -2·cos(w0)    a2 = 1 - alpha/A
+
+    divided through by `a0` and run as direct form I. Stable for every A > 0,
+    Q > 0 and 0 < w0 < π: the poles of a peaking section sit inside the unit
+    circle by construction, which is why this is the filter to reach for and
+    not, say, a hand-rolled resonator.
     """
-    raise NotImplementedError
+    amount = abs(pct) / 100.0
+    centre = FORMANT_BIG_HZ if pct > 0 else FORMANT_SMALL_HZ
+    centre = min(centre, rate * 0.45)          # a bell above Nyquist is nonsense
+    amplitude = 10.0 ** ((FORMANT_GAIN_DB * amount) / 40.0)
+    w0 = 2.0 * math.pi * centre / rate
+    cosine = math.cos(w0)
+    alpha = math.sin(w0) / (2.0 * FORMANT_Q)
+    a0 = 1.0 + alpha / amplitude
+    b0 = (1.0 + alpha * amplitude) / a0
+    b1 = (-2.0 * cosine) / a0
+    b2 = (1.0 - alpha * amplitude) / a0
+    a1 = (-2.0 * cosine) / a0
+    a2 = (1.0 - alpha / amplitude) / a0
+    x1 = x2 = y1 = y2 = 0.0
+    for i, v in enumerate(work):
+        y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        x2 = x1
+        x1 = v
+        y2 = y1
+        y1 = y
+        work[i] = y
 
 
 def _phone(work: list[float], pct: int, rate: int) -> None:
@@ -533,8 +915,26 @@ def _phone(work: list[float], pct: int, rate: int) -> None:
     does to a voice and every listener has heard it. A one-pole pair rather
     than a steep filter, and blended against the dry signal at `pct` so the
     slider is a distance rather than a switch.
+
+    One pole each way is 6 dB an octave, which is a long way short of what a
+    real telephone did — and the blend is what makes that the right choice
+    rather than a compromise: the recognisable thing is the missing chest and
+    the missing air, not the steepness of the skirts, and a gentle band
+    cross-faded up sounds like the voice moving away into something, where a
+    steep one cross-faded up sounds like two signals.
     """
-    raise NotImplementedError
+    mix = pct / 100.0
+    dry = 1.0 - mix
+    low_coefficient = 1.0 - math.exp(-2.0 * math.pi * PHONE_HIGH_HZ / rate)
+    pole = math.exp(-2.0 * math.pi * PHONE_LOW_HZ / rate)
+    low = 0.0
+    last_in = 0.0
+    last_out = 0.0
+    for i, v in enumerate(work):
+        low += low_coefficient * (v - low)      # everything under 3400 Hz
+        last_out = pole * (last_out + low - last_in)   # ...minus everything under 300
+        last_in = low
+        work[i] = dry * v + mix * last_out
 
 
 def _vibrato(work: list[float], pct: int, rate: int) -> None:
@@ -544,8 +944,33 @@ def _vibrato(work: list[float], pct: int, rate: int) -> None:
     delay, linearly interpolated — a delay whose length is changing IS a pitch
     shift, which is the whole trick. `pct` is the depth. Unstable things:
     oozes, something not entirely holding its shape.
+
+    The delay swings from zero to the depth rather than either side of a fixed
+    centre, and does it with a raised cosine so it starts at zero. The obvious
+    arrangement — a few milliseconds of delay with the LFO either side of it —
+    would leave a constant delay at zero depth, which is inaudible but is not
+    the same samples, and a slider whose first percent shifts the whole clip by
+    a couple of milliseconds is a slider that cannot be tested for
+    transparency. Pitch follows the *rate of change* of the delay, so an offset
+    that does not move costs nothing and removing it costs nothing either.
+
+    Reads from a copy: the read pointer trails the write pointer, so reading
+    `work` itself would feed each output back into the next one.
     """
-    raise NotImplementedError
+    n = len(work)
+    source = work[:]
+    depth = (pct / 100.0) * VIBRATO_DEPTH_S * rate
+    step = 2.0 * math.pi * VIBRATO_HZ / rate
+    for i in range(n):
+        delay = 0.5 * depth * (1.0 - math.cos(step * i))
+        read = i - delay
+        if read <= 0.0:
+            work[i] = source[0]
+            continue
+        whole = int(read)
+        frac = read - whole
+        nxt = whole + 1 if whole + 1 < n else whole
+        work[i] = source[whole] + frac * (source[nxt] - source[whole])
 
 
 def _phaser(work: list[float], pct: int, rate: int) -> None:
@@ -555,8 +980,49 @@ def _phaser(work: list[float], pct: int, rate: int) -> None:
     an LFO at `PHASER_HZ`, summed with the dry signal so the moving phase
     becomes moving notches. Costs a pass per stage and sounds like nothing else
     in this module — incorporeal, planar, wrong in a way that is not grit.
+
+    Each section is `y[n] = c·x[n] + x[n-1] - c·y[n-1]`, with
+    `c = (1 - tan(π·f/rate)) / (1 + tan(π·f/rate))` the usual mapping from the
+    frequency where the section turns the phase through 90°. `tan` of a
+    positive angle under π/2 is positive, so `|c| < 1` for every corner in
+    band and the recursion is stable by construction.
+
+    `pct` scales only the sum, not the sweep: the wet path is built at full
+    depth and added at `pct`, so the slider is how deep the notches cut and
+    zero is the dry signal exactly. Sweeping the depth instead would move the
+    notches as well as flatten them, which is a different (and worse) effect
+    at every setting but the top.
+
+    The coefficient is tabulated over one LFO cycle and looked up, because the
+    alternative is `PHASER_STAGES` calls to `tan` per sample — four million on
+    a long clip, and the single most expensive thing this module would then do.
+    All four sections read the same table at the same index, which is what
+    makes the notches move together rather than smear.
     """
-    raise NotImplementedError
+    n = len(work)
+    corners = []
+    ratio = PHASER_MAX_HZ / PHASER_MIN_HZ
+    for k in range(PHASER_TABLE):
+        # A raised cosine over the table, swept geometrically for the same
+        # reason `_highpass` sweeps that way: the ear hears ratios.
+        lfo = 0.5 - 0.5 * math.cos(2.0 * math.pi * k / PHASER_TABLE)
+        corner = PHASER_MIN_HZ * ratio ** lfo
+        tangent = math.tan(math.pi * min(corner, rate * 0.45) / rate)
+        corners.append((1.0 - tangent) / (1.0 + tangent))
+    step = PHASER_TABLE * PHASER_HZ / rate
+    sweep = [corners[int(i * step) % PHASER_TABLE] for i in range(n)]
+    dry = work[:]
+    for _stage in range(PHASER_STAGES):
+        last_in = 0.0
+        last_out = 0.0
+        for i, v in enumerate(work):
+            coefficient = sweep[i]
+            last_out = coefficient * v + last_in - coefficient * last_out
+            last_in = v
+            work[i] = last_out
+    mix = pct / 100.0
+    for i in range(n):
+        work[i] = dry[i] + mix * work[i]
 
 
 def _metal(work: list[float], pct: int, rate: int) -> None:
@@ -566,8 +1032,17 @@ def _metal(work: list[float], pct: int, rate: int) -> None:
     taken out, at `METAL_DELAY_S`, which is short enough that what is heard is
     a timbre rather than a repeat. Where `_cave` is the room a creature stands
     in, this is the creature being made of something that rings. They stack.
+
+    Run backwards down the clip, which is what keeps it feedforward: the tap
+    reads a sample the loop has not reached yet, so it reads the input rather
+    than an output, and no copy of the clip is needed to say so. Going forward
+    in place would silently make this `_cave` with a very short delay — the one
+    mistake here that would still produce plausible audio.
     """
-    raise NotImplementedError
+    delay = max(1, int(rate * METAL_DELAY_S))
+    gain = (pct / 100.0) * METAL_MAX_GAIN
+    for i in range(len(work) - 1, delay - 1, -1):
+        work[i] += gain * work[i - delay]
 
 
 def _slap(work: list[float], pct: int, rate: int) -> None:
@@ -577,8 +1052,14 @@ def _slap(work: list[float], pct: int, rate: int) -> None:
     than as timbre, and near enough not to be heard as an echo. It is what
     tells a listener the creature is standing in front of something, which
     `_cave` says much more expensively.
+
+    Backwards for the same reason `_metal` is backwards: one tap, reading the
+    input, with no copy of the clip and no feedback path to argue about.
     """
-    raise NotImplementedError
+    delay = max(1, int(rate * SLAP_DELAY_S))
+    gain = (pct / 100.0) * SLAP_MAX_GAIN
+    for i in range(len(work) - 1, delay - 1, -1):
+        work[i] += gain * work[i - delay]
 
 
 def _tremolo(work: list[float], pct: int, rate: int) -> None:
@@ -588,8 +1069,16 @@ def _tremolo(work: list[float], pct: int, rate: int) -> None:
     heard as breathing or as something not quite sustaining itself, where the
     same modulation at audio rate would be ring modulation and a different
     effect entirely. Undead, oozes, a thing speaking on borrowed air.
+
+    A raised cosine rather than a plain sine, so the gain starts at 1 and dips:
+    the clip begins at full level whatever the depth is, and the first syllable
+    of a line is not sometimes half there depending on where the LFO's phase
+    happened to start.
     """
-    raise NotImplementedError
+    depth = (pct / 100.0) * TREMOLO_MAX_DEPTH
+    step = 2.0 * math.pi * TREMOLO_HZ / rate
+    for i in range(len(work)):
+        work[i] *= 1.0 - 0.5 * depth * (1.0 - math.cos(step * i))
 
 
 def _stutter(work: list[float], pct: int, rate: int) -> None:
@@ -603,8 +1092,48 @@ def _stutter(work: list[float], pct: int, rate: int) -> None:
     monster. Swarms, insect things, a voice made of more than one throat.
 
     Last in the chain: a gate ahead of `_cave` would cut the tail it just made.
+
+    Both at once — how much of the window and how far down — because either
+    alone is the wrong shape of knob. All the way down over a widening slice
+    chops syllables out from the first percent; a fixed slice fading down is a
+    tremolo with corners. Together they open as a shallow flutter and close as
+    a gate, which is the range the effect wants.
+
+    The window's gains are computed once and reused across the clip. The grid
+    is fixed and absolute — every window is identical — so this is a few
+    hundred cosines rather than a few hundred thousand, and the per-sample cost
+    is one multiply.
     """
-    raise NotImplementedError
+    n = len(work)
+    width = max(2, int(rate / STUTTER_HZ))
+    amount = pct / 100.0
+    closed = int(width * amount * STUTTER_MAX_DUTY)
+    floor = 1.0 - amount * STUTTER_MAX_CUT
+    ramp = min(max(1, int(rate * STUTTER_RAMP_S)), closed // 2)
+    if closed < 2 or ramp < 1:
+        # Too little of the window is gated to be worth a pass — which is
+        # where the bottom of the slider lands, and is a no-op rather than a
+        # special case for it.
+        return
+    open_until = width - closed
+    gains = []
+    for j in range(width):
+        if j < open_until:
+            gains.append(1.0)
+        elif j < open_until + ramp:
+            # Down over `ramp` samples: no step in the waveform, no click.
+            gains.append(1.0 + (floor - 1.0) * ((j - open_until + 1) / ramp))
+        elif j >= width - ramp:
+            # ...and back up, reaching 1.0 exactly as the window wraps.
+            gains.append(floor + (1.0 - floor) * ((j - (width - ramp) + 1) / ramp))
+        else:
+            gains.append(floor)
+    start = 0
+    while start < n:
+        stop = min(width, n - start)
+        for j in range(stop):
+            work[start + j] *= gains[j]
+        start += width
 
 
 def wav(pcm: bytes, rate: int) -> bytes:

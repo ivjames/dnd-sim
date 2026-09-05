@@ -1160,13 +1160,82 @@ def test_the_roster_reports_the_bounds_a_control_may_offer(tts_client, tts):
     assert body["limits"]["pitch"]["max"] == PITCH_MAX_PCT
     fx = body["fx"]
     assert fx["available"] is True
-    assert fx["size"] == {"min": -MAX_SIZE_PCT, "max": MAX_SIZE_PCT}
-    assert fx["growl"] == {"min": 0, "max": 100} and fx["cave"] == {"min": 0, "max": 100}
+    # The three the casting deals still spell what they always did — a page
+    # reading `min`/`max` off them is what builds the sliders that exist.
+    assert (fx["size"]["min"], fx["size"]["max"]) == (-MAX_SIZE_PCT, MAX_SIZE_PCT)
+    assert (fx["growl"]["min"], fx["growl"]["max"]) == (0, 100)
+    assert (fx["cave"]["min"], fx["cave"]["max"]) == (0, 100)
     # With the treatment switched off a monster is standard-only SSML instead,
     # and there is nothing on this bench to move.
     tts.monster_fx = False
     assert tts_client.get("/api/tts/voices").get_json()["fx"]["available"] is False
     tts.monster_fx = True
+
+
+def test_every_knob_of_the_treatment_reaches_the_bench(tts_client, tts):
+    """All seventeen, from `dsp.FIELDS` — the point of that table being that a
+    knob added there arrives here without anyone editing this route.
+
+    Bounds come from `BOUNDS` rather than from numbers written out again, and
+    the order is the declaration order: `jsonify` sorts an object's keys, so
+    the panel would otherwise read them alphabetically and put `bandgrowl`
+    first.
+    """
+    from tts.dsp import BOUNDS, FIELDS
+    from tts.voices import DEALT_FX, fx_knob
+
+    fx = tts_client.get("/api/tts/voices").get_json()["fx"]
+    knobs = [fx_knob(name) for name, _, _ in FIELDS]
+    assert len(knobs) == 17
+    assert fx["order"] == knobs
+    for name, _, _ in FIELDS:
+        knob = fx_knob(name)
+        spec = fx[knob]
+        assert (spec["min"], spec["max"]) == BOUNDS[name], knob
+        assert spec["min"] <= spec["auto"] <= spec["max"], knob
+        assert spec["auto"] == 0, knob        # every knob is 0 for "not dealt"
+        assert spec["dealt"] is (name in DEALT_FX), knob
+        # A slider with no name is a slider nobody can use, and the wording
+        # lives on the server so the page does not carry a second copy of it.
+        assert spec["label"], knob
+        assert spec["hint"], knob
+    # Three of seventeen, and the panel keeps those in front of the listener.
+    assert [k for k in knobs if fx[k]["dealt"]] == ["size", "growl", "cave"]
+
+
+def test_every_knob_the_bench_offers_can_be_asked_for_in_the_url(tts_client, tts, game):
+    """A slider that moved and changed nothing would be the worst of the lot:
+    it would sound identical, cache identically, and look like it worked."""
+    from tts.voices import FX_KNOBS
+
+    url = speak_url(game, key="monster:mon_1")
+    plain = tts_client.get(url)
+    assert plain.status_code == 200
+    seen = {plain.headers["ETag"]}
+    for knob in FX_KNOBS:
+        rv = tts_client.get(url + "&" + knob + "=37")
+        assert rv.status_code == 200, knob
+        # A distinct clip: the key is a digest over the cast, and the cast
+        # carries the treatment.
+        assert rv.headers["ETag"] not in seen, knob
+        seen.add(rv.headers["ETag"])
+
+
+def test_a_knob_nobody_moved_is_not_in_the_key(tts_client, tts, game):
+    """`MonsterFX.token()` spells only what is dealt, so a treatment keys the
+    length it always did however many knobs exist — and adding one nobody has
+    turned on does not re-key, or re-buy, every clip on disk."""
+    from tts.voices import STANDARD_ENGLISH as POOL
+    from tts.voices import retune, tune_from
+
+    cast = monster_cast()
+    tuned = retune(cast, tune_from(size=20, growl=55, cave=0), POOL)
+    token = tuned.fx.token()
+    assert token.startswith("fx:size=20,growl=55:")
+    for absent in ("phaser", "stutter", "suboctave", "noise", "formant", "cave"):
+        assert absent not in token
+    # And the whole cache key is the short one, not a seventeen-field record.
+    assert tuned.cache_key().count("=") == 2
 
 
 def monster_cast(key="monster:mon_6", size="L", **kw):

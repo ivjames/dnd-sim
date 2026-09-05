@@ -764,6 +764,23 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
   color: var(--accent); font-family: var(--mono);
 }
+/* The treatment is seventeen knobs and the casting deals three, so the bench
+   shows those three and folds the rest away. `.vl-fxbody` is the second column
+   of `.vl-fx` — the label sits in the first — and holds the dealt grid and the
+   disclosure under it, which is why it exists rather than the two being
+   children of `.vl-fx` directly: at 58px the label column would have wrapped
+   them into it. */
+.vl-fxbody { display: grid; gap: 8px; min-width: 0; }
+/* Same disclosure as `.turn-details`, and the same triangle: a summary that
+   borrows `.vl-fxlabel` gets that class's colour and tracking, and needs the
+   marker suppressed in both spellings or WebKit draws its own next to ours. */
+.vl-more > summary {
+  cursor: pointer; list-style: none; padding: 2px 0;
+}
+.vl-more > summary::-webkit-details-marker { display: none; }
+.vl-more > summary::before { content: "\25B8 "; }
+.vl-more[open] > summary::before { content: "\25BE "; }
+.vl-more > .vl-fxsliders { padding-top: 8px; }
 @media (max-width: 560px) {
   .vl-fx { grid-template-columns: 1fr; }
 }

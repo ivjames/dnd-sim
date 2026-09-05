@@ -1125,10 +1125,21 @@
     if (t.voice) q += '&voice=' + encodeURIComponent(t.voice);
     if (t.rate !== undefined && t.rate !== null) q += '&rate=' + encodeURIComponent(t.rate);
     if (t.pitch !== undefined && t.pitch !== null) q += '&pitch=' + encodeURIComponent(t.pitch);
-    // The monster treatment. Ignored by the server on any other seat, so this
-    // needs no test for what kind of seat it is.
-    ['size', 'growl', 'cave'].forEach(function (f) {
-      if (t[f] !== undefined && t[f] !== null) q += '&' + f + '=' + encodeURIComponent(t[f]);
+    // Everything else stored against this seat is the monster treatment, whose
+    // knobs are the server's own names (`/api/tts/voices` serves them and the
+    // lab writes back exactly what it was given). Sent by name rather than
+    // from a list of them, because the list is seventeen long and a page that
+    // kept its own copy would be where the eighteenth went missing. Ignored by
+    // the server on any other seat, so this needs no test for the kind of seat.
+    //
+    // Sorted, so one tune is always one URL: the clip cache in this page and
+    // the browser's own are both keyed by the string, and a tune assembled in
+    // the order the sliders happened to be dragged would key differently every
+    // time for the same audio.
+    Object.keys(t).sort().forEach(function (f) {
+      if (f === 'voice' || f === 'rate' || f === 'pitch') return;
+      if (t[f] === undefined || t[f] === null) return;
+      q += '&' + encodeURIComponent(f) + '=' + encodeURIComponent(t[f]);
     });
     return q;
   }
@@ -2213,33 +2224,59 @@
     // A monster is not an actor with a deep voice: its size, its grit and the
     // room it stands in are made out of the audio after Polly hands it over
     // (`tts/dsp.py`), and the casting deals them from the creature's SRD size
-    // and a hash. This is the bench for that — the same three numbers the
-    // treatment is built from, in the order they matter.
+    // and a hash. This is the bench for that.
+    //
+    // Every knob, its bounds, its name and its one-line description come from
+    // the server (`/api/tts/voices`, `_fx_spec`), which reads them off the
+    // treatment's own field table. Nothing here knows how many there are or
+    // what any of them does — which is the point: the treatment went from
+    // three effects to seventeen without this function changing shape.
+    //
+    // The three the casting actually deals stay in front of the listener and
+    // the other fourteen fold away behind a summary. They are all the same
+    // kind of control, but they are not the same kind of question: the dealt
+    // three describe every monster in the game, and the rest are a bench for
+    // deciding by ear what a creature type should sound like before any of it
+    // is written into the casting.
     var fxSpec = (VL.roster && VL.roster.fx) || null;
     if (Speech.isMonsterKey(role.key) && fxSpec && fxSpec.available) {
       var fx = el('div', 'vl-fx');
       fx.appendChild(el('span', 'vl-fxlabel', 'monster'));
+      var fxBody = el('div', 'vl-fxbody');
       var fxSliders = el('div', 'vl-fxsliders');
-      [
-        { f: 'size', label: 'size', spec: fxSpec.size, auto: 0,
-          hint: 'Bigger creature, lower voice — the whole spectrum shifts' },
-        { f: 'growl', label: 'growl', spec: fxSpec.growl, auto: 0,
-          hint: 'Saturation: harmonics and grit' },
-        { f: 'cave', label: 'room', spec: fxSpec.cave, auto: 0,
-          hint: 'The space it is standing in' }
-      ].forEach(function (c) {
-        var sl = vlSlider(c.label, c.spec.min, c.spec.max, 1,
-          tune[c.f] === undefined ? null : tune[c.f], c.auto, '%', function (v) {
+      var moreSliders = el('div', 'vl-fxsliders');
+      var inUse = 0;
+      (fxSpec.order || []).forEach(function (f) {
+        var c = fxSpec[f];
+        if (!c) return;
+        var sl = vlSlider(c.label || f, c.min, c.max, 1,
+          tune[f] === undefined ? null : tune[f], c.auto || 0, '%', function (v) {
             var patch = {};
-            patch[c.f] = v;
+            patch[f] = v;
             vlSetTune(role.key, patch);
             refreshState();
             if (ttsOn()) vlTest(role, test);
           });
-        sl.title = c.hint;
-        fxSliders.appendChild(sl);
+        if (c.hint) sl.title = c.hint;
+        if (c.dealt) {
+          fxSliders.appendChild(sl);
+        } else {
+          // Open where the seat is already using one of them, so a stored tune
+          // is never a slider the listener cannot find.
+          if (tune[f] !== undefined && tune[f] !== null) inUse += 1;
+          moreSliders.appendChild(sl);
+        }
       });
-      fx.appendChild(fxSliders);
+      fxBody.appendChild(fxSliders);
+      if (moreSliders.childNodes.length) {
+        var more = el('details', 'vl-more');
+        if (inUse) more.open = true;
+        more.appendChild(el('summary', 'vl-fxlabel',
+          moreSliders.childNodes.length + ' more effects'));
+        more.appendChild(moreSliders);
+        fxBody.appendChild(more);
+      }
+      fx.appendChild(fxBody);
       row.appendChild(fx);
     }
 
@@ -2249,9 +2286,14 @@
     resetBtn.addEventListener('click', function () {
       // Every field this row can set, including the treatment's — a row that
       // said "auto" while still carrying a size shift would be a lie, and the
-      // seat would keep it for good.
-      vlSetTune(role.key, { voice: null, rate: null, pitch: null,
-                            size: null, growl: null, cave: null });
+      // seat would keep it for good. Read off what the seat is holding rather
+      // than off a list of the fields there are: a knob this build no longer
+      // offers is still in a tune saved by the one that did, and "auto" has to
+      // clear that too.
+      var patch = { voice: null, rate: null, pitch: null };
+      var held = (V.settings.tunes && V.settings.tunes[role.key]) || {};
+      Object.keys(held).forEach(function (f) { patch[f] = null; });
+      vlSetTune(role.key, patch);
       vlRender();                 // the sliders jump back to the cast values
     });
     row.appendChild(resetBtn);
