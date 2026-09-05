@@ -25,11 +25,13 @@
 # /etc/environment, the known-key store on this box. The app reads them from
 # ./.env, which run.sh sources. `deploy` copies each one across once — parses
 # the /etc/environment line, appends KEY=... to .env (mode 600), never prints
-# a value, never puts one in any argv — and runs every pm2 command through
-# `env -i` with an allowlist (PATH, HOME, PM2_HOME and TERM when set, LANG),
-# so neither the pm2 daemon nor its dump.pm2 ever carries anything from the
-# root shell's environment — not a known key, and not whatever else
-# /etc/environment holds. The process gets them from run.sh, not from pm2.
+# a value, never puts one in any argv — and starts/restarts pm2 through
+# `env -i` with an allowlist (PATH, HOME, PM2_HOME and TERM when set, LANG).
+# pm2 gives the process the environment of the command that started it and
+# `pm2 save` writes that into dump.pm2, so the allowlist on start/restart is
+# what keeps the root shell's environment — a known key, or whatever else
+# /etc/environment holds — out of both. The process gets its keys from
+# run.sh sourcing .env, not from pm2.
 #
 # The set of keys is KNOWN_KEYS below (one per LLM platform or inference host
 # the app can seat at the table — llm/providers.py PROVIDERS, same names —
@@ -109,6 +111,13 @@ NGINX_ENABLED="${NGINX_ENABLED:-/etc/nginx/sites-enabled}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups}"
 SSE_BEGIN="# dndsim-sse begin (managed by dndsim setup; do not edit between markers)"
 SSE_END="# dndsim-sse end"
+# The directives the SSE block manages: dropped from every proxied location
+# and re-issued inside the block. One pair of patterns, handed to the rewrite
+# (python) and used by the check on its result (grep -E), so the two cannot
+# disagree about what is allowed to go missing. Plain ERE, no \s: both
+# engines read `[ \t]` the same way. The header one is matched case-blind.
+SSE_MANAGED='^[ \t]*(proxy_http_version|proxy_buffering|proxy_cache|proxy_read_timeout|proxy_send_timeout|chunked_transfer_encoding|gzip)[ \t]'
+SSE_MANAGED_HDR='^[ \t]*proxy_set_header[ \t]+Connection[ \t]'
 
 c_blue=$'\033[1;34m'; c_yellow=$'\033[1;33m'; c_red=$'\033[1;31m'; c_off=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
@@ -131,7 +140,7 @@ Usage:
                                  SSE block in the vhost, pm2 boot-hook check
   dndsim restart                 pm2 restart + probe (re-reads .env); exit 1
                                  unless the local /api/health answers 200
-  dndsim logs [-n N]             tail pm2 logs
+  dndsim logs [--lines N]        tail pm2 logs (arguments go to `pm2 logs`)
   dndsim status                  HEAD, pm2, .env + per-key presence, upstream
                                  family, vhost + SSE block, local/public
                                  /api/health, cert
@@ -173,10 +182,12 @@ needs, and a seat whose platform has no key fails at game creation naming it):
   any running game are unaffected — so a deploy that forgets it does not take
   the site down, but nobody can start a game until: dndsim token
 
-pm2 never sees a key. Every pm2 command — the daemon spawn included — runs
-under `env -i` with only PATH, HOME, PM2_HOME and TERM (when set) and LANG,
-so ~/.pm2/dump.pm2 carries nothing from the root shell's environment; the
-app reads .env through run.sh instead.
+pm2 never sees a key. pm2 start/restart (and every other pm2 command) runs
+under `env -i` with only PATH, HOME, PM2_HOME and TERM (when set) and LANG;
+the process gets the environment of the command that started it and
+~/.pm2/dump.pm2 records that, so neither carries anything from the root
+shell's environment. The app reads .env through run.sh instead — which is
+also the only place a TZ, proxy or DND_* setting for it can live now.
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
      DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment),
@@ -331,16 +342,23 @@ ensure_env() {
 }
 
 # ---------------------------------------------------------------------------
-# pm2. EVERY pm2 command goes through pm2_clean, not only start/restart: the
-# first pm2 command of a deploy is the one that spawns the daemon when it is
-# down (that is `jlist`, from pm2_state), and the daemon keeps the environment
-# it was spawned with; `save` then snapshots it into ~/.pm2/dump.pm2. A root
-# login shell on this box carries every line of /etc/environment — the
-# platform keys, and whatever else is kept there (CARTESIA_API_KEY today, and
-# anything added tomorrow) — so unsetting a known list is one key behind by
-# construction. pm2_clean is an allowlist instead: `env -i` with PATH, HOME
-# (pm2's state is ~/.pm2), PM2_HOME and TERM when set, and LANG. The app gets
-# its keys from run.sh sourcing .env, so pm2 never needs any of them.
+# pm2. Every pm2 command goes through pm2_clean, an allowlist: `env -i` with
+# PATH, HOME (pm2's state is ~/.pm2), PM2_HOME and TERM when set, and LANG.
+#
+# The call that matters is start/restart. pm2 hands the process it spawns
+# the environment of the CLI command that asked for it — not the daemon's —
+# and `pm2 save` writes that process's environment into ~/.pm2/dump.pm2. So
+# the environment of the start/restart command is exactly what reaches the
+# app and the dump. A root login shell on this box carries every line of
+# /etc/environment — the platform keys, and whatever else is kept there
+# (CARTESIA_API_KEY today, anything added tomorrow) — so unsetting a known
+# list is one key behind by construction; an allowlist cannot be. The app
+# gets its keys from run.sh sourcing .env, so pm2 never needs any of them.
+#
+# jlist, save and logs go through the same function as hygiene: the first
+# of them after a reboot is what spawns the daemon, and this keeps the
+# daemon's own /proc environ as clean as the processes it runs. It is not
+# what protects the app or the dump; start/restart is.
 # ---------------------------------------------------------------------------
 PM2_ENV_KEEP="PATH HOME PM2_HOME TERM"   # passed through when set; everything else is dropped
 pm2_env_names() { printf 'env -i, keeping only %s (when set) and LANG=C.UTF-8' "${PM2_ENV_KEEP// /, }"; }
@@ -363,7 +381,14 @@ pm2_clean() {
 pm2_state() {
   local jl
   command -v pm2 >/dev/null || { printf 'unknown (pm2 not on PATH)\n'; return 1; }
-  jl="$(pm2_clean jlist 2>/dev/null)" || { printf 'unknown (pm2 jlist failed)\n'; return 1; }
+  # stderr is kept, not dropped: it is where pm2's own reason goes, and where
+  # pm2_clean's `die` text goes if the launch itself is refused.
+  local err; err="$(mktemp)"
+  if ! jl="$(pm2_clean jlist 2>"$err")"; then
+    printf 'unknown (pm2 jlist failed: %s)\n' "$(sed 's/\x1b\[[0-9;]*m//g' "$err" | tr '\n' ' ' | head -c 300)"
+    rm -f "$err"; return 1
+  fi
+  rm -f "$err"
   printf '%s' "$jl" \
     | python3 -c "import json,sys
 raw=sys.stdin.read().split('\\n')
@@ -385,10 +410,15 @@ save_if_online() {
   # while this app is down persists a dump that omits it and the next reboot
   # comes back short. Save only when it is online; otherwise say so and leave
   # the previous dump alone.
-  case "$(pm2_state)" in
-    online*) pm2_clean save;;
-    *) warn "$APP is not online — skipping pm2 save so the dump keeps its last good state";;
-  esac
+  local state
+  if state="$(pm2_state)"; then
+    case "$state" in
+      online*) pm2_clean save;;
+      *) warn "$APP is not online ($state) — skipping pm2 save so the dump keeps its last good state";;
+    esac
+  else
+    warn "pm2 state unreadable ($state) — skipping pm2 save so the dump keeps its last good state"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -462,9 +492,11 @@ vhost_path() {  # -> path on stdout, exit 1 if none
 }
 
 sse_transform() {  # $1=vhost file -> rewritten content on stdout
-  python3 - "$1" "$SSE_BEGIN" "$SSE_END" <<'PY'
+  python3 - "$1" "$SSE_BEGIN" "$SSE_END" "$SSE_MANAGED" "$SSE_MANAGED_HDR" <<'PY'
 import re, sys
 path, mark_begin, mark_end = sys.argv[1], sys.argv[2], sys.argv[3]
+MANAGED = re.compile(sys.argv[4])
+MANAGED_HDR = re.compile(sys.argv[5], re.I)
 lines = open(path, encoding="utf-8").read().split("\n")
 
 # 1. drop any earlier managed block(s)
@@ -475,9 +507,6 @@ for ln in lines:
     if not skip: kept.append(ln)
 lines = kept
 
-MANAGED = re.compile(r"^\s*(proxy_http_version|proxy_buffering|proxy_cache|proxy_read_timeout|"
-                     r"proxy_send_timeout|chunked_transfer_encoding|gzip)\s")
-MANAGED_HDR = re.compile(r"^\s*proxy_set_header\s+Connection\s", re.I)
 BLOCK = [mark_begin,
          'proxy_http_version 1.1;',
          'proxy_set_header Connection "";',
@@ -521,21 +550,36 @@ sys.stdout.write("\n".join(out))
 PY
 }
 
+sse_unmanaged_lines() {  # $1=vhost -> the input lines a correct rewrite must keep
+  # Everything except old marker blocks (dropped whole) and managed
+  # directives (dropped and re-issued): the rewrite's contract is that
+  # nothing else goes missing.
+  awk -v b="$SSE_BEGIN" -v e="$SSE_END" \
+    '{ t=$0; sub(/^[ \t]+/, "", t) } t==b { skip=1; next } t==e { skip=0; next } !skip' "$1" \
+    | { grep -vE "$SSE_MANAGED" || true; } | { grep -viE "$SSE_MANAGED_HDR" || true; }
+}
+
 ensure_sse() {  # $1 = --dry-run|"" ; requires a vhost
-  local dry="${1:-}" vhost tmp stamp backup_dir
+  local dry="${1:-}" vhost tmp stamp backup_dir missing
   vhost="$(vhost_path)" || die "no vhost for $FQDN under $NGINX_AVAIL / $NGINX_ENABLED — run: dndsim setup"
   tmp="$(mktemp)"
   if ! sse_transform "$vhost" > "$tmp"; then
     rm -f "$tmp"; die "vhost $vhost: the SSE rewrite failed — vhost left untouched"
   fi
-  # A rewrite that fails without saying so leaves an empty or truncated
-  # result, and an empty file passes `nginx -t` (an empty config is a valid
-  # one), so the size is checked before anything is written. The rewrite
-  # drops at most a handful of directives per location and adds a ten-line
-  # block, so a result under half the input's size is not a rewrite; it is a
-  # failure wearing exit 0.
-  if [ ! -s "$tmp" ] || [ "$(wc -c < "$tmp")" -lt $(( $(wc -c < "$vhost") / 2 )) ]; then
-    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite produced an empty or truncated result — refusing to write it; vhost left untouched"
+  # The result is checked before anything is written, because an empty file
+  # passes `nginx -t` (an empty config is a valid one) and a truncated one
+  # may. The check is structural, not a size: a vhost that has collected
+  # several stale marker blocks legitimately comes out much shorter, so
+  # instead every input line that is neither a managed directive nor inside
+  # a marker block must still be in the output, exactly. Anything missing
+  # means this is not a rewrite of this vhost.
+  if [ ! -s "$tmp" ]; then
+    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite produced an empty result — refusing to write it; vhost left untouched"
+  fi
+  missing="$(sse_unmanaged_lines "$vhost" | { grep -vxF -f "$tmp" || true; })"
+  if [ -n "$missing" ]; then
+    printf 'missing from the rewrite:\n%s\n' "$missing" >&2
+    rm -f "$tmp"; die "vhost $vhost: the SSE rewrite dropped $(printf '%s\n' "$missing" | wc -l) line(s) that are not managed directives (above) — refusing to write it; vhost left untouched"
   fi
   if cmp -s "$vhost" "$tmp"; then
     log "vhost $vhost: SSE block present, nothing to change"
@@ -668,13 +712,28 @@ cmd_deploy() {
     fi
   fi
 
+  # The SSE block is setup's, but provision-site re-run by hand, certbot, or
+  # an edit can put the generic proxy block back, and until now only `setup`
+  # repaired it. ensure_sse is idempotent (a no-op when the block is in
+  # place) and root is held here, so every deploy keeps the vhost right.
+  # Before the restart, and subshelled like setup: `nginx -t` is global, so
+  # a broken vhost of any other site on the box fails it, and a `die` in
+  # here must not end the deploy with new code running and no probe taken.
+  if vhost_path >/dev/null; then
+    local sse_rc=0
+    set +e; ( set -e; ensure_sse ); sse_rc=$?; set -e
+    if [ "$sse_rc" -ne 0 ]; then
+      warn "the SSE block could not be put in the vhost (exit $sse_rc); deploying the app anyway. Fix the cause and re-run: dndsim setup"
+    fi
+  fi
+
   # A (re)start kills any in-flight game; the app marks it stopped on boot
   # and the transcript stays readable. That is expected. The ecosystem file
   # is the registration's source of truth, so it is re-read on every deploy.
   # The state has to be readable: `pm2 start` on a process pm2 already holds
   # is a no-op that looks like a deploy, so an unreadable list is a stop.
   local state
-  state="$(pm2_state)" || die "pm2: $state — cannot tell whether $APP is registered, so not starting or restarting it. Check: pm2 jlist"
+  state="$(pm2_state)" || die "pm2: $state — cannot tell whether $APP is registered, so not starting or restarting it. Check: dndsim status"
   case "$state" in
     "not registered")
       log "pm2 start $ECOSYSTEM ($APP, first registration)"
@@ -687,11 +746,6 @@ cmd_deploy() {
   esac
   sleep 2
   save_if_online
-  # The SSE block is setup's, but provision-site re-run by hand, certbot, or
-  # an edit can put the generic proxy block back, and until now only `setup`
-  # repaired it. ensure_sse is idempotent (a no-op when the block is in
-  # place) and root is held here, so every deploy keeps the vhost right.
-  if vhost_path >/dev/null; then ensure_sse; fi
   if probe "$PROBE_TRIES"; then
     log "deployed: $(git rev-parse --short HEAD)  $(git log -1 --format=%s)"
   else

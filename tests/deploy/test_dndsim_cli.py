@@ -38,7 +38,6 @@ FALLBACK_VHOST = os.path.join(ROOT, "deploy", "nginx-dndsim.conf")
 SSE_BEGIN = "# dndsim-sse begin"
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
-needs_root = pytest.mark.skipif(os.geteuid() != 0, reason="this path calls need_root")
 
 
 def run(body: str, cli: str = CLI, path: str = "", **env: str) -> subprocess.CompletedProcess:
@@ -75,6 +74,13 @@ def shim(bindir: str, name: str, body: str) -> None:
 def recorder(bindir: str, name: str, logfile: str, tail: str = "exit 0\n") -> None:
     """A shim that appends its argv to `logfile`, then runs `tail`."""
     shim(bindir, name, 'printf \'%s\\n\' "$*" >> "{}"\n{}'.format(logfile, tail))
+
+
+def root_shim(bindir: str) -> None:
+    """`need_root` asks `id -u`; answer 0 so the paths behind it run for
+    everyone. Everything those paths write goes to temp dirs the fixtures
+    point them at, so no privilege is actually needed."""
+    shim(bindir, "id", 'if [ "$1" = "-u" ]; then echo 0; else PATH=/usr/bin:/bin exec id "$@"; fi\n')
 
 
 def vhost_without_block() -> str:
@@ -126,6 +132,7 @@ def sse_fixture(tmp_path, python3_body: str | None, nginx_tail: str = "exit 0\n"
     calls = str(tmp_path / "calls.log")
     vhost = avail / "test.example"
     write(str(vhost), vhost_without_block())
+    root_shim(str(bindir))
     recorder(str(bindir), "nginx", calls, nginx_tail)
     recorder(str(bindir), "systemctl", calls)
     if python3_body is not None:
@@ -152,18 +159,50 @@ def test_an_empty_rewrite_is_refused_even_with_exit_0(tmp_path):
     before = read(str(vhost))
     out = run("ensure_sse", path=str(bindir), **env)
     assert out.returncode != 0
-    assert "empty or truncated" in out.stderr
+    assert "produced an empty result" in out.stderr
     assert read(str(vhost)) == before
     assert not os.path.exists(calls)
 
 
 def test_a_truncated_rewrite_is_refused(tmp_path):
+    """Structural, not a size: every input line that is neither a managed
+    directive nor inside a marker block has to come back out."""
     bindir, vhost, calls, env = sse_fixture(tmp_path, "printf 'server {\\n}\\n'\n")
     before = read(str(vhost))
     out = run("ensure_sse", path=str(bindir), **env)
     assert out.returncode != 0
-    assert "empty or truncated" in out.stderr
+    assert "refusing to write" in out.stderr
+    assert "server_name dndsim.lab980.com;" in out.stderr, "the missing lines are listed"
     assert read(str(vhost)) == before
+    assert not os.path.exists(calls)
+
+
+def test_a_rewrite_that_loses_one_unmanaged_line_is_refused(tmp_path):
+    """The rewrite may drop managed directives and old marker blocks and
+    nothing else; here the shim drops the proxy_pass line."""
+    bindir, vhost, calls, env = sse_fixture(tmp_path, None)
+    # python3 - <vhost> <begin> <end> <managed> <hdr>: with `-` as $1 the vhost is $2
+    shim(str(bindir), "python3", 'grep -v proxy_pass "$2"\n')
+    before = read(str(vhost))
+    out = run("ensure_sse", path=str(bindir), **env)
+    assert out.returncode != 0
+    assert "dropped 1 line(s)" in out.stderr and "proxy_pass" in out.stderr
+    assert read(str(vhost)) == before
+
+
+def test_a_vhost_full_of_stale_blocks_is_still_rewritten(tmp_path):
+    """Several stale marker blocks make the correct output far shorter than
+    the input; a size guard refused that. The structural one must not."""
+    bindir, vhost, calls, env = sse_fixture(tmp_path, None)
+    src = read(FALLBACK_VHOST)
+    block = re.search(r"[ \t]*# dndsim-sse begin.*?# dndsim-sse end\n", src, flags=re.S).group(0)
+    write(str(vhost), src.replace(block, block * 4))
+    assert read(str(vhost)).count(SSE_BEGIN) == 4
+    out = run("ensure_sse", path=str(bindir), **env)
+    assert out.returncode == 0, out.stderr
+    body = read(str(vhost))
+    assert body.count(SSE_BEGIN) == 1
+    assert body == src, "four stale blocks collapse to the canonical one"
 
 
 def test_dry_run_reports_a_failing_rewrite_too(tmp_path):
@@ -173,7 +212,6 @@ def test_dry_run_reports_a_failing_rewrite_too(tmp_path):
     assert read(str(vhost)) == vhost_without_block()
 
 
-@needs_root
 def test_the_real_rewrite_inserts_the_block_and_reloads(tmp_path):
     bindir, vhost, calls, env = sse_fixture(tmp_path, None)
     out = run("ensure_sse", path=str(bindir), **env)
@@ -189,7 +227,6 @@ def test_the_real_rewrite_inserts_the_block_and_reloads(tmp_path):
     assert read(str(vhost)) == body
 
 
-@needs_root
 def test_a_rejected_rewrite_is_rolled_back(tmp_path):
     bindir, vhost, calls, env = sse_fixture(tmp_path, None, nginx_tail="exit 1\n")
     before = read(str(vhost))
@@ -323,6 +360,35 @@ def test_pm2_state_fails_rather_than_guess(tmp_path, jlist):
     assert out.stdout.startswith("unknown")
 
 
+def test_pm2_state_carries_the_reason(tmp_path):
+    """pm2's own stderr — or pm2_clean's refusal — is the diagnosis; the
+    `unknown` line has to carry it rather than a /dev/null."""
+    bindir = tmp_path / "bin"; bindir.mkdir()
+    pm2_shim(str(bindir), str(tmp_path / "e"), str(tmp_path / "a"),
+             jlist="echo 'connect EACCES /root/.pm2/rpc.sock' >&2; exit 1")
+    out = run("pm2_state", path=str(bindir))
+    assert out.returncode == 1
+    assert "unknown (pm2 jlist failed: connect EACCES" in out.stdout
+    out = run("HOME= pm2_state", path=str(bindir))
+    assert out.returncode == 1
+    assert "HOME is unset" in out.stdout
+
+
+def test_save_is_skipped_and_says_why_when_pm2_is_unreadable(tmp_path):
+    bindir = tmp_path / "bin"; bindir.mkdir()
+    log = str(tmp_path / "a")
+    pm2_shim(str(bindir), str(tmp_path / "e"), log, jlist="exit 3")
+    out = run("save_if_online", path=str(bindir))
+    assert out.returncode == 0, out.stderr
+    assert "pm2 state unreadable" in out.stderr
+    assert "save" not in read(log)
+    pm2_shim(str(bindir), str(tmp_path / "e"), log,
+             jlist="printf '[{\"name\":\"dnd-sim\",\"pm2_env\":{\"status\":\"stopped\"}}]'")
+    out = run("save_if_online", path=str(bindir))
+    assert "not online (stopped" in out.stderr
+    assert "save" not in read(log)
+
+
 # ---------------------------------------------------------------------------
 # ensure_env: the write token is never adopted
 # ---------------------------------------------------------------------------
@@ -373,21 +439,25 @@ def clone_or_skip(tmp_path) -> str:
     return clone
 
 
-def deploy_fixture(tmp_path, curl_code: str = "200", vhost: bool = True, jlist_fail: bool = False):
+def deploy_fixture(tmp_path, curl_code: str = "200", vhost: bool = True, jlist_fail: bool = False,
+                   nginx_tail: str = "exit 0\n"):
     """clone_or_skip plus shims for everything deploy shells out to.
     Returns (clone, bindir, env, logs)."""
     clone = clone_or_skip(tmp_path)
     bindir = tmp_path / "bin"; bindir.mkdir()
-    logs = dict(pm2=str(tmp_path / "pm2.args"), env=str(tmp_path / "pm2.env"),
-                calls=str(tmp_path / "calls.log"))
+    # one log for pm2, nginx, systemctl and provision-site, so the order of
+    # the steps is what is asserted, not just their presence.
+    calls = str(tmp_path / "calls.log")
+    logs = dict(pm2=calls, env=str(tmp_path / "pm2.env"), calls=calls)
     started = str(tmp_path / "started")
+    root_shim(str(bindir))
     jlist = "exit 3" if jlist_fail else (
         'if [ -e "%s" ]; then printf \'[{"name":"dnd-sim","pm2_env":{"status":"online",'
         '"exec_mode":"fork_mode","restart_time":0,"pm_uptime":1}}]\\n\'; else echo "[]"; fi' % started)
     pm2_shim(str(bindir), logs["env"], logs["pm2"], jlist=jlist,
              tail='case "$1" in start|restart) touch "%s";; esac' % started)
     curl_shim(str(bindir), curl_code, '{"ok":true,"mock":false,"games_running":0}')
-    recorder(str(bindir), "nginx", logs["calls"])
+    recorder(str(bindir), "nginx", logs["calls"], nginx_tail)
     recorder(str(bindir), "systemctl", logs["calls"])
     recorder(str(bindir), "provision-site", logs["calls"], "exit 2\n")
     avail = tmp_path / "avail"; avail.mkdir()
@@ -402,20 +472,20 @@ def deploy_fixture(tmp_path, curl_code: str = "200", vhost: bool = True, jlist_f
     return clone, bindir, env, logs
 
 
-@needs_root
 def test_deploy_end_to_end_repairs_the_vhost_and_keeps_pm2_clean(tmp_path):
     clone, bindir, env, logs = deploy_fixture(tmp_path)
     out = run("cmd_deploy --no-install", cli=os.path.join(clone, "bin", "dndsim"),
               path=str(bindir), **env)
     assert out.returncode == 0, out.stderr + out.stdout
     assert "deployed:" in out.stdout.splitlines()[-1]
-    # first registration: start, then save (the stub reports online after a start)
-    assert read(logs["pm2"]).splitlines() == [
+    # the vhost was there without the block: repaired and reloaded BEFORE the
+    # restart; then first registration (start), then save (the stub reports
+    # online after a start)
+    assert read(logs["calls"]).splitlines() == [
+        "-t", "reload nginx",
         "jlist", "start ecosystem.config.js --only dnd-sim", "jlist", "save"]
-    # the vhost was there without the block; deploy put it back and reloaded
     vhost = read(os.path.join(env["NGINX_AVAIL"], "test.example"))
     assert SSE_BEGIN in vhost
-    assert read(logs["calls"]).splitlines() == ["-t", "reload nginx"]
     # the keys: adopted into .env, and none of them anywhere near pm2
     dotenv = read(os.path.join(clone, ".env"))
     assert "ANTHROPIC_API_KEY=sk-ant-adoptme" in dotenv
@@ -426,7 +496,6 @@ def test_deploy_end_to_end_repairs_the_vhost_and_keeps_pm2_clean(tmp_path):
     assert "sk-ant-adoptme" not in out.stdout + out.stderr
 
 
-@needs_root
 def test_deploy_survives_a_failing_setup_and_says_so(tmp_path):
     """No vhost, provision-site on PATH and failing: setup dies, deploy
     reports it and still deploys the app — the branch that used to be
@@ -437,12 +506,30 @@ def test_deploy_survives_a_failing_setup_and_says_so(tmp_path):
     assert out.returncode == 0, out.stderr + out.stdout
     assert "provision-site failed (exit 2)" in out.stderr
     assert "setup did not complete (exit 1); deploying the app anyway" in out.stderr
-    assert "start ecosystem.config.js --only dnd-sim" in read(logs["pm2"])
     assert "deployed:" in out.stdout
-    assert read(logs["calls"]).splitlines() == ["dndsim ivjames/dnd-sim --port 8099 --dir " + clone]
+    assert read(logs["calls"]).splitlines() == [
+        "dndsim ivjames/dnd-sim --port 8099 --dir " + clone,
+        "jlist", "start ecosystem.config.js --only dnd-sim", "jlist", "save"]
 
 
-@needs_root
+def test_deploy_survives_a_vhost_nginx_rejects_and_still_probes(tmp_path):
+    """`nginx -t` is global: any other site's broken vhost fails it. The
+    rewrite is rolled back and reported, and the deploy goes on to restart
+    and probe — the old code did neither, exiting from inside ensure_sse
+    with the new code already running."""
+    clone, bindir, env, logs = deploy_fixture(tmp_path, nginx_tail="exit 1\n")
+    out = run("cmd_deploy --no-install", cli=os.path.join(clone, "bin", "dndsim"),
+              path=str(bindir), **env)
+    assert out.returncode == 0, out.stderr + out.stdout
+    assert "rolling back" in out.stderr
+    assert "SSE block could not be put in the vhost (exit 1); deploying the app anyway" in out.stderr
+    assert read(os.path.join(env["NGINX_AVAIL"], "test.example")) == vhost_without_block()
+    calls = read(logs["calls"]).splitlines()
+    assert calls[:2] == ["-t", "-t"], "nginx -t on the rewrite, then on the rollback"
+    assert calls[2:] == ["jlist", "start ecosystem.config.js --only dnd-sim", "jlist", "save"]
+    assert "local:" in out.stdout and "deployed:" in out.stdout
+
+
 def test_deploy_exits_nonzero_when_the_app_does_not_answer(tmp_path):
     clone, bindir, env, logs = deploy_fixture(tmp_path, curl_code="502")
     out = run("cmd_deploy --no-install", cli=os.path.join(clone, "bin", "dndsim"),
@@ -453,20 +540,20 @@ def test_deploy_exits_nonzero_when_the_app_does_not_answer(tmp_path):
     assert "HTTP 502" in out.stdout and "public:" in out.stdout
 
 
-@needs_root
 def test_deploy_stops_when_pm2_cannot_be_read(tmp_path):
     clone, bindir, env, logs = deploy_fixture(tmp_path, jlist_fail=True)
     out = run("cmd_deploy --no-install", cli=os.path.join(clone, "bin", "dndsim"),
               path=str(bindir), **env)
     assert out.returncode != 0
     assert "cannot tell whether dnd-sim is registered" in out.stderr
-    assert "start" not in read(logs["pm2"])
+    assert "dndsim status" in out.stderr
+    assert not [c for c in read(logs["calls"]).splitlines() if c.startswith("start")]
 
 
-@needs_root
 def test_restart_exits_nonzero_when_the_app_does_not_answer(tmp_path):
     clone = clone_or_skip(tmp_path)
     bindir = tmp_path / "bin"; bindir.mkdir()
+    root_shim(str(bindir))
     pm2_shim(str(bindir), str(tmp_path / "e"), str(tmp_path / "a"))
     curl_shim(str(bindir), "000", "")
     out = run("cmd_restart", cli=os.path.join(clone, "bin", "dndsim"), path=str(bindir),
@@ -480,11 +567,19 @@ def test_restart_exits_nonzero_when_the_app_does_not_answer(tmp_path):
 # the help says what the code does
 # ---------------------------------------------------------------------------
 
+STALE = ("env -u", "keys unset", "launch unsets", "pm2_unset_names", "pm2 unsets",
+         "unset for pm2", "unsets it")
+
+
 def test_the_docs_describe_the_allowlist_not_an_unset_list():
     src = read(CLI)
-    assert "env -u" not in src
-    assert "pm2_unset_names" not in src
+    for doc in ("bin/dndsim", "DEPLOY.md", "ecosystem.config.js", "CLAUDE.md",
+                "web/app.py", "web/auth.py", "PLAN.md", "README.md"):
+        body = read(os.path.join(ROOT, doc))
+        for phrase in STALE:
+            assert phrase not in body, "%s still says %r" % (doc, phrase)
     for doc in ("DEPLOY.md", "ecosystem.config.js", "CLAUDE.md"):
-        assert "env -u" not in read(os.path.join(ROOT, doc)), doc
+        assert "env -i" in read(os.path.join(ROOT, doc)), doc
     assert "NOT one to put in /etc/environment" in src
     assert 'NO_ADOPT_KEYS="$WRITE_TOKEN_KEY"' in src
+    assert "logs [--lines N]" in src and "[-n N]" not in src

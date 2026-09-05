@@ -99,7 +99,8 @@ Every time after:
 
 ```bash
 dndsim deploy      # reset to origin/main, venv + pip, .env (adopt keys), vhost via
-                   # setup if missing, pm2 start/restart (keys unset), save if online, probe
+                   # setup if missing, SSE block repaired, pm2 start/restart (env -i
+                   # allowlist), save if online, probe; exit 1 unless local health is 200
 dndsim setup       # once, idempotent: provision-site (or HTTP-only fallback vhost),
                    # SSE block in the vhost, pm2-root check; --dry-run shows the diff
 dndsim status      # HEAD, pm2, .env + per-key presence, upstream family, vhost + SSE
@@ -256,7 +257,8 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   again. Unlike a vendor key it is deliberately **not** in `/etc/environment`:
   adoption exists for the box's shared platform keys, and a second copy of this
   one would be a place to leak it from and to forget on a rotation. It is on
-  `KNOWN_KEYS` only so pm2's launch unsets it and `keys`/`status` report it.
+  `KNOWN_KEYS` so `keys`/`status` report it, and it is the one known key
+  `deploy` never adopts from the store.
   The page keeps it in `localStorage` and hides the New game button, the
   pause/resume/stop row and the note form until the server accepts it.
 - **Live mode is real money.** Each game config carries `budget_usd`; the

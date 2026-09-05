@@ -10,11 +10,15 @@
 // write token — the list is KNOWN_KEYS in bin/dndsim — are NOT set here and
 // are NOT inherited from the shell. They live in /var/www/dndsim/.env (mode
 // 600, gitignored), which `dndsim deploy` writes by copying each value out of
-// /etc/environment, and which run.sh sources before exec'ing python. pm2 is
-// launched under an allowlisted environment, not an unset list, so
-// ~/.pm2/dump.pm2 never carries a known key — or anything else root's login
-// shell happens to hold. Values in .env override the env block below. Never
-// commit a key to this file.
+// /etc/environment, and which run.sh sources before exec'ing python. pm2
+// gives the process the environment of the command that started it, and
+// `pm2 save` writes that into ~/.pm2/dump.pm2 — so the allowlist on the
+// start/restart above is what keeps a known key, or anything else root's
+// login shell holds, out of both. (The other pm2 commands go through the
+// same wrapper as hygiene for the daemon's own environ.) Nothing else from
+// the shell reaches the process either: TZ, proxy variables, a DND_* override
+// belong in .env. Values in .env override the env block below. Never commit
+// a key to this file.
 module.exports = {
   apps: [
     {

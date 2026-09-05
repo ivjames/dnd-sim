@@ -19,11 +19,12 @@ this box; the repo was authored against `/opt/dnd-sim`), the port is **8071**
 8045), and the keys: **the platform API keys stay in `/etc/environment`**, the
 known-key store on this box, and the app reads them from **`/var/www/dndsim/.env`**,
 which `dndsim deploy` writes once by copying each value across and `run.sh`
-sources on every start. pm2 never sees a key — every pm2 command the CLI runs,
-the one that spawns the daemon included, goes through `env -i` with an
-allowlist (`PATH`, `HOME`, `PM2_HOME` and `TERM` when set, `LANG`), so
-`~/.pm2/dump.pm2` carries nothing from the root shell's environment, known key
-or not — and no key is ever on any argv or in any log line.
+sources on every start. pm2 never sees a key — the CLI starts and restarts it
+through `env -i` with an allowlist (`PATH`, `HOME`, `PM2_HOME` and `TERM` when
+set, `LANG`), and since pm2 gives the process the environment of the command
+that started it and `pm2 save` records that, neither the app nor
+`~/.pm2/dump.pm2` carries anything from the root shell's environment, known
+key or not — and no key is ever on any argv or in any log line.
 
 ## Bring-up (on the droplet, as root)
 
@@ -107,22 +108,31 @@ In order, each step a no-op when already done:
    gitignored.
 4. If there is no vhost for `dndsim.lab980.com` yet, runs **`dndsim setup`**
    (below) first.
-5. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
-   `pm2 restart` after. Every pm2 command — the `pm2 jlist` that asks whether
-   it is registered (and spawns the daemon if it is down), the start or
-   restart, the `pm2 save`, `dndsim logs` — runs as `env -i PATH=… HOME=…
-   [PM2_HOME=…] [TERM=…] LANG=C.UTF-8 pm2 …`: an allowlist, not an unset
-   list, so nothing in root's login environment reaches the daemon or the
-   dump — the known keys, and equally anything else `/etc/environment`
-   holds (`CARTESIA_API_KEY`, say). If `pm2 jlist` cannot be read the deploy
-   stops rather than guess: a `pm2 start` on a process pm2 already holds is a
-   silent no-op that looks like a deploy. Then `pm2 save`, but
-   **only if the process reports `online`** (a save while it is down would
-   persist a dump that omits it).
-6. If a vhost exists, ensures the SSE block (next section) is in it — the
+5. If a vhost exists, ensures the SSE block (next section) is in it — the
    same idempotent repair `setup` does, so a vhost rewritten by
    `provision-site`, certbot or a hand edit is put right on the next deploy
-   rather than the next `setup`.
+   rather than the next `setup`. This runs **before** the restart and in a
+   subshell: `nginx -t` is global, so a broken vhost belonging to any other
+   site on the box fails it, and that is reported (`warn:`, re-run `dndsim
+   setup` once fixed) rather than ending the deploy with new code running
+   and no probe taken.
+6. pm2: `pm2 start ecosystem.config.js --only dnd-sim` on first registration,
+   `pm2 restart` after, as `env -i PATH=… HOME=… [PM2_HOME=…] [TERM=…]
+   LANG=C.UTF-8 pm2 …`. That environment is the one that matters: pm2 hands
+   the process the environment of the command that started it (not the
+   daemon's), and `pm2 save` writes that into the dump — so an allowlist on
+   start/restart is what keeps root's login environment out of both, the
+   known keys and equally anything else `/etc/environment` holds
+   (`CARTESIA_API_KEY`, say), where an unset list is one key behind by
+   construction. The other pm2 commands (`pm2 jlist` to ask whether it is
+   registered, `pm2 save`, `dndsim logs`) go through the same wrapper as
+   hygiene — the first of them after a reboot spawns the daemon, whose own
+   environ then stays clean — not as the protection. If `pm2 jlist` cannot
+   be read the deploy stops rather than guess: a `pm2 start` on a process
+   pm2 already holds is a silent no-op that looks like a deploy. Then `pm2
+   save`, but **only if the process reports `online`** (a save while it is
+   down would persist a dump that omits it; an unreadable state skips it too,
+   and says which).
 7. Probes `http://127.0.0.1:8071/api/health` (up to `DNDSIM_PROBE_TRIES`
    seconds, default 10, for a 200) and the public URL, and warns if the
    health body says `"mock":true`. **The deploy exits 1 unless the local
@@ -189,6 +199,16 @@ Only `ANTHROPIC_API_KEY` is required for the default live game (its DM is
 Claude); the other platform keys are needed only by seats that use that
 platform, and any subset is fine. Everything else has a default. `.env` values
 override the process environment pm2 provides.
+
+**Nothing else reaches the process.** pm2 is started under `env -i`, so the
+app inherits only what the allowlist passes (`PATH`, `HOME`, `PM2_HOME`,
+`TERM`, and `LANG`, which is fixed to `C.UTF-8`), the `env` block in
+`ecosystem.config.js`, and `.env`. Root's login environment does not: a `TZ`,
+`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, an `AWS_PROFILE`, or a `DND_*` override
+exported in the shell that runs `dndsim deploy` is not seen by the app. It
+used to be — the launch passed everything except the known keys — so a value
+that arrived from the shell by accident now has to be written into `.env`,
+which is the config and was always meant to be.
 
 | key | what it is |
 |---|---|
