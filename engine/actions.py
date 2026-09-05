@@ -680,7 +680,8 @@ def _move_template(state: GameState, actor: Combatant, movement_left: int, add, 
     if not suggested:
         return
     label = f"Move up to {budget} ft" + (" (stand up first)" if stand else "") + " — pick a path or suggested square"
-    add("move", label, {"suggested": [list(p) for p in suggested], "max_ft": budget}, ["path"], "movement")
+    add("move", label, {"suggested": [list(p) for p, _ in suggested], "labels": [why for _, why in suggested],
+                        "max_ft": budget}, ["path"], "movement")
 
 
 def _reachable(state: GameState, actor: Combatant, budget: int) -> dict[tuple[int, int], int]:
@@ -709,9 +710,20 @@ def _reachable(state: GameState, actor: Combatant, budget: int) -> dict[tuple[in
 
 
 def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[int, int], int],
-                          flee: bool = False) -> list[tuple[int, int]]:
+                          flee: bool = False) -> list[tuple[tuple[int, int], str]]:
+    """Up to MAX_SUGGESTED squares the mover might want, each with a label saying why.
+
+    Approach squares first — the nearest reachable square to each of the
+    closest enemies — and the two squares farthest from every enemy only when
+    the actor is fleeing (turned) or below half its hit points. Offered
+    unconditionally, the far squares were taken as a matter of course: ten
+    corner retreats in six of seven runs of one scenario. The label is what a
+    chooser reads to tell "adjacent to Goblin 2" from "adjacent to Goblin 2,
+    also in reach of Goblin 3", which is the difference between joining a
+    fight and walking a cleric alone into one.
+    """
     enemies = [c for c in _enemy_targets(state, actor) if _alive(c)]
-    picks: list[tuple[int, int]] = []
+    picks: list[tuple[tuple[int, int], str]] = []
     if flee or not enemies:
         src = None
         turned = actor.get_condition("turned")
@@ -719,21 +731,67 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
             src = state.combatants[turned.source]
         refs = [src] if src else enemies
         scored = sorted(reach, key=lambda p: (-min((Grid.distance_ft(p, _pos(e)) for e in refs), default=0), p))
-        return scored[:MAX_SUGGESTED]
+        out = []
+        for p in scored[:MAX_SUGGESTED]:
+            if src:
+                out.append((p, f"away from {src.name} ({Grid.distance_ft(p, _pos(src))} ft)"))
+            elif refs:
+                out.append((p, f"away from all enemies (nearest {min(Grid.distance_ft(p, _pos(e)) for e in refs)} ft)"))
+            else:
+                out.append((p, "open ground"))
+        return out
     my_reach = actor.reach_ft()
+    taken: set[tuple[int, int]] = set()
     for e in enemies[:4]:
         best = min(reach, key=lambda p: (max(Grid.distance_ft(p, _pos(e)), my_reach), reach[p], p))
-        if Grid.distance_ft(best, _pos(e)) < _dist(actor, e) and best not in picks:
-            picks.append(best)
+        if Grid.distance_ft(best, _pos(e)) < _dist(actor, e) and best not in taken:
+            taken.add(best)
+            picks.append((best, _approach_label(state, actor, best, e, enemies)))
         if len(picks) >= 4:
             break
     far = sorted(reach, key=lambda p: (-min(Grid.distance_ft(p, _pos(e)) for e in enemies), p))
-    for p in far[:2]:
-        if len(picks) >= MAX_SUGGESTED:
-            break
-        if p not in picks:
-            picks.append(p)
+
+    def add_far() -> None:
+        for p in far[:2]:
+            if len(picks) >= MAX_SUGGESTED:
+                break
+            if p not in taken:
+                taken.add(p)
+                nearest = min(Grid.distance_ft(p, _pos(e)) for e in enemies)
+                picks.append((p, f"away from all enemies (nearest {nearest} ft)"))
+
+    if flee or actor.hp * 2 < actor.max_hp:
+        add_far()
+    if not picks:
+        # Healthy and already engaged: nothing is closer. The chooser that
+        # picks a move from this list (the mock does) still needs a square, so
+        # offer up to two that stay in reach of the nearest enemy — a
+        # reposition that provokes nothing — and only if boxed in, the far ones.
+        nearest = enemies[0]
+        stay = sorted((p for p in reach if Grid.distance_ft(p, _pos(nearest)) <= my_reach),
+                      key=lambda p: (reach[p], p))
+        for p in stay[:2]:
+            taken.add(p)
+            picks.append((p, _label(_approach_label(state, actor, p, nearest, enemies) + " (stays in its reach)")))
+        if not picks:
+            add_far()
     return picks[:MAX_SUGGESTED]
+
+
+def _approach_label(state: GameState, actor: Combatant, p: tuple[int, int], e: Combatant,
+                    enemies: list[Combatant]) -> str:
+    d = Grid.distance_ft(p, _pos(e))
+    if d <= 5:
+        text = f"adjacent to {e.name}"
+    elif d <= actor.reach_ft():
+        text = f"{d} ft from {e.name}, in your reach"
+    else:
+        text = f"{d} ft from {e.name}" + (", out of its reach" if d > e.reach_ft() else "")
+    others = [o.name for o in enemies
+              if o.id != e.id and _can_act(o) and Grid.distance_ft(p, _pos(o)) <= o.reach_ft()]
+    if others:
+        text += ", also in reach of " + ", ".join(others[:3]) + (", …" if len(others) > 3 else "")
+    return _label(text)
 
 
 # ---------------------------------------------------------------- spells (reading the record)
