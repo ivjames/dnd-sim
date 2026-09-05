@@ -461,9 +461,9 @@ def test_simultaneous_clips_cannot_walk_past_the_budget(tts_app, tts_client, tts
 
     real = tts.synthesize
 
-    def slow(key, text, gender="", age="", *, size=""):
+    def slow(key, text, gender="", age="", *, size="", tune=None):
         time.sleep(0.2)          # every other request is admitted or refused meanwhile
-        return real(key, text, gender, age, size=size)
+        return real(key, text, gender, age, size=size, tune=tune)
 
     tts.synthesize = slow
     codes = []
@@ -653,9 +653,9 @@ def test_two_tabs_after_one_line_are_one_clip_not_one_refusal(tts_app, tts_clien
 
     real = tts.render
 
-    def slow(key, body, gender="", age="", *, size=""):
+    def slow(key, body, gender="", age="", *, size="", tune=None):
         time.sleep(0.2)
-        return real(key, body, gender, age, size=size)
+        return real(key, body, gender, age, size=size, tune=tune)
 
     tts.render = slow
     codes = []
@@ -1065,3 +1065,83 @@ def test_the_preview_refuses_a_body_it_cannot_read(tts_client):
     # A member that is not an object is a seat with no id, not a 500.
     seats = cast_preview(tts_client, [None, 7, {"id": "pc_1"}])["seats"]
     assert [s["voice"] for s in seats[:2]] == [None, None]
+
+
+# -- the roster, and a listener's own choice for a seat ----------------------
+
+def test_a_server_with_no_polly_lists_no_voices(client):
+    """The picker is built from this, so a no here is what hides it."""
+    body = client.get("/api/tts/voices").get_json()
+    assert body["available"] is False and body["engines"] == {}
+
+
+def test_the_roster_names_every_voice_a_seat_could_be_recast_to(tts_client, tts):
+    body = tts_client.get("/api/tts/voices").get_json()
+    assert body["available"] is True
+    assert body["engine"] == "standard" and body["monster_engine"] == "standard"
+    voices = body["engines"]["standard"]["voices"]
+    assert [v.id for v in STANDARD_ENGLISH] == [v["id"] for v in voices]
+    # Named the way a listener would say it, not the way Polly does.
+    brian = next(v for v in voices if v["id"] == "Brian")
+    assert brian["accent"] == accent_for(brian["language"]) == "British"
+    assert brian["gender"] == "male"
+
+
+def test_the_roster_is_per_engine_because_a_seat_can_only_move_within_one(tts_client, tts):
+    """A monster on `standard` must not be offered a neural-only voice."""
+    tts.engine, tts.monster_engine = "neural", "standard"
+    body = tts_client.get("/api/tts/voices").get_json()
+    assert sorted(body["engines"]) == ["neural", "standard"]
+    # And each says what it will honour: a pitch slider that moves and does
+    # nothing is worse than no pitch slider.
+    assert body["engines"]["neural"]["ssml"] == ["rate"]
+    assert body["engines"]["standard"]["ssml"] == ["pitch", "rate", "vtl"]
+
+
+def test_a_tuned_seat_is_read_by_the_voice_the_listener_chose(tts_client, tts, game):
+    plain = tts_client.get(speak_url(game))
+    assert plain.status_code == 200
+    cast = cast_for("dm", STANDARD_ENGLISH, "Brian", "", "standard")
+    assert plain.headers["X-Dnd-Voice"] == cast.voice_id
+
+    tuned = tts_client.get(speak_url(game) + "&voice=Amy&rate=130")
+    assert tuned.status_code == 200
+    assert tuned.headers["X-Dnd-Voice"] == "Amy"
+    # A different clip, so it caches and revalidates on its own rather than
+    # colliding with the untuned one.
+    assert tuned.headers["ETag"] != plain.headers["ETag"]
+
+
+def test_the_untuned_clip_keys_exactly_as_it_always_did(tts_client, tts, game):
+    """An empty tune must not re-key the cache: every clip on a deployed box
+    would be paid for a second time."""
+    before = tts_client.get(speak_url(game)).headers["ETag"]
+    after = tts_client.get(speak_url(game) + "&voice=&rate=&pitch=").headers["ETag"]
+    assert after == before
+
+
+def test_a_voice_the_roster_no_longer_has_falls_back_to_the_casting(tts_client, tts, game):
+    """A stored tune outlives the roster it was made against. Silencing the
+    seat would be the wrong answer to a voice Polly stopped serving."""
+    rv = tts_client.get(speak_url(game) + "&voice=Ghost%20of%20Polly%20Past")
+    assert rv.status_code == 200
+    assert rv.headers["X-Dnd-Voice"] == cast_for("dm", STANDARD_ENGLISH, "Brian", "",
+                                                 "standard").voice_id
+
+
+def test_a_slider_dragged_past_the_end_is_clamped_not_refused(tts_client, tts, game):
+    """Polly answers `InvalidSsmlException` outside 20–200%, which the page
+    hears as a seat that silently stopped using server voices."""
+    from tts.voices import RATE_MAX_PCT, tune_from
+
+    assert tune_from(rate=9999).rate_pct == RATE_MAX_PCT
+    assert tune_from(rate="not a number").rate_pct is None
+    assert tts_client.get(speak_url(game) + "&rate=9999").status_code == 200
+
+
+def test_a_tuned_clip_is_charged_and_cached_like_any_other(tts_client, tts, game):
+    url = speak_url(game, text="Testing, one two.") + "&voice=Amy"
+    assert tts_client.get(url).status_code == 200
+    calls = len(tts.calls)
+    assert tts_client.get(url).status_code == 200
+    assert len(tts.calls) == calls        # the second is the cache, not Polly

@@ -71,8 +71,12 @@ def test_the_reader_takes_a_voice_per_chunk():
     assert "cur.vkey" not in js
     # Every clip is asked for under a chunk's own key; nothing passes a
     # line-wide one, which is what would put the name in the monster's voice.
+    # `role.key` is the voice lab previewing one seat: a seat key like the rest,
+    # and it goes through ttsUrl at all because a preview in a different voice
+    # from the narration would be a tester that lies.
     for call in re.findall(r"ttsUrl\(([^,]+),", js):
-        assert call.strip() in ("key", "c.key", "ahead.key", "chunkKey(cur)"), call
+        assert call.strip() in ("key", "c.key", "ahead.key", "chunkKey(cur)",
+                                "role.key"), call
 
 
 def test_a_line_in_two_voices_settles_on_one_engine_before_it_starts():

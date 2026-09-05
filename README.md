@@ -281,7 +281,9 @@ POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)       
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
+GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}} — the roster a seat may be recast from
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
+     [&voice=&rate=&pitch=]             ... recast for this seat by the listener (see the voice lab)
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -444,6 +446,38 @@ to be glued to the front of the words instead, which meant it was spoken by the
 monster through its own distortion, with a colon in the middle of the sentence
 that the engine reads as a label. The name is unchanged **on screen**: the
 transcript prints it in front of every line of dialogue as it always has.
+
+### The voice lab
+
+The casting is a guess: it deals a seat its voice from a hash of its id, and it
+cannot know that two of your players sound alike to you, or that the goblin you
+will be listening to for an hour is the one voice you cannot stand.
+**voices…**, in the narration panel, is where that is overruled. One row per
+seat — the DM, the NPCs, each player character, and each monster that can speak
+— with the voices Polly serves for that seat's engine, a rate slider, a pitch
+slider, and **test**, which reads a sample line so the choice is made by ear
+rather than by reading voice names. **auto** hands a row back to the casting.
+
+What the lab plays is the file the narration will play. The override travels in
+the clip URL (`&voice=&rate=&pitch=`) exactly as the seat, the words and the
+config token already do, so it is the server's own casting that changes rather
+than a second one in the page. It follows from that that a tuned line is a
+different clip: it is cached, charged and revalidated on its own, so a preview
+costs one clip at the usual rate, hearing the same line in the same voice again
+is free, and turning a tune off goes back to clips that are very likely already
+paid for.
+
+Two limits are the engine's rather than this app's, and the lab says so instead
+of offering a control that lies. Polly's `neural` engine accepts
+`<prosody rate>` and drops the rest, so on a neural deployment — which is the
+default — the pitch slider is disabled and says which engine ignored it; on
+`standard` it works. And a seat can only be recast within the engine that will
+speak it, which is why the roster arrives per engine: a monster rendering on
+`standard` must not be offered a neural-only voice.
+
+Choices are kept in `localStorage` on that device, one entry per seat, and a
+stored voice that the roster no longer has falls back to the casting rather
+than silencing the seat.
 
 ### Who a character is
 

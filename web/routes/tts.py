@@ -24,7 +24,7 @@ from typing import Any
 from flask import Blueprint, Response, current_app, jsonify, request
 
 from tts.client import TTSError
-from tts.voices import MONSTER_PREFIX, gender_for_pronouns, is_monster_key
+from tts.voices import MONSTER_PREFIX, gender_for_pronouns, is_monster_key, tune_from
 
 bp = Blueprint("tts", __name__, url_prefix="/api")
 
@@ -382,6 +382,62 @@ def capability():
     )
 
 
+@bp.get("/tts/voices")
+def roster():
+    """Every voice the page may offer for a seat, by the engine that speaks it.
+
+    `/api/tts` says whether server voices are on and `/api/tts/cast` says who
+    was cast; neither says what else there was to choose from, and a voice
+    picker cannot be built out of an answer with one name in it. This is that
+    list — `DescribeVoices` as the service already has it cached, named the way
+    a listener would say it (accent, and Polly's word for the recording).
+
+    Per engine, because the two rosters differ and a seat may only be recast
+    within the engine that will speak it: handing the page one flat list would
+    let it offer a neural-only voice for a monster rendering on `standard`,
+    which `retune` would then quietly ignore.
+
+    `ssml` is what that engine will actually honour (`allowed_ssml`). It is
+    here because the alternative is a pitch slider that moves and does nothing:
+    on `neural`, Polly accepts `<prosody rate>` and drops the rest, so the page
+    has to be told rather than left to guess from the engine's name.
+
+    Anonymous and free, like the rest of the read side: it lists, it never
+    renders.
+    """
+    svc = _service()
+    if svc is None or not svc.available():
+        return jsonify({"available": False, "engines": {}})
+
+    from tts.voices import accent_for, allowed_ssml  # noqa: PLC0415
+
+    engines = {}
+    for engine in dict.fromkeys((svc.engine, svc.monster_engine)):
+        pool = svc.voices(engine)
+        if not pool:
+            return jsonify({"available": False, "engines": {}})
+        engines[engine] = {
+            "ssml": sorted(allowed_ssml(engine)),
+            "voices": [
+                {
+                    "id": v.id,
+                    "language": v.language,
+                    "accent": accent_for(v.language),
+                    "gender": (v.gender or "").lower(),
+                }
+                for v in pool
+            ],
+        }
+    return jsonify(
+        {
+            "available": True,
+            "engine": svc.engine,
+            "monster_engine": svc.monster_engine,
+            "engines": engines,
+        }
+    )
+
+
 #: How many seats one cast preview will answer for.
 #:
 #: A party is four, and the largest scenario in `examples/` is four. The cap is
@@ -520,8 +576,17 @@ def speak(game_id: str):
     # before touching the cache, let alone Polly.
     gender, age = _voice_traits_for(entry, row, key)
     size = _creature_size_for(entry, row, key)
+    # The listener's own choice for this seat, if they have made one. It rides
+    # in the URL rather than in stored state because that is where every other
+    # thing that decides these bytes already rides: the seat, the words and the
+    # config token. A tuned clip is a different clip, so it keys, caches and
+    # revalidates separately, and turning a tune off goes back to clips that
+    # are very likely already paid for.
+    tune = tune_from(
+        request.args.get("voice"), request.args.get("rate"), request.args.get("pitch")
+    )
     try:
-        cast, ckey = svc.cache_key_for(key, text, gender, age, size=size)
+        cast, ckey = svc.cache_key_for(key, text, gender, age, size=size, tune=tune)
     except Exception as exc:  # a pool that cannot be cast from
         current_app.logger.warning("tts casting failed: %s", exc)
         return _err(f"{type(exc).__name__}: {exc}", 503)
@@ -555,7 +620,7 @@ def speak(game_id: str):
             # monster is not the table's: reserving at the wrong rate either
             # refuses a clip the game can afford or admits one it cannot.
             with _admission(game_id, entry, svc.price_of(len(text), cast.engine), budget):
-                result = svc.render(key, text, gender, age, size=size)
+                result = svc.render(key, text, gender, age, size=size, tune=tune)
                 if result.usd:
                     _charge(game_id, entry, result.chars, result.usd)
     except _NoBudget as exc:
