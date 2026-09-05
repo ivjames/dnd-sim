@@ -115,6 +115,8 @@
             <input type="checkbox" id="voice-mute-mech"> mute mechanics</label>
           <label class="chk disabled" title="Turn voice on: with no narration there is nothing to hold the game for.">
             <input type="checkbox" id="voice-hold" checked disabled> hold the game for the narrator</label>
+          <button id="voice-lab" class="btn btn-small" type="button"
+                  title="Hear each seat and pick the voice that reads it">voices&hellip;</button>
         </div>
       </div>
 
@@ -201,6 +203,24 @@
 </div>
 
 <!-- NEW GAME PANEL -->
+<!-- VOICE LAB -->
+<div id="voicelab" class="modal" hidden>
+  <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="vl-title">
+    <h2 id="vl-title">Voice lab</h2>
+    <p class="hint">One row per seat. <b>test</b> reads a sample line in that seat&rsquo;s
+      voice, the picker recasts it, and <b>auto</b> hands the row back to the casting.
+      Choices are kept on this device and used for the narration from the next line on.</p>
+    <p id="vl-note" class="hint"></p>
+    <p id="vl-off" class="hint" hidden></p>
+    <div id="vl-rows" class="vl-rows"></div>
+    <p id="vl-empty" class="hint" hidden>Party and monster seats appear here once a game is loaded.</p>
+    <div class="modal-actions">
+      <button type="button" id="vl-reset" class="btn">Reset all</button>
+      <button type="button" id="vl-close" class="btn btn-primary">Done</button>
+    </div>
+  </div>
+</div>
+
 <div id="newgame" class="modal" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ng-title">
     <h2 id="ng-title">New game</h2>

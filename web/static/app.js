@@ -990,13 +990,14 @@
     // page giving up on them for now — a settled refusal (no budget, a mock
     // game) or three failures running — after which every line is spoken by
     // the browser and the panel says so.
-    tts: { available: false, checked: false, engine: '', maxChars: 400,
-           config: '', degraded: false, fails: 0, reason: '' },
+    tts: { available: false, checked: false, engine: '', monsterEngine: '',
+           maxChars: 400, config: '', degraded: false, fails: 0, reason: '' },
     clips: {},             // clip URL → object URL, for what has been fetched
     pending: {},           // clip URL → in-flight promise, so one URL is asked for once
     clipOrder: [],
     gestureArmed: false,   // the document-level "first tap starts it" listener is on
-    settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true },
+    settings: { enabled: false, rate: 'normal', muteMechanics: false, hold: true,
+                tunes: {} },
     unlocked: false,       // a user gesture has started speech on this page
     playing: false,        // transport state: the spectator wants to hear it
     loading: false,        // a game's history is being replayed; the playhead is not placed yet
@@ -1040,6 +1041,7 @@
         V.settings.rate = VOICE_RATES[o.rate] ? o.rate : 'normal';
         V.settings.muteMechanics = !!o.muteMechanics;
         V.settings.hold = o.hold === undefined ? true : !!o.hold;
+        V.settings.tunes = (o.tunes && typeof o.tunes === 'object') ? o.tunes : {};
       }
     } catch (e) { /* private mode or junk */ }
   }
@@ -1101,10 +1103,29 @@
   // of the URL does not name any of those — so without this, reconfiguring the
   // server would leave every browser replaying the old voice from its own cache
   // forever. The server ignores the value; moving it is the whole job.
+  //
+  // A seat the listener has recast in the voice lab carries that choice here
+  // too, for the same reason: the clip is cached under everything that decides
+  // its bytes. A tuned line is a different file from the untuned one, so
+  // turning a tune off goes back to clips that are very likely already paid
+  // for rather than buying the line again.
   function ttsUrl(key, text) {
     return '/api/games/' + encodeURIComponent(S.gameId) + '/tts' +
            '?key=' + encodeURIComponent(key) + '&text=' + encodeURIComponent(text) +
-           (V.tts.config ? '&v=' + encodeURIComponent(V.tts.config) : '');
+           (V.tts.config ? '&v=' + encodeURIComponent(V.tts.config) : '') +
+           tuneQuery(key);
+  }
+
+  // The saved override for one seat, as URL parameters. Empty for a seat that
+  // has never been touched, which is every seat until somebody opens the lab.
+  function tuneQuery(key) {
+    var t = (V.settings.tunes || {})[key];
+    if (!t) return '';
+    var q = '';
+    if (t.voice) q += '&voice=' + encodeURIComponent(t.voice);
+    if (t.rate !== undefined && t.rate !== null) q += '&rate=' + encodeURIComponent(t.rate);
+    if (t.pitch !== undefined && t.pitch !== null) q += '&pitch=' + encodeURIComponent(t.pitch);
+    return q;
   }
 
   // Fetched clips are kept as object URLs so a line can be prefetched while
@@ -1180,6 +1201,7 @@
         }
         V.tts.available = true;
         V.tts.engine = d.engine || '';
+        V.tts.monsterEngine = d.monster_engine || d.engine || '';
         V.tts.config = d.config || '';
         V.tts.maxChars = Number(d.max_chars) || V.tts.maxChars;
         return true;
@@ -1970,6 +1992,250 @@
     document.addEventListener('touchend', unlockOnce, true);
   }
 
+  // ---------- voice lab ----------
+  // The casting deals a seat its voice from a hash of its id (`tts/voices.py`),
+  // which is a good guess and no more: it cannot know that two of your players
+  // sound alike to you, or that the goblin you will hear for an hour is the one
+  // voice you cannot stand. This is where that is overruled — one row per seat,
+  // the roster to choose from, and the line read back so the choice is made by
+  // ear rather than by reading voice names.
+  //
+  // The override travels in the clip URL (`tuneQuery`), so it is the server's
+  // own casting that changes, not a second one in the page: what the lab plays
+  // is the file the narration will play.
+
+  var VL = { roster: null, loading: false, audio: null };
+
+  var VL_SAMPLES = {
+    dm: 'The passage narrows. Somewhere ahead, water drips onto stone.',
+    npc: 'Rooms are two silver, and I want it up front.',
+    monster: 'You should not have come down here, little thing.',
+    pc: 'Stand behind me. I have seen worse than this.'
+  };
+
+  function vlEngineFor(key) {
+    return Speech.isMonsterKey(key) ? (V.tts.monsterEngine || V.tts.engine) : V.tts.engine;
+  }
+
+  function vlRoles() {
+    var ctx = voiceCtx();
+    var roles = [
+      { key: 'dm', label: 'DM / narrator', sample: VL_SAMPLES.dm },
+      { key: 'npc', label: 'NPCs', sample: VL_SAMPLES.npc }
+    ];
+    Object.keys(ctx.party).sort().forEach(function (id) {
+      roles.push({ key: id, label: ctx.names[id] || id, sample: VL_SAMPLES.pc });
+    });
+    Object.keys(ctx.monsters).sort().forEach(function (id) {
+      roles.push({
+        key: 'monster:' + id,
+        label: (ctx.names[id] || id) + ' — monster',
+        sample: VL_SAMPLES.monster
+      });
+    });
+    return roles;
+  }
+
+  // Patch one seat's tune; a field set to null is removed, and a seat left with
+  // nothing drops out entirely — which is what "auto" means, and what keeps a
+  // stored tune from quietly freezing today's casting in place.
+  function vlSetTune(key, patch) {
+    if (!V.settings.tunes || typeof V.settings.tunes !== 'object') V.settings.tunes = {};
+    var all = V.settings.tunes;
+    var cur = all[key] || {};
+    Object.keys(patch).forEach(function (f) {
+      if (patch[f] === null || patch[f] === '') delete cur[f]; else cur[f] = patch[f];
+    });
+    if (Object.keys(cur).length) all[key] = cur; else delete all[key];
+    voiceSaveSettings();
+    clipForget();          // the clips already fetched are in the old voice
+  }
+
+  // Play a sample line in one seat's voice, through the server, exactly as the
+  // narration would ask for it. Its own <audio>: the transport owns V.audio,
+  // and borrowing it would make a preview and the narrator fight over a line.
+  function vlTest(role, btn) {
+    if (!ttsOn()) return;
+    var url = ttsUrl(role.key, role.sample);
+    if (!VL.audio) VL.audio = new Audio();
+    btn.disabled = true;
+    btn.textContent = '…';
+    var done = function (msg) {
+      btn.disabled = false;
+      btn.textContent = 'test';
+      if (msg) vlSay(msg);
+    };
+    // Fetched rather than assigned as a src, so a refusal is the server's JSON
+    // reason (no budget, a mock game) rather than a silent dead <audio>.
+    fetch(url, { credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (d) {
+            throw new Error(d.error || ('HTTP ' + r.status));
+          });
+        }
+        return r.blob();
+      })
+      .then(function (b) {
+        var obj = URL.createObjectURL(b);
+        VL.audio.src = obj;
+        VL.audio.onended = VL.audio.onerror = function () {
+          try { URL.revokeObjectURL(obj); } catch (e) { /* ignore */ }
+        };
+        var p = VL.audio.play();
+        if (p && p['catch']) p['catch'](function () { /* a gesture will come */ });
+        done('');
+      })['catch'](function (e) { done(e.message); });
+  }
+
+  function vlSay(msg) {
+    var n = $('vl-off');
+    n.textContent = msg || '';
+    n.hidden = !msg;
+  }
+
+  function vlSlider(label, min, max, step, value, auto, unit, onChange) {
+    var wrap = el('label', 'vl-slider');
+    wrap.appendChild(el('span', 'vl-slabel', label));
+    var input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min); input.max = String(max); input.step = String(step);
+    input.value = String(value === null || value === undefined ? auto : value);
+    var out = el('span', 'vl-val', value === null || value === undefined ? 'auto' : value + unit);
+    input.addEventListener('input', function () {
+      out.textContent = input.value + unit;
+    });
+    input.addEventListener('change', function () { onChange(Number(input.value)); });
+    wrap.appendChild(input);
+    wrap.appendChild(out);
+    return wrap;
+  }
+
+  function vlRow(role) {
+    var tune = (V.settings.tunes && V.settings.tunes[role.key]) || {};
+    var engine = vlEngineFor(role.key);
+    var spec = (VL.roster && VL.roster.engines && VL.roster.engines[engine]) || null;
+    var canPitch = !!(spec && spec.ssml && spec.ssml.indexOf('pitch') >= 0);
+
+    var row = el('div', 'vl-row');
+    var head = el('div', 'vl-head');
+    head.appendChild(el('span', 'vl-name', role.label));
+    var tag = el('span', 'pill pill-quiet vl-tag', 'custom');
+    head.appendChild(tag);
+    var test = el('button', 'btn btn-small', 'test');
+    test.type = 'button';
+    test.disabled = !ttsOn();
+    test.title = ttsOn() ? 'Read a sample line in this voice'
+                         : 'Server voices are not answering for this game';
+    test.addEventListener('click', function () { vlTest(role, test); });
+    head.appendChild(test);
+    row.appendChild(head);
+
+    var resetBtn = null;
+    function refreshState() {
+      var cur = (V.settings.tunes && V.settings.tunes[role.key]) || null;
+      var on = !!(cur && Object.keys(cur).length);
+      tag.hidden = !on;
+      if (resetBtn) resetBtn.disabled = !on;
+    }
+
+    var sel = el('select', 'vl-voice');
+    sel.setAttribute('aria-label', role.label + ' voice');
+    var autoOpt = el('option', null, 'auto — cast by the server');
+    autoOpt.value = '';
+    sel.appendChild(autoOpt);
+    ((spec && spec.voices) || []).forEach(function (v) {
+      var bits = [v.accent, v.gender].filter(Boolean).join(', ');
+      var o = el('option', null, v.id + (bits ? ' · ' + bits : ''));
+      o.value = v.id;
+      sel.appendChild(o);
+    });
+    sel.value = tune.voice || '';
+    sel.disabled = !spec;
+    sel.addEventListener('change', function () {
+      vlSetTune(role.key, { voice: sel.value || null });
+      refreshState();
+      if (ttsOn()) vlTest(role, test);
+    });
+    row.appendChild(sel);
+
+    var sliders = el('div', 'vl-sliders');
+    sliders.appendChild(vlSlider('rate', 20, 200, 5,
+      tune.rate === undefined ? null : tune.rate, 100, '%', function (v) {
+        vlSetTune(role.key, { rate: v });
+        refreshState();
+        if (ttsOn()) vlTest(role, test);
+      }));
+    var pitch = vlSlider('pitch', -50, 50, 5,
+      tune.pitch === undefined ? null : tune.pitch, 0, '%', function (v) {
+        vlSetTune(role.key, { pitch: v });
+        refreshState();
+        if (ttsOn()) vlTest(role, test);
+      });
+    if (!canPitch) {
+      // Polly's neural engine accepts <prosody rate> and drops the rest, so on
+      // most deployments this slider would move and change nothing. Say that
+      // rather than offering a control that lies.
+      pitch.classList.add('vl-dead');
+      pitch.title = 'The ' + (engine || 'current') + ' engine ignores pitch';
+      pitch.querySelector('input').disabled = true;
+    }
+    sliders.appendChild(pitch);
+    row.appendChild(sliders);
+
+    resetBtn = el('button', 'btn btn-small vl-auto', 'auto');
+    resetBtn.type = 'button';
+    resetBtn.title = 'Back to the voice the server casts for this seat';
+    resetBtn.addEventListener('click', function () {
+      vlSetTune(role.key, { voice: null, rate: null, pitch: null });
+      vlRender();
+    });
+    row.appendChild(resetBtn);
+    refreshState();
+    return row;
+  }
+
+  function vlRender() {
+    var host = $('vl-rows');
+    clear(host);
+    var roles = vlRoles();
+    roles.forEach(function (role) { host.appendChild(vlRow(role)); });
+    $('vl-empty').hidden = roles.length > 2;
+
+    var note = $('vl-note');
+    if (!V.tts.available) {
+      note.textContent = 'This server renders no voices, so there is nothing to pick from — ' +
+        'the narration uses this browser’s own voices, which it chooses itself.';
+    } else if (!S.gameId) {
+      note.textContent = 'A sample is read by the loaded game (that is what it is charged to), ' +
+        'so load a game to hear one.';
+    } else {
+      note.textContent = 'Each new sample is a clip rendered by Polly and charged to this ' +
+        'game’s budget; hearing the same line in the same voice again is free.';
+    }
+    vlSay('');
+  }
+
+  function vlOpen() {
+    $('voicelab').hidden = false;
+    vlRender();
+    if (VL.roster || VL.loading || !V.tts.available) return;
+    VL.loading = true;
+    fetch('/api/tts/voices', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (d) {
+        VL.loading = false;
+        VL.roster = (d && d.available) ? d : { engines: {} };
+        if (!$('voicelab').hidden) vlRender();
+      });
+  }
+
+  function vlClose() {
+    $('voicelab').hidden = true;
+    if (VL.audio) { try { VL.audio.pause(); } catch (e) { /* ignore */ } }
+  }
+
   function voiceInit() {
     if (!Speech) {
       console.info('dnd-sim: speech.js missing; spoken narration hidden');
@@ -2001,6 +2267,17 @@
       V.settings.muteMechanics = this.checked;
       voiceSaveSettings();
       voiceRenderControls();
+    });
+    $('voice-lab').addEventListener('click', vlOpen);
+    $('vl-close').addEventListener('click', vlClose);
+    $('vl-reset').addEventListener('click', function () {
+      V.settings.tunes = {};
+      voiceSaveSettings();
+      clipForget();
+      vlRender();
+    });
+    $('voicelab').addEventListener('click', function (e) {
+      if (e.target === this) vlClose();            // the backdrop closes it
     });
     $('voice-hold').addEventListener('change', function () {
       V.settings.hold = this.checked;

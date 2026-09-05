@@ -67,6 +67,13 @@ __all__ = [
     "CHILD_MAX_AGE",
     "ENGINE_SSML",
     "allowed_ssml",
+    "Tune",
+    "tune_from",
+    "retune",
+    "PITCH_MIN_PCT",
+    "PITCH_MAX_PCT",
+    "RATE_MIN_PCT",
+    "RATE_MAX_PCT",
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_SIZE_BANDS",
@@ -336,6 +343,14 @@ MONSTER_TEMPO: tuple[int, ...] = (90, 95, 100, 105)
 #: a rate outside it is an `InvalidSsmlException`, which is a silent fallback
 #: to the browser's voice for that seat and nothing else.
 RATE_MIN_PCT, RATE_MAX_PCT = 20, 200
+
+#: `<prosody pitch>` accepts far more than this — the clamp is a listenability
+#: bound rather than an API one. Past about half an octave either way a Polly
+#: voice stops sounding like a person with a different voice and starts
+#: sounding like a tape played wrong, which is not a casting choice anybody
+#: wants to keep. A monster that *should* sound wrong gets there through
+#: `tts/dsp.py`, not through this.
+PITCH_MIN_PCT, PITCH_MAX_PCT = -50, 50
 
 
 @dataclass(frozen=True)
@@ -745,3 +760,89 @@ def billable_chars(text: str) -> int:
     https://docs.aws.amazon.com/polly/latest/dg/limits.html (read 2026-09-04).
     """
     return len(str(text or ""))
+
+
+@dataclass(frozen=True)
+class Tune:
+    """A listener's own choice for one seat, over the top of the casting.
+
+    The casting rules deal a voice from the roster and bend it by a hash
+    (`cast_for`), which is a good guess and no more: it cannot know that two of
+    your four players sound alike to you, or that the goblin you have to listen
+    to for an hour is the one voice you cannot stand. This is where that is
+    overruled, one seat at a time.
+
+    Every field is optional and an unset one changes nothing, so a tune that
+    only moves the rate keeps the voice the casting chose — including when a
+    later roster change moves it. The empty tune is the casting itself, which
+    is what "auto" saves.
+    """
+
+    voice_id: str = ""
+    rate_pct: int | None = None
+    pitch_pct: int | None = None
+
+    def __bool__(self) -> bool:
+        return bool(self.voice_id) or self.rate_pct is not None or self.pitch_pct is not None
+
+
+def _clamped_int(value, lo: int, hi: int) -> int | None:
+    """`value` as a whole percent inside [lo, hi], or None if it is not a number.
+
+    Clamped rather than refused: these arrive from a slider, and the useful
+    answer to one dragged past the end is the end. A rate outside Polly's own
+    20–200 is an `InvalidSsmlException`, which the page hears as a seat that
+    silently fell back to the browser's voice — see `RATE_MIN_PCT`.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(lo, min(hi, n))
+
+
+def tune_from(voice_id="", rate=None, pitch=None) -> Tune:
+    """A `Tune` from three loose values (query strings, JSON, whatever).
+
+    Nothing here validates the voice id against a roster: that needs the pool,
+    which is the service's to know, and `retune` does it at the point of use.
+    """
+    return Tune(
+        voice_id=str(voice_id or "").strip()[:64],
+        rate_pct=_clamped_int(rate, RATE_MIN_PCT, RATE_MAX_PCT),
+        pitch_pct=_clamped_int(pitch, PITCH_MIN_PCT, PITCH_MAX_PCT),
+    )
+
+
+def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
+    """`cast` with the listener's choices applied — voice, rate, pitch.
+
+    The engine is never changed, and neither is `fx`: which engine speaks a
+    seat is a deployment's decision (`engine_for`), and the treatment is what
+    makes a monster a monster rather than an actor with a deep voice. A tune
+    recasts *who reads the line*, not what kind of seat it is.
+
+    A voice id that is not in `pool` is ignored rather than refused. The pool is
+    what Polly listed for this engine a moment ago, and a stored tune outlives
+    it: a roster change, a language change, or a deployment that moved the
+    table to an engine this voice does not serve would otherwise turn every
+    line of that seat into a 400 and silence it. Falling back to the casting is
+    the same answer `speech.js` gives for a browser voice that has gone.
+    """
+    if not tune:
+        return cast
+    voice_id = cast.voice_id
+    if tune.voice_id and any(v.id == tune.voice_id for v in pool):
+        voice_id = tune.voice_id
+    return Cast(
+        cast.key,
+        voice_id,
+        cast.language,
+        cast.engine,
+        pitch_pct=cast.pitch_pct if tune.pitch_pct is None else tune.pitch_pct,
+        rate_pct=cast.rate_pct if tune.rate_pct is None else tune.rate_pct,
+        vtl_pct=cast.vtl_pct,
+        fx=cast.fx,
+    )

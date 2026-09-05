@@ -276,16 +276,21 @@ class FakeTTS:
 
         return WAVE if cast.fx else MPEG
 
-    def cast(self, key: str, gender: str = "", age="", *, size=""):
-        from tts.voices import STANDARD_ENGLISH, cast_for  # noqa: PLC0415
+    def cast(self, key: str, gender: str = "", age="", *, size="", tune=None):
+        from tts.voices import STANDARD_ENGLISH, cast_for, retune  # noqa: PLC0415
 
-        return cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key), age,
-                        monster_fx=self.monster_fx, size=size)
+        return retune(
+            cast_for(key, STANDARD_ENGLISH, "Brian", gender, self.engine_for(key), age,
+                     monster_fx=self.monster_fx, size=size),
+            tune,
+            STANDARD_ENGLISH,
+        )
 
-    def cache_key_for(self, key: str, text: str, gender: str = "", age="", *, size=""):
+    def cache_key_for(self, key: str, text: str, gender: str = "", age="", *, size="",
+                      tune=None):
         from tts.cache import cache_key  # noqa: PLC0415
 
-        cast = self.cast(key, gender, age, size=size)
+        cast = self.cast(key, gender, age, size=size, tune=tune)
         # `Cast.cache_key` already folds in the treatment, so a monster keys on
         # what will be done to its audio here as it does in the real service.
         return cast, cache_key(self.engine, cast.cache_key(), text)
@@ -310,16 +315,17 @@ class FakeTTS:
         with gate:
             yield
 
-    def render(self, key: str, text: str, gender: str = "", age="", *, size=""):
-        return self.synthesize(key, text, gender, age, size=size)
+    def render(self, key: str, text: str, gender: str = "", age="", *, size="", tune=None):
+        return self.synthesize(key, text, gender, age, size=size, tune=tune)
 
-    def synthesize(self, key: str, text: str, gender: str = "", age="", *, size=""):
+    def synthesize(self, key: str, text: str, gender: str = "", age="", *, size="",
+                   tune=None):
         from tts.client import TTSError, TTSResult  # noqa: PLC0415
 
         self.calls.append((key, text))
         if self.fail:
             raise TTSError(self.fail)
-        cast, ckey = self.cache_key_for(key, text, gender, age, size=size)
+        cast, ckey = self.cache_key_for(key, text, gender, age, size=size, tune=tune)
         media = self.media_type_for(cast)
         if ckey in self.clips:
             return TTSResult(self.clips[ckey], cast, 0, 0.0, True, ckey, media)
