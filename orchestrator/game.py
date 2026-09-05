@@ -314,7 +314,16 @@ class Game:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
 
-    def _emit_new(self, kind: str, text: str, actor: str | None = None, data: dict | None = None) -> None:
+    def _emit_new(self, kind: str, text: str, actor: str | None = None, data: dict | None = None) -> Any:
+        """Build, publish and return one orchestrator-side event.
+
+        Returned so a turn can add it to its own record: `collected` in
+        `_run_turn` is the list `dm.narrate` is shown, and it otherwise holds
+        only what the engine returned. A refusal has no engine event of its
+        own — `apply` raised instead of returning one — so without appending
+        it the DM is handed the turn with the failed action simply missing,
+        and narrates the intent as though it had happened.
+        """
         ev = self._event(kind, text, actor, data)
         # _event already claimed a seq; _emit claims another, so reuse this one.
         self._publish(ev)
@@ -323,23 +332,7 @@ class Game:
         if self.cfg.tempo_ms:
             time.sleep(self.cfg.tempo_ms / 1000.0)
         self._gate()
-
-    def _publish_collected(self, ev: Any, collected: list) -> None:
-        """Publish an orchestrator-side event and add it to the turn's record.
-
-        `collected` is the list `dm.narrate` is shown, and it otherwise holds
-        only what the engine returned. A refusal has no engine event of its own
-        — `apply` raised instead of returning one — so without this the DM is
-        handed the turn with the failed action simply missing from it, and
-        narrates the intent as though it had happened.
-        """
-        self._publish(ev)
-        self._unsummarized.append(ev)
-        self._events_since_summary += 1
-        collected.append(ev)
-        if self.cfg.tempo_ms:
-            time.sleep(self.cfg.tempo_ms / 1000.0)
-        self._gate()
+        return ev
 
     def _say(self, actor_id: str, name: str, speech: str | None) -> bool:
         """Emit one line of dialogue unless it repeats what was just said.
@@ -946,7 +939,13 @@ class Game:
                 break
             if not templates:
                 break
-            action = self._choose(actor_id, actor, templates, speak=not spoke)
+            if len(templates) == 1 and getattr(templates[0], "type", None) == "end_turn":
+                # Surprised, or otherwise unable to act: the engine offers
+                # only end_turn, so there is nothing to ask a model — and
+                # the ask would cost a full call for each surprised seat.
+                action = self._end_turn_action(actor_id, templates)
+            else:
+                action = self._choose(actor_id, actor, templates, speak=not spoke)
             if action is None:
                 break
             if self._say(actor_id, actor.name, getattr(action, "speech", None)):
@@ -961,10 +960,11 @@ class Game:
                 # legal when it is told. The rejection is collected as well as
                 # emitted so the narrator sees the attempt fail rather than
                 # describing a flight that never happened.
-                rejection = self._event(
-                    "error", f"{actor.name}'s action was rejected: {exc}", actor_id
+                collected.append(
+                    self._emit_new(
+                        "error", f"{actor.name}'s action was rejected: {exc}", actor=actor_id
+                    )
                 )
-                self._publish_collected(rejection, collected)
                 # `speak=False`: it may already have had its line on the
                 # rejected action, and a retry is not a second chance to talk.
                 action = self._choose(
@@ -975,13 +975,14 @@ class Game:
                 try:
                     self.state, events = eng.apply(self.state, action)
                 except Exception as exc2:  # noqa: BLE001 - the retry failed too
-                    again = self._event(
-                        "error",
-                        f"{actor.name}'s second attempt was rejected too "
-                        f"({exc2}); ending the turn.",
-                        actor_id,
+                    collected.append(
+                        self._emit_new(
+                            "error",
+                            f"{actor.name}'s second attempt was rejected too "
+                            f"({exc2}); ending the turn.",
+                            actor=actor_id,
+                        )
                     )
-                    self._publish_collected(again, collected)
                     action = self._end_turn_action(actor_id, templates)
                     if action is None:
                         break

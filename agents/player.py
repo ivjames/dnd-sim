@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from llm.client import LLMClient
+from llm.client import PLAYER_MODEL, LLMClient, cache_min_prefix_tokens
 from llm.cost import Ledger
 
 from .common import (
@@ -22,14 +22,15 @@ from .views import pronouns_of_sheet, render_actions
 
 __all__ = ["PlayerAgent", "AgentOutputError", "DEFAULT_TEMPERATURE", "clamp_temperature"]
 
-#: The shortest system prefix Anthropic will cache for the Haiku models these
-#: seats run on. Below it the `cache_control` marker is accepted and silently
-#: does nothing — which is what it did for the first sixteen live games: 823
-#: player calls, not one cache read, on a block of about 1,900 tokens.
-#: `agents.reference` exists to carry the block past this, with SRD text the
-#: character can actually use rather than filler. Held by
+#: The shortest system prefix Anthropic will cache for the model these seats
+#: run on by default (Haiku 4.5: 4,096 tokens; the table is
+#: `llm.client.CACHE_MIN_PREFIX_TOKENS`). Below it the `cache_control` marker
+#: is accepted and silently does nothing — which is what it did for the first
+#: sixteen live games: 823 player calls, not one cache read, on a block of
+#: about 1,900 tokens. `agents.reference` exists to carry the block past this,
+#: with SRD text the character can actually use rather than filler. Held by
 #: `tests/orchestrator/test_agents.py::test_every_example_seat_clears_the_cache_minimum`.
-CACHE_MIN_TOKENS = 4096
+CACHE_MIN_TOKENS = cache_min_prefix_tokens(PLAYER_MODEL)
 #: Tokens are counted server-side; 3.5 characters per token is the pessimistic
 #: end of the usual English range, so a block that clears the bound by this
 #: measure clears it in fact.

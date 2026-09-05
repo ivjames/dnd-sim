@@ -210,8 +210,9 @@ and the engine checks it only when you send it. A square can be occupied,
 walled off, or further than the movement shown; difficult terrain costs two
 feet of movement for every one and the list does not say which squares are
 difficult, so a path that looks affordable may not be. A suggested destination
-is always reachable and always safe to send; anything else is your risk, and a
-path the engine refuses costs you the turn. "[aN] End turn" is always
+is always reachable and always safe to send; anything else is your risk: a
+path the engine refuses comes back to you once, with the reason, and a second
+refusal ends the turn. "[aN] End turn" is always
 available.
 
 ATTACKS. d20 + ability modifier + proficiency vs the target's AC; ties go to the

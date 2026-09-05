@@ -767,7 +767,8 @@ def _suggest_destinations(state: GameState, actor: Combatant, reach: dict[tuple[
                 nearest = min(Grid.distance_ft(p, _pos(e)) for e in enemies)
                 picks.append((p, f"away from all enemies (nearest {nearest} ft)"))
 
-    if flee or actor.hp * 2 < actor.max_hp:
+    # A fleeing (turned) actor returned above with only far squares.
+    if actor.hp * 2 < actor.max_hp:
         add_far()
     if not picks:
         # Healthy and already engaged: nothing is closer. The chooser that

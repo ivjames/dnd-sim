@@ -672,3 +672,18 @@ def test_the_digest_stops_promising_that_a_path_is_filtered():
     assert "THE PARAMETERS ARE NOT FILTERED" in text
     assert "difficult terrain costs two feet of movement for every one" in text
     assert "A suggested destination is always reachable" in text
+
+
+def test_dm_narrates_engine_system_events_but_not_the_tables_own():
+    """`system` and `error` reach the narrator; the three orchestrator lines
+    marked in `data` (the option menu, the seed line, the round cap) do not."""
+    from agents.dm import _narratable
+
+    ev = lambda kind, data=None: {"kind": kind, "text": "x", "actor": None, "data": data or {}}
+    assert _narratable(ev("system", {"encounter": {"monsters": []}}), "system")  # Enemies appear
+    assert _narratable(ev("system"), "system")  # Dodge, Dash, Disengage, potions...
+    assert _narratable(ev("error"), "error")
+    assert not _narratable(ev("system", {"options": ["a", "b"]}), "system")
+    assert not _narratable(ev("system", {"game_id": "abc", "seed": 1}), "system")
+    assert not _narratable(ev("system", {"round_cap": 20}), "system")
+    assert not _narratable(ev("roll"), "roll")
