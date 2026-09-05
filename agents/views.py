@@ -19,6 +19,7 @@ __all__ = [
     "party_summary",
     "pronouns_for",
     "pronouns_of_sheet",
+    "surprised",
     "PRONOUNS",
     "DEFAULT_PRONOUNS",
 ]
@@ -114,7 +115,7 @@ def _mod(score: int) -> int:
     return (score - 10) // 2
 
 
-def _conds(c: Any) -> str:
+def _condition_names(c: Any) -> list[str]:
     names = []
     for cond in getattr(c, "conditions", None) or []:
         name = getattr(cond, "name", None) or (
@@ -122,6 +123,37 @@ def _conds(c: Any) -> str:
         )
         if name:
             names.append(str(name))
+    return names
+
+
+#: The word both views print for a creature that has not had its first turn of
+#: a combat it was ambushed in.
+SURPRISED = "surprised"
+
+
+def surprised(c: Any) -> bool:
+    """Whether `c` is surprised, however the engine chose to record it.
+
+    Surprise is not one of the SRD's fifteen conditions and `conditions.json`
+    does not carry it, so the engine may hold it as a flag, an attribute, or a
+    condition of its own; all three are read here rather than one of them being
+    picked and the view going quiet if the engine picked another. Being quiet
+    is the failure that matters: a surprised character offered nothing but
+    `end_turn` and told nothing about why spends its one call arguing with the
+    list.
+    """
+    if getattr(c, SURPRISED, False):
+        return True
+    flags = getattr(c, "flags", None)
+    if isinstance(flags, dict) and flags.get(SURPRISED):
+        return True
+    return any(n.lower() == SURPRISED for n in _condition_names(c))
+
+
+def _conds(c: Any) -> str:
+    names = _condition_names(c)
+    if surprised(c) and not any(n.lower() == SURPRISED for n in names):
+        names.append(SURPRISED)
     return ",".join(names) if names else "-"
 
 
@@ -295,9 +327,20 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
         lines.append("YOU: " + _sheet_line(me))
         lines.append("Resources: " + _resources(me))
         lines.append("Your conditions: " + _conds(me))
+        if surprised(me):
+            lines.append(
+                "YOU ARE SURPRISED: you were caught unawares and cannot act or "
+                "move on this first turn, and you take no reactions until it "
+                "ends. End your turn."
+            )
 
     lines.append("")
-    lines.append("COMBATANTS (name | pronouns | side | health | dist | conditions)")
+    # Coordinates as well as distances. A distance says how far a square is,
+    # never which square it is, so a character asked for a `path` had nothing
+    # to build one out of and guessed — which is most of what the engine was
+    # rejecting. The DM view has carried positions from the start; this is the
+    # same column, and it costs about eight characters a row.
+    lines.append("COMBATANTS (name | pronouns | side | health | pos | dist | conditions)")
     for cid, c in combatants.items():
         if not _active(c):
             continue
@@ -310,9 +353,10 @@ def player_view(state: Any, actor_id: str, recent: list, summary: str) -> str:
             health = hp_band(getattr(c, "hp", 0), getattr(c, "max_hp", 1))
             dist = f"{_distance_ft(state, me, c)}ft" if me is not None else "?"
             tag = ""
+        pos = _pos(c)
         lines.append(
             f"{cid} {getattr(c, 'name', '?')}{tag} | {pronouns_for(c)} | "
-            f"{side} | {health} | {dist} | {_conds(c)}"
+            f"{side} | {health} | ({pos[0]},{pos[1]}) | {dist} | {_conds(c)}"
         )
 
     events = _event_lines(recent)
@@ -345,7 +389,10 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
     actor_id = _active_id(state)
     if actor_id is not None:
         actor = combatants.get(actor_id)
-        lines.append(f"TURN: {actor_id} {getattr(actor, 'name', '?')}")
+        turn_line = f"TURN: {actor_id} {getattr(actor, 'name', '?')}"
+        if actor is not None and surprised(actor):
+            turn_line += " — SURPRISED: it can only end its turn, and takes no reactions"
+        lines.append(turn_line)
 
     lines.append("")
     lines.append("COMBATANTS (id | name | pronouns | side | class | HP | AC | pos | conditions)")
@@ -371,8 +418,21 @@ def dm_view(state: Any, recent: list, summary: str) -> str:
     return "\n".join(lines)
 
 
+#: How many suggested destinations a move template prints. The engine offers
+#: more than a prompt wants to read.
+MAX_SUGGESTED = 6
+
+
 def render_actions(templates: list) -> str:
-    """`[a1] Attack Goblin 2 with Longsword (+5, 1d8+3)` — one per line."""
+    """`[a1] Attack Goblin 2 with Longsword (+5, 1d8+3)` — one per line.
+
+    A template that offers `suggested` squares may also offer `labels` saying
+    what each one is for ("adjacent to Goblin 2", "away from all enemies").
+    Those go on a continuation line beneath, never appended after
+    `suggested=[...]`: `MockLLMClient._params_for` reads the suggestions with a
+    line-anchored regex, and anything printed after them on that line takes the
+    mock's destinations away and every mock move with them.
+    """
     out: list[str] = []
     for t in templates or []:
         tid = getattr(t, "id", None) or (t.get("id") if isinstance(t, dict) else "?")
@@ -383,13 +443,24 @@ def render_actions(templates: list) -> str:
         if needs is None and isinstance(t, dict):
             needs = t.get("needs")
         line = f"[{tid}] {label}"
+        note = ""
         if needs:
             line += f"  needs={list(needs)}"
             params = getattr(t, "params", None)
             if params is None and isinstance(t, dict):
                 params = t.get("params")
-            suggested = (params or {}).get("suggested")
+            suggested = list((params or {}).get("suggested") or [])[:MAX_SUGGESTED]
             if suggested:
-                line += f" suggested={list(suggested)[:6]}"
+                line += f" suggested={suggested}"
+                labels = [str(x) for x in ((params or {}).get("labels") or [])]
+                pairs = [
+                    f"{list(sq)} = {lab}"
+                    for sq, lab in zip(suggested, labels)
+                    if str(lab).strip()
+                ]
+                if pairs:
+                    note = "    where " + "; ".join(pairs)
         out.append(line)
+        if note:
+            out.append(note)
     return "\n".join(out)

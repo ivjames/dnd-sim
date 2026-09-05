@@ -12,13 +12,28 @@ from .common import (
     action_class,
     clamp_words,
     extract_json,
+    rejection_preamble,
     render,
     rules_digest,
     speech_fields,
 )
+from .reference import seat_reference
 from .views import pronouns_of_sheet, render_actions
 
 __all__ = ["PlayerAgent", "AgentOutputError", "DEFAULT_TEMPERATURE", "clamp_temperature"]
+
+#: The shortest system prefix Anthropic will cache for the Haiku models these
+#: seats run on. Below it the `cache_control` marker is accepted and silently
+#: does nothing — which is what it did for the first sixteen live games: 823
+#: player calls, not one cache read, on a block of about 1,900 tokens.
+#: `agents.reference` exists to carry the block past this, with SRD text the
+#: character can actually use rather than filler. Held by
+#: `tests/orchestrator/test_agents.py::test_every_example_seat_clears_the_cache_minimum`.
+CACHE_MIN_TOKENS = 4096
+#: Tokens are counted server-side; 3.5 characters per token is the pessimistic
+#: end of the usual English range, so a block that clears the bound by this
+#: measure clears it in fact.
+CHARS_PER_TOKEN = 3.5
 
 # Players sample hot on purpose. At 0.8 a Haiku seat converges: the same
 # character reaches for the same opening line and the same attack every round,
@@ -103,18 +118,31 @@ class PlayerAgent:
         self.actor_id = getattr(sheet, "id", "pc")
         self.name = getattr(sheet, "name", self.actor_id)
         self.role = f"player:{self.actor_id}"
-        self._system = render(
-            "player_system.txt",
-            sheet_line=_sheet_summary(sheet),
-            persona=getattr(sheet, "persona", "") or "a capable adventurer",
-            rules_digest=rules_digest(),
+        # The seat's SRD reference is appended, not prepended: everything above
+        # it is what the older prompt said and where the tests look for it, and
+        # a cached prefix is only stable if new material goes on the end.
+        self._system = (
+            render(
+                "player_system.txt",
+                sheet_line=_sheet_summary(sheet),
+                persona=getattr(sheet, "persona", "") or "a capable adventurer",
+                rules_digest=rules_digest(),
+            ).rstrip()
+            + "\n\n"
+            + seat_reference(sheet)
         )
 
     # -- prompt plumbing ---------------------------------------------------
 
     @property
     def system_blocks(self) -> list[dict]:
-        """Stable, cacheable system prefix (persona + rules + role rules)."""
+        """Stable, cacheable system prefix (persona + rules + role rules + SRD).
+
+        One block, marked `ephemeral`, and byte-identical on every call of a
+        game — `seat_reference` reads the sheet and nothing else, no round, no
+        clock — because a prefix that changes by one character is a prefix that
+        is never read from cache.
+        """
         return [
             {
                 "type": "text",
@@ -137,11 +165,26 @@ class PlayerAgent:
 
     # -- combat ------------------------------------------------------------
 
-    def choose_action(self, view: str, templates: list, *, speak: bool = True) -> Any:
+    def choose_action(
+        self,
+        view: str,
+        templates: list,
+        *,
+        speak: bool = True,
+        rejected: str | None = None,
+    ) -> Any:
         """Pick one legal action. One retry on bad output, then AgentOutputError.
 
         `speak=False` tells the character it has already had its line this turn;
         the reply then carries no speech at all.
+
+        `rejected` is the engine's own complaint about the action this seat
+        chose a moment ago — an occupied square, a wall, a target out of range.
+        It goes in the user turn rather than the system block so the cached
+        prefix stays byte-identical, and it is worth the second call: the
+        engine's message names the thing that was wrong, and a seat told that
+        much usually picks a legal action next. Without it the turn was simply
+        thrown away.
         """
         if not templates:
             raise AgentOutputError("no legal actions offered")
@@ -152,6 +195,7 @@ class PlayerAgent:
             actions=render_actions(templates),
             **speech_fields(speak, SPEECH_WORDS),
         )
+        user = rejection_preamble(rejected) + user
         error: str | None = None
         for attempt in range(2):
             prompt = user if error is None else f"{user}\n\nYOUR LAST REPLY WAS REJECTED: {error}\nTry again. JSON only."

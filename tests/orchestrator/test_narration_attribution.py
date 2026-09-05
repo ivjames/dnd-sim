@@ -208,6 +208,15 @@ def tollhouse() -> GameConfig:
     raw = json.loads((ROOT / "examples" / "tollhouse.json").read_text())
     raw["tempo_ms"] = 0
     raw["mock"] = True
+    # The scenario's own budget is sized from a mock run, and `MockLLMClient`
+    # bills the whole system block on every call — it reports no cache read, so
+    # the per-seat SRD reference that made the block cacheable reads as a third
+    # again in mock money and halts this game at `budget_exceeded` before its
+    # last scene. Live the same block costs less than it did, because live it is
+    # actually read from cache. These tests are about what the narration prompts
+    # say, not what they cost, so the stop is lifted here rather than shortening
+    # the game they read.
+    raw["budget_usd"] = 20.0
     return GameConfig.from_dict(raw)
 
 

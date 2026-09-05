@@ -1,0 +1,114 @@
+COMBAT ACTIONS (SRD)
+
+YOUR TURN. On your turn you can move a distance up to your speed and take one
+action. You decide whether to move first or act first. If you want to do
+something the list does not offer, end your turn instead; the engine decides
+what is possible, not you.
+
+MOVEMENT AND POSITION. You can break up your movement, moving some before and
+some after your action. Every foot of movement in difficult terrain costs one
+extra foot; that doubling applies even if more than one thing in a square
+makes it difficult. Dropping prone costs nothing. Standing up costs an amount
+of movement equal to half your speed. Crawling one foot in difficult terrain
+costs three feet of movement. You can move through a non-hostile creature's
+space, and you can move through a hostile creature's space only if that
+creature is at least two sizes larger or smaller than you; either way, another
+creature's space is difficult terrain for you. You cannot stop in a space
+occupied by another creature.
+
+ACTION. When you take your action you can do one of the following.
+
+Attack. You make one melee or ranged attack. Some features, such as Extra
+Attack, let one Attack action make more than one attack.
+
+Cast a Spell. You cast a spell with a casting time of one action. A spell with
+a casting time of one bonus action is cast with your bonus action instead, and
+if you cast a spell with a bonus action you cannot cast another spell that turn
+except a cantrip with a casting time of one action.
+
+Dash. You gain extra movement for the current turn equal to your speed, after
+any modifiers are applied. With a speed of 30 feet, Dashing gives you 60 feet
+of movement on that turn.
+
+Disengage. Your movement does not provoke opportunity attacks for the rest of
+the turn.
+
+Dodge. Until the start of your next turn, any attack roll made against you has
+disadvantage if you can see the attacker, and you make Dexterity saving throws
+with advantage. You lose this benefit if you are incapacitated or if your speed
+drops to 0.
+
+Help. You lend your aid to another creature in the completion of a task: the
+creature gains advantage on the next ability check it makes to perform that
+task, provided it makes the check before the start of your next turn.
+Alternatively you can aid a friendly creature in attacking a creature within 5
+feet of you; the first attack roll that creature makes against the target
+before the start of your next turn has advantage.
+
+Hide. You make a Dexterity (Stealth) check in an attempt to hide. If you
+succeed you gain certain benefits: you are an unseen attacker, and attack rolls
+against you have disadvantage while you remain hidden. You give away your
+position the moment you make an attack or cast a spell with a verbal component.
+
+Ready. You choose a perceivable circumstance and an action you will take in
+response to it, holding your action until that trigger occurs. Readying a spell
+requires spending the slot when you ready it and holding concentration on it.
+
+Search. You devote your attention to finding something, usually with a Wisdom
+(Perception) or an Intelligence (Investigation) check.
+
+Use an Object. You interact with a second object — you get one free object
+interaction each turn, so this action is for the second one — or you use an
+object that requires an action, such as drinking a potion of healing.
+
+BONUS ACTIONS. You take a bonus action only when a feature, spell or ability
+says you can, and you get one at most on a turn. You choose when to take it
+during your turn unless the bonus action's timing is specified. You cannot take
+a bonus action while incapacitated.
+
+REACTIONS. A reaction is an instant response to a trigger, and you can take
+only one per round. When you take a reaction you cannot take another until the
+start of your next turn. The most common reaction is the opportunity attack:
+when a hostile creature that you can see moves out of your reach, you can use
+your reaction to make one melee attack against it. The attack happens right
+before the creature leaves your reach. A creature that Disengages, teleports,
+or is moved by something other than its own movement does not provoke.
+
+MAKING AN ATTACK. Choose a target within range, apply any modifiers to the
+attack roll, and compare the total to the target's Armor Class. Rolling a 20
+on the d20 is a critical hit and always hits regardless of modifiers; rolling a
+1 always misses. On a critical hit you roll all of the attack's damage dice
+twice and add them together, then add your modifiers as normal.
+
+RANGED ATTACKS. A ranged weapon has a normal range and a long range in
+parentheses. Attacking a target beyond normal range imposes disadvantage; you
+cannot attack a target beyond long range. You have disadvantage on a ranged
+attack roll when a hostile creature that can see you and is not incapacitated
+is within 5 feet of you.
+
+MELEE ATTACKS, GRAPPLING AND SHOVING. A melee attack typically reaches 5 feet.
+Instead of making an attack you can use one attack to grapple (an Athletics
+check contested by the target's Athletics or Acrobatics; on a success the
+target is grappled) or to shove (the same contest; on a success you either
+knock the target prone or push it 5 feet away). You can grapple or shove only a
+creature no more than one size larger than you.
+
+TWO-WEAPON FIGHTING. When you take the Attack action and attack with a light
+melee weapon in one hand, you can use a bonus action to attack with a different
+light melee weapon in your other hand. You do not add your ability modifier to
+the damage of that bonus attack unless the modifier is negative.
+
+UNSEEN ATTACKERS AND TARGETS. When you attack a target you cannot see, you have
+disadvantage on the attack roll, whether or not you are guessing correctly.
+When a creature cannot see you, you have advantage on attack rolls against it.
+
+COVER. A target with half cover has a +2 bonus to AC and Dexterity saving
+throws; three-quarters cover gives +5. A target with total cover cannot be
+targeted directly by an attack or a spell, although some area effects may still
+reach it. Only the most protective degree of cover applies.
+
+CONCENTRATION. Some spells require concentration to keep their magic active.
+You lose concentration if you cast another spell that requires concentration,
+if you are incapacitated or killed, or if you take damage and fail a
+Constitution saving throw whose DC equals 10 or half the damage taken,
+whichever number is higher.
