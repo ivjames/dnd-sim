@@ -46,7 +46,10 @@ _AUTO_CRIT = tuple(n for n, c in _COND.items() if c.get("auto_crit_within_5"))
 _AUTO_FAIL_SAVES = {n: tuple(c.get("auto_fail_saves") or ()) for n, c in _COND.items()}
 _SAVE_DISADVANTAGE = {n: tuple(c.get("save_disadvantage") or ()) for n, c in _COND.items()}
 # Engine-only markers that are not SRD conditions: "hidden" (after a successful
-# Hide) and "turned" (Turn Undead). They ride on Combatant.conditions too.
+# Hide), "turned" (Turn Undead) and "surprised" (SRD surprise: no move, action
+# or reaction until the creature's first turn of the combat ends). They ride on
+# Combatant.conditions too.
+SIDES_SURPRISABLE = ("party", "enemy")
 _TURN_FLAGS = (
     "dodging", "disengaged", "sneak_attack_used", "martial_advantage_used",
     "light_weapon_attacked", "cast_bonus_spell", "cast_action_spell",
@@ -114,7 +117,8 @@ def _can_act(c: Combatant) -> bool:
 
 def _can_react(c: Combatant) -> bool:
     return (_can_act(c) and not c.turn.get("reaction", False)
-            and not c.flags.get("no_reactions") and not c.has_condition("turned"))
+            and not c.flags.get("no_reactions") and not c.has_condition("turned")
+            and not c.has_condition("surprised"))
 
 
 def _hostile(a: Combatant, b: Combatant) -> bool:
@@ -518,6 +522,9 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
     turn = actor.turn
     if not _can_act(actor) or actor.flags.get("lethargic"):
         add("end_turn", "End turn", {}, [], "free")
+        return out
+    if actor.has_condition("surprised"):
+        add("end_turn", "End turn (surprised: no move, action or reaction until this turn ends)", {}, [], "free")
         return out
 
     action_free = not turn.get("action", False)
@@ -2618,6 +2625,8 @@ def _end_of_turn(new: GameState, events: list[Event], rng: RNG, c: Combatant) ->
     if not c.flags.get("turn_ended"):
         _ev(new, events, "turn_end", f"{c.name}'s turn ends.", c.id)
     c.flags.pop("turn_ended", None)
+    if c.has_condition("surprised"):
+        _remove_condition(new, events, c, "surprised", "its first turn is over")
     # Flaming Spheres: a creature that ends its turn within 5 ft of one burns.
     for caster in sorted(new.combatants.values(), key=lambda x: x.id):
         fs = caster.flags.get("flaming_sphere")
@@ -2716,6 +2725,7 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
         if c is None or c.dead:
             continue
         if c.hp <= 0:
+            c.remove_condition("surprised")  # its first turn passes, dying
             if not c.stable and not over:
                 _death_save(new, events, rng, c)
             if c.hp <= 0 or c.dead:
@@ -2724,7 +2734,19 @@ def _advance(new: GameState, events: list[Event], rng: RNG) -> None:
             return
 
 
-def start_combat(state: GameState, rng_state: dict | None = None) -> tuple[GameState, list[Event]]:
+def start_combat(state: GameState, rng_state: dict | None = None,
+                 surprised: str | None = None) -> tuple[GameState, list[Event]]:
+    """Roll initiative and open the first turn.
+
+    `surprised` names a side — "party" or "enemy" — that did not notice the
+    other (SRD: the DM decides who is surprised). Each living member of it is
+    marked `surprised`: `legal_actions` offers it only `end_turn` and it can
+    take no reaction, until its first turn of the combat ends and the marker
+    is consumed. The `combat_start` event carries `surprised` in its data and
+    a `condition_add` is emitted per creature so the DM can narrate it.
+    """
+    if surprised is not None and surprised not in SIDES_SURPRISABLE:
+        raise IllegalAction(f"surprised must be one of {SIDES_SURPRISABLE} or None, not {surprised!r}")
     new = state.copy()
     events: list[Event] = []
     rng = RNG.from_state(rng_state) if rng_state else _rng_of(new)
@@ -2740,9 +2762,16 @@ def start_combat(state: GameState, rng_state: dict | None = None) -> tuple[GameS
     for c in new.combatants.values():
         _reset_turn(c)
     order = ", ".join(f"{new.combatants[cid].name} {total}" for cid, total in new.initiative)
-    _ev(new, events, "combat_start", f"Roll for initiative! Order: {order}.", None,
+    caught = [c for c in new.combatants.values() if surprised and c.side == surprised and _alive(c)]
+    text = f"Roll for initiative! Order: {order}."
+    if caught:
+        text += " The party is surprised!" if surprised == "party" else " The enemies are surprised!"
+    _ev(new, events, "combat_start", text, None,
         initiative=[[cid, total] for cid, total in new.initiative],
-        rolls={cid: r.to_dict() for cid, _, _, r in rolled})
+        rolls={cid: r.to_dict() for cid, _, _, r in rolled},
+        surprised=surprised if caught else None)
+    for c in sorted(caught, key=lambda x: x.id):
+        _add_condition(new, events, c, Condition("surprised", source=None), None)
     new.round = 0
     new.turn_index = len(new.initiative) - 1
     _advance(new, events, rng)
