@@ -395,6 +395,7 @@
     }
     if (node) node.setAttribute('data-seq', String(ev.seq));
     voiceOnEvent();
+    scoreOnEvent(ev);
     // Monsters are spawned mid-game and announced by this one event; every
     // later trigger is debounced 700 ms, which at tempo_ms 0 is several turns
     // of a creature the page has never heard of — no name for it, no voice
@@ -1940,6 +1941,11 @@
     var t = transcriptEl();
     t.classList.toggle('voice-clickable', on);
     t.classList.toggle('has-playhead', on && behind > 0);
+
+    // The score ducks under whatever is being read. Not a rendering concern,
+    // but every transition the narrator makes ends up here, which makes this
+    // the one place that cannot miss one.
+    scoreDuckEval();
   }
 
   function voiceShow() {
@@ -2039,6 +2045,415 @@
       }
       voiceRenderControls();
     });
+  }
+
+  // ---------- the score ----------
+  // Music, stings and swells under the game. `tools/audio` picks them and
+  // writes `audio/manifest.json` carrying each cue's match rule beside its
+  // file (AUDIO.md); `/api/audio` serves that; `cues.js` turns an event into
+  // the cues it fires; and this is the mixer.
+  //
+  // Nothing here names a cue or an event kind. What plays is whatever the pack
+  // assigns to the rule an event matched, so re-picking the audio changes what
+  // the game sounds like without changing a line of this file — which is the
+  // whole reason the manifest carries the rules rather than the page.
+  //
+  // Two layers, because that is what the cue table is. BEDS (music, ambience)
+  // are the slot: one plays at a time and a new one crossfades over it, which
+  // is why `combat_start` can swap the bed and hit a sting in the same beat
+  // without the two fighting for the same channel. Everything else is a
+  // one-shot laid on top.
+  //
+  // The bed DUCKS while a line is being read. A spectator is here for the
+  // words; the score is the room they are said in, and a bed that competes
+  // with the narrator is worse than no bed at all.
+  //
+  // Cues fire from `renderEvent` — from the REVEAL, not from arrival. With the
+  // narrator running that is the beat the line lands in, so a sting is heard
+  // with the sentence it belongs to rather than minutes ahead of it while the
+  // queue drains behind the gate.
+  var Cues = window.DndCues || null;
+  var SCORE_VOLUMES = { quiet: 0.3, normal: 0.6, loud: 1 };
+  var SCORE_DUCK = 0.3;        // what the bed drops to under a spoken line
+  var SCORE_RAMP_MS = 250;     // duck and unduck; beds fade at the pack's rate
+  var SCORE_SHOTS = 3;         // one-shots at once — over that, the oldest goes
+  var A = {
+    ready: false,           // a pack with at least one playable cue answered
+    unlocked: false,        // a user gesture has started audio on this page
+    gestureArmed: false,
+    settings: { enabled: false, volume: 'normal' },
+    cues: [], base: '/audio/', digest: '', reason: '',
+    ctx: null, ctxOff: false,   // ctxOff: no Web Audio here; element volume it is
+    master: null, bedBus: null, shotBus: null,
+    bed: null,              // the bed in play: { cue, el, gain, node, stopping }
+    shots: [],              // one-shots in flight, oldest first
+    ducked: false
+  };
+
+  function scoreArmed() {
+    return A.ready && A.settings.enabled && A.unlocked && !pageHidden();
+  }
+
+  function scoreLoadSettings() {
+    try {
+      var o = JSON.parse(localStorage.getItem('dndsim.sound') || 'null');
+      if (o && typeof o === 'object') {
+        A.settings.enabled = !!o.enabled;
+        A.settings.volume = SCORE_VOLUMES[o.volume] ? o.volume : 'normal';
+      }
+    } catch (e) { /* private mode or junk */ }
+  }
+  function scoreSaveSettings() {
+    try { localStorage.setItem('dndsim.sound', JSON.stringify(A.settings)); } catch (e) { /* ignore */ }
+  }
+
+  function scoreVolume() { return SCORE_VOLUMES[A.settings.volume] || SCORE_VOLUMES.normal; }
+
+  // Web Audio where there is any: a gain node per layer is what makes ducking
+  // and crossfades a ramp rather than a stepped `volume`. Where there is none
+  // (an old browser, a locked-down one), every level below falls back to the
+  // element's own `volume`, which cannot ramp — so the score still plays, just
+  // without the fades. Built lazily and inside the unlocking gesture: a
+  // context created before one is born suspended, and on iOS stays that way.
+  function scoreCtx() {
+    if (A.ctx || A.ctxOff) return A.ctx;
+    var Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) { A.ctxOff = true; return null; }
+    try {
+      var ctx = new Ctor();
+      A.master = ctx.createGain();
+      A.bedBus = ctx.createGain();
+      A.shotBus = ctx.createGain();
+      A.bedBus.connect(A.master);
+      A.shotBus.connect(A.master);
+      A.master.connect(ctx.destination);
+      A.ctx = ctx;
+      scoreApplyLevels(0);
+    } catch (e) {
+      A.ctxOff = true;
+      A.ctx = null;
+    }
+    return A.ctx;
+  }
+
+  function scoreRamp(param, to, ms) {
+    var now = A.ctx.currentTime;
+    try {
+      param.cancelScheduledValues(now);
+      param.setValueAtTime(param.value, now);
+      if (ms > 0) param.linearRampToValueAtTime(to, now + ms / 1000);
+      else param.setValueAtTime(to, now);
+    } catch (e) { param.value = to; }
+  }
+
+  // The user's volume, and the duck, applied wherever they live in this
+  // browser: on the two buses with Web Audio, on each element without it.
+  function scoreApplyLevels(ms) {
+    var duck = A.ducked ? SCORE_DUCK : 1;
+    if (A.ctx) {
+      scoreRamp(A.master.gain, scoreVolume(), ms);
+      scoreRamp(A.bedBus.gain, duck, ms);
+      return;
+    }
+    if (A.bed) scoreElementLevel(A.bed);
+    A.shots.forEach(scoreElementLevel);
+  }
+
+  function scoreElementLevel(play) {
+    if (A.ctx || !play || !play.el) return;
+    var duck = (play.bed && A.ducked) ? SCORE_DUCK : 1;
+    var v = Cues.gainOf(play.cue.gain_db) * scoreVolume() * duck;
+    try { play.el.volume = Math.max(0, Math.min(1, v)); } catch (e) { /* ignore */ }
+  }
+
+  // Lower the bed while the narrator is mid-line. Driven off `V.current`,
+  // which is true for a server clip and for a browser utterance alike — the
+  // score does not care which engine is reading, only that something is.
+  function scoreDuckEval() {
+    var want = !!V.current;
+    if (want === A.ducked) return;
+    A.ducked = want;
+    scoreApplyLevels(SCORE_RAMP_MS);
+  }
+
+  // Start one cue. The element is the source in both worlds; with a context it
+  // is routed through a gain node of its own carrying the cue's recorded dB,
+  // and without one that dB is folded into `volume`.
+  function scorePlay(cue) {
+    var play = { cue: cue, el: null, gain: null, node: null, bed: Cues.isBed(cue),
+                 stopping: false, dropped: false, detach: null };
+    var el;
+    try { el = new Audio(); } catch (e) { return null; }
+    play.el = el;
+    el.preload = 'auto';
+    el.src = Cues.assetUrl(A.base, cue, A.digest);
+
+    var ctx = scoreCtx();
+    if (ctx) {
+      try {
+        play.node = ctx.createMediaElementSource(el);
+        play.gain = ctx.createGain();
+        play.gain.gain.value = 0;          // every cue fades up, if only over 0 ms
+        play.node.connect(play.gain);
+        play.gain.connect(play.bed ? A.bedBus : A.shotBus);
+      } catch (e) { play.node = null; play.gain = null; }
+    }
+    if (!play.gain) { el.volume = 0; scoreElementLevel(play); }
+
+    // Trim and loop as the pack recorded them. `el.loop` covers the ordinary
+    // case; a bed with trimmed ends has to be sent back by hand, because the
+    // element loops the file rather than the part of it anyone picked. What
+    // counts as trimmed is `Cues.trimOf`, and it is a function rather than two
+    // lines here because getting it wrong is inaudible in the code and very
+    // audible in the room — see the note on it.
+    var trim = Cues.trimOf(cue), from = trim.from, to = trim.to;
+    var trimmed = from > 0 || isFinite(to);
+    el.loop = !!cue.loop && !trimmed;
+    if (from > 0) {
+      el.addEventListener('loadedmetadata', function () {
+        try { el.currentTime = from; } catch (e) { /* ignore */ }
+      });
+    }
+    var onTime = function () {
+      if (!isFinite(to) || el.currentTime < to) return;
+      if (cue.loop) { try { el.currentTime = from; } catch (e) { /* ignore */ } }
+      else scoreStop(play, 0);
+    };
+    if (trimmed) el.addEventListener('timeupdate', onTime);
+    // A one-shot lets go of itself; a bed that has run out (`music_victory` is
+    // 28 seconds and does not loop) leaves the slot empty rather than looping
+    // something nobody picked for the silence after a fight.
+    var onDone = function () { scoreDrop(play); };
+    el.addEventListener('ended', onDone);
+    el.addEventListener('error', onDone);
+    // Releasing the element is what makes this necessary rather than tidy:
+    // emptying `src` makes the element fail to load, which fires `error`,
+    // which would call `scoreDrop` again — a loop that ends the tab rather
+    // than the sound. The handlers come off first, and `dropped` is the belt
+    // to that braces.
+    play.detach = function () {
+      el.removeEventListener('timeupdate', onTime);
+      el.removeEventListener('ended', onDone);
+      el.removeEventListener('error', onDone);
+    };
+
+    var fade = Math.max(0, Number(cue.fade_in_ms) || 0);
+    if (play.gain) scoreRamp(play.gain.gain, Cues.gainOf(cue.gain_db), fade);
+    else scoreElementLevel(play);
+    try {
+      var p = el.play();
+      if (p && p['catch']) p['catch'](function () { scoreDrop(play); });
+    } catch (e) { scoreDrop(play); return null; }
+    return play;
+  }
+
+  // Fade a cue out and let it go. `ms` overrides the pack's fade, which is
+  // what a game switch wants: gone now, not gone in two seconds.
+  function scoreStop(play, ms) {
+    if (!play || play.stopping) return;
+    play.stopping = true;
+    var fade = ms === undefined ? Math.max(0, Number(play.cue.fade_out_ms) || 0) : ms;
+    if (play.gain) scoreRamp(play.gain.gain, 0, fade);
+    setTimeout(function () { scoreDrop(play); }, fade);
+  }
+
+  function scoreDrop(play) {
+    if (!play || play.dropped) return;
+    play.dropped = true;
+    play.stopping = true;
+    if (play.detach) play.detach();
+    try { play.el.pause(); } catch (e) { /* ignore */ }
+    // `removeAttribute` + `load()` is how a media element is let go of: an
+    // empty `src` string resolves against the document and fetches the page
+    // itself, which is both a wasted request and the error described above.
+    try { play.el.removeAttribute('src'); play.el.load(); } catch (e) { /* ignore */ }
+    if (play.node) { try { play.node.disconnect(); } catch (e) { /* ignore */ } }
+    if (play.gain) { try { play.gain.disconnect(); } catch (e) { /* ignore */ } }
+    if (A.bed === play) { A.bed = null; scoreRenderControls(); }
+    var i = A.shots.indexOf(play);
+    if (i >= 0) A.shots.splice(i, 1);
+  }
+
+  function scoreFire(cue) {
+    if (!cue || !cue.file) return;
+    if (Cues.isBed(cue)) {
+      // The same bed firing again is the same bed: `combat_start` on a second
+      // fight in one scene must not restart the music under it.
+      if (A.bed && !A.bed.stopping && A.bed.cue.id === cue.id) return;
+      if (A.bed) scoreStop(A.bed);
+      A.bed = scorePlay(cue);
+      scoreRenderControls();
+      return;
+    }
+    while (A.shots.length >= SCORE_SHOTS) scoreDrop(A.shots[0]);
+    var play = scorePlay(cue);
+    if (play) A.shots.push(play);
+  }
+
+  function scoreOnEvent(ev) {
+    // `V.loading` is the history replay: a page opened mid-game renders
+    // hundreds of events in one pass, and firing their cues would be every
+    // sting of the evening at once. The bed that fight is being fought to is
+    // picked up afterwards by `scoreCatchUp`.
+    if (!scoreArmed() || V.loading) return;
+    Cues.cuesForEvent(ev, A.cues).forEach(scoreFire);
+  }
+
+  // Join a game in progress: take the bed from the newest event in the
+  // transcript that fires one and start it, without the one-shots, which
+  // belong to moments that have already gone by.
+  function scoreCatchUp() {
+    if (!scoreArmed() || A.bed) return;
+    for (var i = S.events.length - 1; i >= 0; i--) {
+      var beds = Cues.cuesForEvent(S.events[i], A.cues).filter(Cues.isBed);
+      if (beds.length) { beds.forEach(scoreFire); return; }
+    }
+    scoreRenderControls();   // nothing to pick up: say so rather than leave the last game's line
+  }
+
+  // Switching games: silence at once. The next game's bed comes from its own
+  // history, not from whatever the last one was fighting to.
+  function scoreReset() {
+    if (A.bed) scoreStop(A.bed, 0);
+    A.shots.slice().forEach(function (p) { scoreStop(p, 0); });
+    A.bed = null;
+    A.shots = [];
+    scoreRenderControls();
+  }
+
+  // Must run inside a user gesture, exactly as the narration must: a browser
+  // starts no sound without one. Turning the toggle on IS that gesture; a
+  // spectator whose setting was already on gets it from their first tap.
+  function scoreUnlock() {
+    if (A.unlocked || !A.ready) return;
+    A.unlocked = true;
+    var ctx = scoreCtx();
+    if (ctx && ctx.state === 'suspended') {
+      try { ctx.resume(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function scoreArmGesture() {
+    if (A.gestureArmed || !A.settings.enabled) return;
+    A.gestureArmed = true;
+    var once = function (e) {
+      var id = e && e.target && e.target.id;
+      if (id === 'sound-on' || id === 'sound-vol') return;   // those decide for themselves
+      document.removeEventListener('click', once, true);
+      document.removeEventListener('touchend', once, true);
+      if (A.settings.enabled && !A.unlocked) { scoreUnlock(); scoreCatchUp(); scoreRenderControls(); }
+    };
+    document.addEventListener('click', once, true);
+    document.addEventListener('touchend', once, true);
+  }
+
+  function scoreEnable() {
+    A.settings.enabled = true;
+    scoreSaveSettings();
+    scoreUnlock();
+    scoreCatchUp();
+    scoreRenderControls();
+  }
+
+  function scoreDisable() {
+    A.settings.enabled = false;
+    scoreSaveSettings();
+    scoreReset();
+    scoreRenderControls();
+  }
+
+  // The cue id is the only short name a cue has — the manifest's `when` is a
+  // sentence and its credit is a paragraph — so the group prefix comes off and
+  // the underscores become spaces. `music_combat_desperate` reads "combat
+  // desperate", which is what it is.
+  function scoreBedName() {
+    if (!A.bed) return '';
+    return String(A.bed.cue.id).replace(/^[a-z]+_/, '').replace(/_/g, ' ');
+  }
+
+  function scoreNowText() {
+    if (!A.settings.enabled) return 'sound off';
+    if (!A.unlocked) return 'tap anywhere to start the score';
+    if (A.bed) return '♪ ' + scoreBedName();
+    return pageHidden() ? 'silent while the tab is in the background' : 'silent — waiting for a cue';
+  }
+
+  function scoreRenderControls() {
+    if (!A.ready) return;
+    $('sound-on').checked = A.settings.enabled;
+    $('sound-vol').value = A.settings.volume;
+    $('sound-vol').disabled = !A.settings.enabled;
+    $('sound').classList.toggle('locked', A.settings.enabled && !A.unlocked);
+    $('score-now').textContent = scoreNowText();
+  }
+
+  // Attribution, which for most of this pack is a licence condition rather
+  // than a courtesy: nearly all of it is CC BY, and the wording each source
+  // requires is what `/api/audio` hands over as `credit`. Rendered once, for
+  // the whole pack rather than for what happens to be playing — a credit that
+  // appears for eight seconds during a fight is not one anybody can read.
+  function scoreRenderCredits() {
+    var list = $('score-credits');
+    clear(list);
+    A.cues.forEach(function (c) {
+      if (!c.credit) return;
+      list.appendChild(el('li', null, c.credit));
+    });
+  }
+
+  // A tab nobody is looking at should not be playing music at them. The bed is
+  // paused rather than dropped, so coming back picks it up where it stopped;
+  // one-shots are seconds long and are left to finish.
+  function scorePageHidden(hidden) {
+    if (A.bed && A.bed.el) {
+      try {
+        if (hidden) A.bed.el.pause();
+        else if (scoreArmed()) {
+          var p = A.bed.el.play();
+          if (p && p['catch']) p['catch'](function () { /* nothing to hear */ });
+        }
+      } catch (e) { /* ignore */ }
+    }
+    scoreRenderControls();
+  }
+
+  function scoreInit() {
+    if (!Cues) {
+      console.info('dnd-sim: cues.js missing; the score stays silent');
+      return;
+    }
+    scoreLoadSettings();
+
+    $('sound-on').addEventListener('change', function () {
+      if (this.checked) scoreEnable(); else scoreDisable();
+    });
+    $('sound-vol').addEventListener('change', function () {
+      A.settings.volume = SCORE_VOLUMES[this.value] ? this.value : 'normal';
+      scoreSaveSettings();
+      scoreApplyLevels(SCORE_RAMP_MS);
+    });
+
+    // Asked once, and late, like the voice probe: a server with no pack is a
+    // page with no score, which is what every page was before this existed.
+    fetch('/api/audio', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (d) {
+        if (!d || !d.available) {
+          A.reason = (d && d.reason) || 'this server serves no audio pack';
+          return;
+        }
+        A.cues = Cues.fromManifest(d);
+        A.base = d.base || A.base;
+        A.digest = d.digest || '';
+        A.ready = A.cues.length > 0;
+        if (!A.ready) return;
+        $('sound').hidden = false;
+        $('score-panel').hidden = false;
+        scoreRenderCredits();
+        scoreRenderControls();
+        scoreArmGesture();
+      });
   }
 
   // ---------- stream ----------
@@ -2154,6 +2569,7 @@
     // transcript already cleared it files seq 0, which would make the new game
     // replay from its first line — and would leave the old game held.
     voiceReset();
+    scoreReset();
     S.snapGen++;        // an answer for the outgoing game must not land on this one
     S.gameId = id;
     S.activeId = null;
@@ -2180,7 +2596,7 @@
         (events || []).forEach(ingest);
         return refreshSnapshot();
       })
-      .then(function () { if (current()) voiceStartAt(); })
+      .then(function () { if (current()) { voiceStartAt(); scoreCatchUp(); } })
       .then(function () {
         if (!current()) return;
         if (!TERMINAL[S.status]) connect(id);
@@ -2604,6 +3020,7 @@
         voiceRepump();      // pick the same line back up, and let the queue move
         voiceHoldEval();
       }
+      scorePageHidden(document.hidden);
       voiceRenderControls();
       if (!document.hidden && S.gameId && !TERMINAL[S.status]) {
         if (!S.es || S.es.readyState === 2) connect(S.gameId);
@@ -2612,6 +3029,7 @@
     });
 
     voiceInit();
+    scoreInit();
 
     api('/api/health').then(function (h) {
       if (h && h.mock) {

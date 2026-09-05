@@ -4,7 +4,7 @@ Input is whatever the picker's "Copy configuration" produced. Output is a
 directory that a player only has to be pointed at:
 
     assets/<group>/<cue id>.<ext>   the audio
-    manifest.json                   cue → file + playback knobs + match rule
+    manifest.json                   cue → file + playback knobs + match rule + credit
     CREDITS.md                      attribution for every licence that wants it
 
 The manifest carries each cue's `match` rule copied out of `cues.py`, so
@@ -179,6 +179,14 @@ def fetch_all(doc: dict, out: Path, *, client: httpx.Client, force: bool = False
                 "page_url": a.get("page_url"),
             },
         })
+        # The finished sentence, beside the parts it is made of. A player has
+        # to show this — most of the pack is CC BY and attribution is a
+        # condition of playing it at all — and the wording each source requires
+        # is decided here, so it is written here rather than re-derived by
+        # whatever ends up doing the showing. It is also what keeps the audio
+        # tool off the runtime path: the page reads a manifest, not this
+        # module.
+        entry["credit_text"] = credit_line(entry["credit"])
         cues_out[cue_id] = entry
 
     return {

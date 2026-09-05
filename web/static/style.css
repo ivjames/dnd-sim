@@ -298,6 +298,7 @@ body {
    narration on this game the controls take the whole of it. */
 .under { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; flex: 0 0 auto; }
 .under > #voice-panel { flex: 3 1 380px; }
+.under > #score-panel { flex: 1 1 240px; }
 .under > .panel-controls { flex: 1 1 300px; }
 
 .panel {
@@ -785,3 +786,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .hpbar i { transition: none; }
 }
+
+/* ---------- the score ----------
+   A panel rather than a line in the transport, because the credits have to
+   live somewhere a listener can actually read them: most of the pack is CC BY,
+   and attribution is a condition of playing it at all, not a nicety. Closed by
+   default — it is a list nobody needs open, but it must be one click away
+   whenever the music is on. */
+#score-panel { display: flex; flex-direction: column; gap: 4px; }
+#score-panel[hidden] { display: none; }
+#score-now { flex: 0 0 auto; min-height: 0; }
+#sound.locked .chk { color: var(--accent); }
+.credits { font-size: 11px; font-family: var(--mono); color: var(--ink-faint); }
+.credits summary { cursor: pointer; letter-spacing: .04em; }
+.credits ul {
+  margin: 6px 0 0; padding: 0 0 0 14px;
+  max-height: 9em; overflow-y: auto; overflow-wrap: anywhere;
+}
+.credits li { margin: 0 0 4px; line-height: 1.35; }

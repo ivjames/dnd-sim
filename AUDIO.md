@@ -1,10 +1,16 @@
 # Sourcing music, ambience, stings, swells and effects
 
-A tool for picking the game's audio, not for playing it. It searches the
-openly-licensed libraries, builds a preview screen you audition in a browser,
-and turns what you picked into files on disk with a manifest and credits. What
-plays the manifest — the spectator UI, a server mixer, something else — is a
-separate decision and is not built yet.
+A tool for picking the game's audio. It searches the openly-licensed libraries,
+builds a preview screen you audition in a browser, and turns what you picked
+into files on disk with a manifest and credits.
+
+**The spectator page plays that manifest.** `web/routes/audio.py` serves it at
+`GET /api/audio` with the files under `/audio/...`, `web/static/cues.js` turns
+an event into the cues it fires — the same rules as `cues.py`, checked against
+it by `web/tests/test_cues_js.py` — and `app.js` mixes them under the
+narration. The page holds no cue id and no event kind: everything it plays it
+learns from the manifest, so re-picking the audio changes what the game sounds
+like without touching the page. See "Playing it" below.
 
 ```bash
 export FREESOUND_API_KEY=...            # optional, and the one worth having
@@ -74,6 +80,40 @@ narrowed to field recordings. Generic words are dropped from an Archive query
 before it is sent — every field recording's description says "ambience", so
 ORing that word in returns the collection in its own order and the word that
 picks one out does no work.
+
+## Playing it
+
+Turn **sound** on in the top bar. It is off until someone asks for it, and the
+first tap is what starts it — browsers make no sound without a gesture, which
+is the same rule the narration lives under.
+
+What happens then:
+
+- **Two layers, as the cue table has them.** `music` and `ambience` are the
+  bed: one plays at a time, and a cue taking the slot crossfades over whatever
+  was in it at the fade times the manifest records. Stings, swells and effects
+  are one-shots laid on top, three at once at most — over that the oldest gives
+  way, because a burst of six is a noise rather than six sounds.
+- **The bed ducks while a line is read**, whichever engine is reading it. The
+  words are what a spectator is here for.
+- **Cues fire when the page reveals an event, not when it arrives.** With the
+  narrator running that is the beat the line is read in, so a sting lands with
+  its sentence instead of minutes ahead of it while the queue drains.
+- **A page opened mid-game is silent through the replay** and then picks up the
+  bed from the newest event in the transcript that fires one — the music the
+  fight is being fought to, without the stings of moments already gone.
+- **The credits are on the page**, in the Score panel, for the whole pack
+  rather than for whatever is playing. That is a licence condition, not a
+  courtesy: see below.
+
+A cue with no `match` rule (`music_explore`, the swells, `music_defeat`) is
+picked but never fires, because nothing in the event stream says when it
+should. They are the cues whose `when` is written for a human; giving them a
+trigger is a decision about the game, not about this player.
+
+Where the pack lives is `DND_AUDIO_DIR`, defaulting to `audio/` in the
+checkout. A server without one answers `{"available": false}` and the page
+simply has no Score panel, which is what every page had before this existed.
 
 ## Licences
 
@@ -229,7 +269,14 @@ candidate's identity and URLs, its licence, and the playback knobs you set
 
 **`manifest.json`** — what `fetch` writes beside the files. The same knobs, plus
 the local path, size and sha256, plus the cue's `match` rule and `when`, plus
-the credit block. Ordered like the cue table, so a diff between two runs reads.
+the credit block *and* `credit_text`, the finished sentence built from it.
+Ordered like the cue table, so a diff between two runs reads.
+
+`credit_text` is there so that whatever plays this never has to rebuild it. The
+wording each source requires is decided in `fetch.credit_line`; a player that
+derived its own would be the same licence rule in two places, and it is also
+what keeps this tool off the runtime path — the page reads a manifest, not
+`tools/`.
 
 ## Commands
 
@@ -260,13 +307,18 @@ redone.
 
 ## What this deliberately does not do
 
-- **No playback in the game.** Nothing under `web/` or `orchestrator/` imports
-  any of this, and no event currently produces a sound. The manifest is the
-  handoff point; wiring it into the spectator UI is a separate change with its
-  own decisions (per-viewer volume, ducking under the narration voice, whether
-  beds cross-fade on the client or a mixer runs server-side).
-- **The playback knobs are still intent, not baked in.** Levelling is applied
-  to the file; `gain_db`, `loop`, the fades and the trim points recorded per cue
-  are for a player to honour at runtime, and nothing applies them yet.
+- **No mixing on the server.** Playback is the browser's: one `<audio>`
+  element per sounding cue through a Web Audio gain node, per viewer, at that
+  viewer's own volume. A server-side mixer would have to decide whose narration
+  it was ducking under and would send the same stream to two spectators at
+  different places in the same game, which is the one thing the playhead exists
+  to allow.
+- **No cue is chosen here.** `tools/audio` is a dev tool and stays outside the
+  layering: nothing under `web/` or `orchestrator/` imports it, and the runtime
+  path reads the manifest instead. A cue with no `match` rule still fires
+  nothing, and giving it one is a decision about the game.
+- **The playback knobs are honoured, not interpreted.** Levelling is applied to
+  the file; `gain_db`, `loop`, the fades and the trim points are read off the
+  manifest at runtime and applied as recorded. Nothing second-guesses them.
 - **No original-quality Freesound downloads.** That needs the OAuth2 flow;
   previews are what is fetched.

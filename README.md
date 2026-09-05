@@ -151,6 +151,7 @@ world stay the engine's and the DM's.
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
 | `DND_SIM_DB` | `./data/dndsim.sqlite3` | SQLite transcript store. |
 | `DND_SIM_EXAMPLES` | `./examples` | Where `/api/presets` reads scenarios from. |
+| `DND_AUDIO_DIR` | `./audio` | The picked score: `manifest.json` and the files it names ([AUDIO.md](AUDIO.md)). Point it elsewhere to serve a different pack; point it at a directory with no manifest and the page simply has no score. |
 | `DND_DM_MODEL` | `claude-sonnet-5` | DM model. |
 | `DND_PLAYER_MODEL` | `claude-haiku-4-5-20251001` | Player model. |
 | `DND_SUMMARY_MODEL` | = player model | Rolling-summary model. |
@@ -799,21 +800,33 @@ perfectly well, but a tab nobody is looking at would go on holding the game for
 a narrator nobody is listening to, so the rule stays until that is decided
 separately.
 
-## Sourcing audio
+## The score
 
-There is a tool for picking the game's music, ambience, stings, swells and
-effects: `python -m tools.audio harvest` searches the openly-licensed libraries
-(Freesound, Jamendo, incompetech, the Internet Archive) for every one of the 55
-cues — two of those need no key at all —
-`audio/picker.html` is a self-contained preview screen you audition and assign
-in, and `python -m tools.audio fetch` turns what you picked into files, a
-`manifest.json` carrying each cue's event-match rule, and a `CREDITS.md`. Only
-public-domain and attribution licences pass the gate, and what is fetched is
-levelled to a common loudness where **ffmpeg** is installed (optional; without
-it the files are kept as downloaded).
+Music, stings and swells under the game, from a pack that is picked once and
+committed. `python -m tools.audio harvest` searches the openly-licensed
+libraries (Freesound, Jamendo, incompetech, the Internet Archive) for every one
+of the 55 cues — two of those need no key at all — `audio/picker.html` is a
+self-contained preview screen you audition and assign in, and `python -m
+tools.audio fetch` turns what you picked into files, a `manifest.json` carrying
+each cue's event-match rule, and a `CREDITS.md`. Only public-domain and
+attribution licences pass the gate, and what is fetched is levelled to a common
+loudness where **ffmpeg** is installed (optional; without it the files are kept
+as downloaded).
 
-Nothing plays yet: no event currently makes a sound, and neither `web/` nor
-`orchestrator/` imports any of it. The manifest is the handoff point. Full
+The spectator page plays it. Turn **sound** on in the top bar — off by default,
+and like the narration it needs one tap before a browser will make a sound.
+`music` and `ambience` are a bed, one at a time, crossfaded at the fade times
+the manifest records; stings, swells and effects land on top of it, three at
+once at most. The bed **ducks while a line is being read**, whichever engine is
+reading it. Cues fire when the page *reveals* an event rather than when it
+arrives, so with the narrator running a sting lands in the beat its sentence is
+read in; a page opened mid-game replays the transcript in silence and then
+picks up the bed the fight is being fought to.
+
+Nothing in the page names a cue or an event kind: the manifest carries the
+match rules, so re-picking the audio changes what the game sounds like without
+touching a line of JavaScript. The pack's credits are in the Score panel,
+because most of it is CC BY and attribution is a condition of playing it. Full
 notes, the source table and the licence rules: [AUDIO.md](AUDIO.md).
 
 ## Deployment

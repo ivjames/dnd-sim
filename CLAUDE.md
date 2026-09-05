@@ -256,10 +256,16 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   per seat (`temperature` in a party spec), or from the panel's Improv field;
   clamped to `[0, 1]` because that is Anthropic's ceiling. The DM stays at 0.8
   — it owns world facts — and the summarizer at 0.3.
-- **Audio is sourced, not yet played.** `tools/audio/` (docs: `AUDIO.md`) is a
-  dev tool — cue table, library search, a self-contained picker page, a fetcher
-  that writes `audio/manifest.json` + `CREDITS.md`. It sits outside the layering
-  and nothing on the runtime path imports it. `fetch` levels what it downloads
+- **Audio is sourced by a dev tool and played by the page.** `tools/audio/`
+  (docs: `AUDIO.md`) is the tool — cue table, library search, a self-contained
+  picker page, a fetcher that writes `audio/manifest.json` + `CREDITS.md`. It
+  sits outside the layering and nothing on the runtime path imports it: the page
+  reads the manifest instead, served by `web/routes/audio.py` at `GET /api/audio`
+  with the files under `/audio/...` (the manifest is the allowlist; `config.json`
+  and `CREDITS.md` are not served). `web/static/cues.js` is `cues.py`'s match
+  rules transliterated, and `web/tests/test_cues_js.py` drives both over the same
+  events so the two cannot drift. `DND_AUDIO_DIR` moves the pack; without one
+  the page has no Score panel. `fetch` levels what it downloads
   where **ffmpeg** is on PATH (beds to -16 LUFS, one-shots trimmed and peaked to
   -0.7 dBFS, both re-encoded); ffmpeg is not a dependency and its absence only
   means the files are kept as downloaded. The picked audio, manifest and

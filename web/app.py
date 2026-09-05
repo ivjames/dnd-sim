@@ -10,6 +10,7 @@ Env:
     ANTHROPIC_API_KEY required for live mode (on lab980: /etc/environment)
     DND_WRITE_TOKEN   shared secret for the write routes (see web/auth.py).
                       Unset → reads and the stream still work, writes are 503.
+    DND_AUDIO_DIR     the picked score (default ./audio) — see AUDIO.md
     DND_TTS           "0" → no server voices; "1" → on even for mock games
     DND_TTS_*         Polly engine/region/voice/cache — see tts/client.py
     AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION   read by boto3
@@ -62,6 +63,14 @@ def create_app(
     # mid-request; absent, every write is a 503 and every read is unaffected.
     if WRITE_TOKEN_ENV not in app.config:
         app.config[WRITE_TOKEN_ENV] = os.environ.get(WRITE_TOKEN_ENV, "")
+
+    # Where the picked score lives (AUDIO.md). Snapshotted for the same two
+    # reasons as the token above — a test injects it through `config=`, and a
+    # route must not read the environment mid-request — and empty means "the
+    # default", which `web/routes/audio.py` owns because it is the module that
+    # knows where the checkout keeps its pack.
+    if "DND_AUDIO_DIR" not in app.config:
+        app.config["DND_AUDIO_DIR"] = os.environ.get("DND_AUDIO_DIR", "")
 
     # Server-rendered narration. `None` means the page uses the browser's own
     # voices, which is the whole fallback: nothing below this line is required

@@ -42,6 +42,15 @@
               title="Jump the narrator to the newest line">&mdash;</button>
       <span id="voice-hint" class="pill pill-quiet" hidden>tap to start</span>
     </div>
+    <div id="sound" class="voice" hidden>
+      <label class="chk" title="Play the game's music and effects under the narration">
+        <input type="checkbox" id="sound-on"> sound</label>
+      <select id="sound-vol" aria-label="Sound volume" title="Sound volume">
+        <option value="quiet">quiet</option>
+        <option value="normal" selected>normal</option>
+        <option value="loud">loud</option>
+      </select>
+    </div>
     <div id="cost-meter" class="cost" title="Spend against budget">
       <span class="cost-usd">$0.0000</span>
       <span class="cost-bar"><i style="width:0%"></i></span>
@@ -107,6 +116,15 @@
           <label class="chk disabled" title="Turn voice on: with no narration there is nothing to hold the game for.">
             <input type="checkbox" id="voice-hold" checked disabled> hold the game for the narrator</label>
         </div>
+      </div>
+
+      <div id="score-panel" class="panel" hidden>
+        <h2 class="panel-title">Score</h2>
+        <p id="score-now" class="vt-now">sound off</p>
+        <details class="credits">
+          <summary>music &amp; sound credits</summary>
+          <ul id="score-credits"></ul>
+        </details>
       </div>
 
       <div class="panel panel-controls">
@@ -234,6 +252,7 @@
 </div>
 
 <script src="/static/speech.js"></script>
+<script src="/static/cues.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
