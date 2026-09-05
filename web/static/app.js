@@ -1122,12 +1122,25 @@
     var t = (V.settings.tunes || {})[key];
     if (!t) return '';
     var q = '';
+    // Accent first, because that is the order the server reads the two in: it
+    // narrows the pool a seat is cast from, and a named voice then overrules
+    // it outright. Both are sent when both are set — the server decides, and
+    // dropping one here would hide that decision from the URL the clip is
+    // cached under.
+    if (t.accent) q += '&accent=' + encodeURIComponent(t.accent);
     if (t.voice) q += '&voice=' + encodeURIComponent(t.voice);
     if (t.rate !== undefined && t.rate !== null) q += '&rate=' + encodeURIComponent(t.rate);
     if (t.pitch !== undefined && t.pitch !== null) q += '&pitch=' + encodeURIComponent(t.pitch);
+    if (t.volume !== undefined && t.volume !== null) q += '&volume=' + encodeURIComponent(t.volume);
+    // The compressor has three states, not two: unset leaves whatever the cast
+    // decided alone, while `drc=0` is the listener switching off one the cast
+    // turned on. So a stored `false` has to travel as a value rather than as
+    // nothing at all.
+    if (t.drc !== undefined && t.drc !== null) q += '&drc=' + (t.drc ? '1' : '0');
     // The monster treatment. Ignored by the server on any other seat, so this
     // needs no test for what kind of seat it is.
-    ['size', 'growl', 'cave'].forEach(function (f) {
+    ['size', 'growl', 'cave',
+     'ring', 'tremolo', 'muffle', 'crush'].forEach(function (f) {
       if (t[f] !== undefined && t[f] !== null) q += '&' + f + '=' + encodeURIComponent(t[f]);
     });
     return q;
@@ -2134,11 +2147,41 @@
     return wrap;
   }
 
+  // A switch, for the one field that is not a number. Three states live in
+  // it: untouched is "auto" (the field is absent and the cast decides),
+  // checked is on, and unchecked-after-touching is an explicit off — which is
+  // why the handler stores `false` rather than removing the field. The row's
+  // "custom" pill and its auto button are what say which of the three it is
+  // in, exactly as they do for a slider left at its auto value.
+  function vlToggle(label, value, onChange) {
+    var wrap = el('label', 'vl-toggle');
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = value === true;
+    input.addEventListener('change', function () { onChange(input.checked); });
+    wrap.appendChild(input);
+    wrap.appendChild(el('span', 'vl-tlabel', label));
+    return wrap;
+  }
+
   function vlRow(role) {
     var tune = (V.settings.tunes && V.settings.tunes[role.key]) || {};
     var engine = vlEngineFor(role.key);
     var spec = (VL.roster && VL.roster.engines && VL.roster.engines[engine]) || null;
-    var canPitch = !!(spec && spec.ssml && spec.ssml.indexOf('pitch') >= 0);
+    // What this engine will actually honour, straight from the roster rather
+    // than guessed at from the engine's name: Polly's neural engine accepts
+    // <prosody rate> and drops the rest. Each of these decides whether a
+    // control is offered live or shown dead (`vl-dead`), because a control
+    // that moves and changes nothing is worse than one that says it cannot.
+    var ssml = (spec && spec.ssml) || [];
+    var canPitch = ssml.indexOf('pitch') >= 0;
+    var canVolume = ssml.indexOf('volume') >= 0;
+    var canDrc = ssml.indexOf('drc') >= 0;
+    // The bounds come from the server too, so a slider cannot be built with a
+    // range the server would silently clamp. The fallbacks are for a roster
+    // fetched from an older build, not for a normal one.
+    var limits = (VL.roster && VL.roster.limits) || {};
+    var volLim = limits.volume || { min: -12, max: 6, auto: 0 };
 
     var row = el('div', 'vl-row');
     var head = el('div', 'vl-head');
@@ -2154,13 +2197,62 @@
     head.appendChild(test);
     row.appendChild(head);
 
-    var resetBtn = null;
+    var resetBtn = null, accentSel = null, precNote = null, canAccent = false;
     function refreshState() {
       var cur = (V.settings.tunes && V.settings.tunes[role.key]) || null;
       var on = !!(cur && Object.keys(cur).length);
       tag.hidden = !on;
       if (resetBtn) resetBtn.disabled = !on;
+      // Accent and voice are not peers, and side by side they would read as
+      // two filters that combine: on the server (`retune`) a named voice is
+      // taken first and the accent is only reached when no voice was named —
+      // or when the named one no longer exists in the pool. So the accent goes
+      // dead the moment a voice is named, the same treatment as a slider the
+      // engine ignores, and the line under the two says out loud which one is
+      // deciding. Dead, never cleared: it is still the fallback behind a voice
+      // id that a roster change may retire, and setting the voice back to auto
+      // has to give the listener their accent back rather than having quietly
+      // thrown it away.
+      if (accentSel) {
+        var named = !!sel.value;
+        accentSel.disabled = !canAccent || named;
+        if (named) accentSel.classList.add('vl-dead');
+        else accentSel.classList.remove('vl-dead');
+        precNote.textContent = !spec ? ''
+          : named ? 'a named voice wins — the accent is not consulted'
+          : accentSel.value ? 'the server casts this seat within that accent'
+          : 'the server casts this seat';
+      }
     }
+
+    // Who reads this seat: the accent narrows, the voice names. They share one
+    // block so the precedence line below can belong to both (see refreshState).
+    var cast = el('div', 'vl-cast');
+
+    // Choosing an accent recasts the seat *without* naming a voice — the point
+    // of it is to say "someone British" and let the casting keep dealing the
+    // seat, rather than to pick a name off a list you have not heard.
+    var accents = (spec && spec.accents) || [];
+    canAccent = !!(spec && accents.length);
+    accentSel = el('select', 'vl-accent');
+    accentSel.setAttribute('aria-label', role.label + ' accent');
+    var anyAcc = el('option', null, 'auto — any accent');
+    anyAcc.value = '';
+    accentSel.appendChild(anyAcc);
+    accents.forEach(function (a) {
+      // The name a listener would use, not the tag: "British", not "en-GB".
+      // The tag is the value, because that is what the server matches on.
+      var o = el('option', null, a.accent || a.language);
+      o.value = a.language;
+      accentSel.appendChild(o);
+    });
+    accentSel.value = tune.accent || '';
+    accentSel.addEventListener('change', function () {
+      vlSetTune(role.key, { accent: accentSel.value || null });
+      refreshState();
+      if (ttsOn()) vlTest(role, test);
+    });
+    cast.appendChild(accentSel);
 
     var sel = el('select', 'vl-voice');
     sel.setAttribute('aria-label', role.label + ' voice');
@@ -2177,10 +2269,14 @@
     sel.disabled = !spec;
     sel.addEventListener('change', function () {
       vlSetTune(role.key, { voice: sel.value || null });
-      refreshState();
+      refreshState();          // which also settles what the accent is doing
       if (ttsOn()) vlTest(role, test);
     });
-    row.appendChild(sel);
+    cast.appendChild(sel);
+
+    precNote = el('span', 'vl-prec');
+    cast.appendChild(precNote);
+    row.appendChild(cast);
 
     var sliders = el('div', 'vl-sliders');
     // On a monster this is the tempo: the compensation the size shift needs
@@ -2208,26 +2304,84 @@
       pitch.querySelector('input').disabled = true;
     }
     sliders.appendChild(pitch);
+
+    // Decibels against the voice as recorded, not a percentage of anything:
+    // this is the seat that is hard to hear under the music, or the one that
+    // is louder than the rest of the table.
+    var vol = vlSlider('volume', volLim.min, volLim.max, 1,
+      tune.volume === undefined ? null : tune.volume,
+      volLim.auto === undefined ? 0 : volLim.auto, 'dB', function (v) {
+        vlSetTune(role.key, { volume: v });
+        refreshState();
+        if (ttsOn()) vlTest(role, test);
+      });
+    if (!canVolume) {
+      vol.classList.add('vl-dead');
+      vol.title = 'The ' + (engine || 'current') + ' engine ignores volume';
+      vol.querySelector('input').disabled = true;
+    }
+    sliders.appendChild(vol);
+
+    // `drc` is Polly's compressor, and the acronym tells a listener nothing.
+    // What it does for them is the whisper and the shout landing at closer to
+    // the same level, which is what the label says.
+    var drc = vlToggle('even out the loud and quiet',
+      tune.drc === undefined ? null : tune.drc, function (on) {
+        vlSetTune(role.key, { drc: on });
+        refreshState();
+        if (ttsOn()) vlTest(role, test);
+      });
+    drc.title = canDrc
+      ? 'Compresses this seat: quiet lines come up, shouted ones stop peaking. ' +
+        'Unticking it is an explicit off, not auto — the row’s auto button is auto.'
+      : 'The ' + (engine || 'current') + ' engine ignores drc';
+    if (!canDrc) {
+      drc.classList.add('vl-dead');
+      drc.querySelector('input').disabled = true;
+    }
+    sliders.appendChild(drc);
     row.appendChild(sliders);
 
-    // A monster is not an actor with a deep voice: its size, its grit and the
-    // room it stands in are made out of the audio after Polly hands it over
-    // (`tts/dsp.py`), and the casting deals them from the creature's SRD size
-    // and a hash. This is the bench for that — the same three numbers the
-    // treatment is built from, in the order they matter.
+    // A monster is not an actor with a deep voice: its size, its grit, the room
+    // it stands in and everything that makes it not a person at all are made
+    // out of the audio after Polly hands it over (`tts/dsp.py`), and the
+    // casting deals them from the creature's SRD size and a hash. This is the
+    // bench for that — the same numbers the treatment is built from, in the
+    // order they matter. Monsters only: on any other seat the server ignores
+    // them, so there is nothing here to move.
     var fxSpec = (VL.roster && VL.roster.fx) || null;
     if (Speech.isMonsterKey(role.key) && fxSpec && fxSpec.available) {
       var fx = el('div', 'vl-fx');
       fx.appendChild(el('span', 'vl-fxlabel', 'monster'));
       var fxSliders = el('div', 'vl-fxsliders');
+      // The first three are the creature's body and the room; the last four
+      // are what stops it sounding like a person at all. Each label is what a
+      // listener hears rather than what the DSP is called — "ring" is a
+      // modulator to `tts/dsp.py` and nothing to anyone listening — with the
+      // signal-processing name left in the hint for whoever wants it.
       [
         { f: 'size', label: 'size', spec: fxSpec.size, auto: 0,
           hint: 'Bigger creature, lower voice — the whole spectrum shifts' },
         { f: 'growl', label: 'growl', spec: fxSpec.growl, auto: 0,
           hint: 'Saturation: harmonics and grit' },
         { f: 'cave', label: 'room', spec: fxSpec.cave, auto: 0,
-          hint: 'The space it is standing in' }
+          hint: 'The space it is standing in' },
+        { f: 'ring', label: 'unearthly', spec: fxSpec.ring, auto: 0,
+          hint: 'Ring modulation: a hollow metallic tone rings inside the ' +
+                'voice, like a throat no animal has' },
+        { f: 'tremolo', label: 'wobble', spec: fxSpec.tremolo, auto: 0,
+          hint: 'The voice pulses in and out, unsteady — something failing, ' +
+                'or breathing wrong' },
+        { f: 'muffle', label: 'muffled', spec: fxSpec.muffle, auto: 0,
+          hint: 'The top end goes: heard through a door, through earth, or ' +
+                'from underwater' },
+        { f: 'crush', label: 'broken', spec: fxSpec.crush, auto: 0,
+          hint: 'Bit-crushed: a construct, or a voice arriving down a channel ' +
+                'that cannot carry it' }
       ].forEach(function (c) {
+        // A roster from a build that predates one of these carries no bounds
+        // for it, and a slider with no range is a slider that throws.
+        if (!c.spec) return;
         var sl = vlSlider(c.label, c.spec.min, c.spec.max, 1,
           tune[c.f] === undefined ? null : tune[c.f], c.auto, '%', function (v) {
             var patch = {};
@@ -2250,8 +2404,11 @@
       // Every field this row can set, including the treatment's — a row that
       // said "auto" while still carrying a size shift would be a lie, and the
       // seat would keep it for good.
-      vlSetTune(role.key, { voice: null, rate: null, pitch: null,
-                            size: null, growl: null, cave: null });
+      vlSetTune(role.key, { accent: null, voice: null, rate: null, pitch: null,
+                            volume: null, drc: null,
+                            size: null, growl: null, cave: null,
+                            ring: null, tremolo: null, muffle: null,
+                            crush: null });
       vlRender();                 // the sliders jump back to the cast values
     });
     row.appendChild(resetBtn);

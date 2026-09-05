@@ -281,10 +281,12 @@ POST /api/games/<id>/note  {"text"}     → 202  (DM note from the table)       
 POST /api/games/<id>/hold  {"seconds","client"} → 202 {"holding": granted}
 GET  /api/tts                           {"available":bool, engine, monster_engine, language, max_chars, price_per_million_chars, monster_price_per_million_chars, config}
 POST /api/tts/cast       {party}        {"available":bool, seats:[{id, voice, language, accent, gender}]} — who reads each seat; renders nothing, spends nothing
-GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], voices:[{id, language, accent, gender}]}}, limits:{rate,pitch}, fx:{available, size, growl, cave}} — the roster a seat may be recast from, and the bounds a control may offer
+GET  /api/tts/voices                    {"available":bool, engine, monster_engine, engines:{<engine>:{ssml:[...], accents:[{language,accent}], voices:[{id, language, accent, gender}]}}, limits:{rate,pitch,volume}, fx:{available, size, growl, cave, ring, tremolo, muffle, crush}} — the roster a seat may be recast from, and the bounds a control may offer
 GET  /api/games/<id>/tts?key=&text=&v=  audio/mpeg — one narrated line, cached and charged
      [&voice=&rate=&pitch=]             ... recast for this seat by the listener (see the voice lab)
+     [&volume=&drc=&accent=]            ... its loudness, Polly's compressor, and the language it is cast in
      [&size=&growl=&cave=]              ... and, on a monster seat, its treatment (`tts/dsp.py`)
+     [&ring=&tremolo=&muffle=&crush=]   ... the rest of that treatment
 ```
 
 The stream sends `id: <seq>` on every message, so an `EventSource` reconnect
@@ -491,8 +493,42 @@ numbers, so what the casting guessed can be heard and changed:
 - **size** — signed the way `<amazon:effect vocal-tract-length>` was: positive
   is a longer vocal tract, a bigger creature, a lower voice. It is a resample,
   so it takes pitch and formants together.
-- **growl** — soft saturation: harmonics and grit.
+- **growl** — soft saturation: harmonics and grit. Driven against the clip's
+  own level rather than against full scale, so the number means the same thing
+  however loudly the voice happened to speak; measured against full scale it
+  did almost nothing, because Polly returns a line nowhere near the top of the
+  format.
 - **room** — a feedback comb, the space the thing is standing in.
+
+Four more, added once the bench existed and it was obvious that size, grit and
+a room only ever make a creature *large* — never one that is not a person at
+all:
+
+- **unearthly** (`ring`) — ring modulation: the voice multiplied by a low sine,
+  crossfaded against the dry signal. The strongest thing here by a distance,
+  and the only one nothing with lungs could produce: at full depth the
+  fundamental is gone entirely and what is left is the sum and difference
+  tones. For a construct, a devil, a thing wearing a voice it did not grow.
+- **wobble** (`tremolo`) — amplitude modulation, a few times a second: a voice
+  that cannot hold itself steady. Unipolar, so at full depth it cuts to silence
+  at the bottom of each cycle rather than coming back phase-flipped, which
+  would be a second ring modulator.
+- **muffled** (`muffle`) — a one-pole low-pass whose corner sweeps in octaves
+  rather than in Hz, because pitch is geometric and a linear sweep would put
+  the whole control in its last quarter. Behind a door, inside a helm, under
+  water.
+- **broken** (`crush`) — bit-depth reduction. The quantiser's step is sized
+  against the clip's own level for the same reason `growl` is: sixteen bits of
+  a format a line only uses a fifth of is not sixteen bits of that line, and
+  the first half of the old sweep rounded to steps quieter than the noise the
+  line already carried.
+
+All seven are one in-place pass over the samples. Nothing in `tts/dsp.py`
+copies the clip, which is what keeps the whole treatment affordable inside a
+request — so the effects that would need a second buffer are deliberately
+absent: a chorus or detune-double (a whole resampled copy), and anything
+needing a phase vocoder, which is what an independent pitch-versus-formant
+shift or a true whisper would take.
 
 They are the monster treatment and nothing else has one, so they appear on
 monster rows alone: `fx` is None on every other seat, and switching a treatment
@@ -512,6 +548,34 @@ Bounds come from `/api/tts/voices` rather than from the page, so a slider
 cannot offer a range the server will clamp; with `DND_TTS_MONSTER_FX=0` the
 treatment does not exist and `fx.available` is false, which is what hides the
 bench.
+
+#### What Polly itself will do, on every seat
+
+Three of the lab's controls are not ours at all — they are written into the
+SSML and Amazon performs them, which means each is available only where the
+engine says so (`ENGINE_SSML`, and `ssml` per engine in `/api/tts/voices`).
+Polly **errors** on a tag its engine does not take, and an error is one 502 and
+a seat silently back on the browser's voices, so a control the engine will not
+honour is disabled in the lab and says which engine ignored it rather than
+moving and doing nothing.
+
+- **accent** — not an effect but a casting choice, and usually the strongest
+  one available: name a language and the seat is re-cast within it, so a
+  monster can be Welsh or a merchant Indian without picking a voice by name.
+  The pick is deterministic on the seat's id, so it survives a reload, a deploy
+  and a roster reordering. Which accents are offered is derived from the
+  engine's own pool, so a menu can never name one the casting could not serve.
+  An explicit voice choice beats an accent.
+- **volume** (`<prosody volume>`) — decibels, clamped to −12…+6. The upper end
+  is arithmetic rather than taste: a Polly line comes back peaking around a
+  quarter to a half of full scale, so +6 dB is a doubling of amplitude and puts
+  the loudest of them on the ceiling. It survives the monster treatment,
+  because `apply` measures the level it holds from what Polly already returned.
+- **compressor** (`<amazon:effect name="drc">`) — evens out the loud and the
+  quiet of a line. Full availability on neural and long-form, so unlike pitch
+  it works on the engine this box actually runs. It nests innermost, under
+  prosody: the compressor levels the line as spoken, and the listener's volume
+  is then applied over the levelling rather than being undone by it.
 
 ### Who a character is
 

@@ -1093,9 +1093,50 @@ def test_the_roster_is_per_engine_because_a_seat_can_only_move_within_one(tts_cl
     body = tts_client.get("/api/tts/voices").get_json()
     assert sorted(body["engines"]) == ["neural", "standard"]
     # And each says what it will honour: a pitch slider that moves and does
-    # nothing is worse than no pitch slider.
-    assert body["engines"]["neural"]["ssml"] == ["rate"]
-    assert body["engines"]["standard"]["ssml"] == ["pitch", "rate", "vtl"]
+    # nothing is worse than no pitch slider. Held against `allowed_ssml` rather
+    # than spelled out, so a tag Amazon starts or stops supporting is one edit
+    # in `tts/voices.py` and not a green test describing last year's API.
+    from tts.voices import allowed_ssml
+
+    for engine in ("neural", "standard"):
+        assert body["engines"][engine]["ssml"] == sorted(allowed_ssml(engine))
+    # The listener's two SSML controls are engine-dependent in a way no page
+    # could guess from the engine's name: `pitch` is standard-only, but the
+    # volume and the compressor reach a neural seat too — so a table that moves
+    # to neural keeps the one slider that makes a quiet seat audible.
+    assert "pitch" not in body["engines"]["neural"]["ssml"]
+    assert {"volume", "drc"} <= set(body["engines"]["neural"]["ssml"])
+    assert {"pitch", "vtl", "volume", "drc"} <= set(body["engines"]["standard"]["ssml"])
+
+
+def test_each_engine_lists_the_accents_its_own_pool_can_serve(tts_client, tts):
+    """`&accent=` casts a seat by a set of voices rather than by one name, and
+    the set has to be derived from the pool the casting deals from. An accent
+    offered that this engine's roster cannot serve is ignored at `retune` and
+    falls back to the casting — the control moves, the voice does not, and a
+    listener reports the picker as broken."""
+    body = tts_client.get("/api/tts/voices").get_json()
+    accents = body["engines"]["standard"]["accents"]
+    # The distinct languages of the pool, in the pool's own spelling: seven
+    # American voices are one entry in a menu, not seven.
+    assert [a["language"] for a in accents] == sorted({v.language for v in STANDARD_ENGLISH})
+    # Named by the same function the cast preview names an accent with, so the
+    # word on the control and the word beside the cast seat are one word.
+    assert all(a["accent"] == accent_for(a["language"]) for a in accents)
+    assert {"language": "en-GB-WLS", "accent": "Welsh"} in accents
+
+
+def test_an_accent_the_roster_stops_serving_leaves_the_menu(tts_client, tts, monkeypatch):
+    """Derived, not written down. A pool that loses its only Welsh voice serves
+    no Welsh at all, and an entry left behind would be a control that silently
+    does nothing for as long as nobody re-reads this list."""
+    from tts import voices as voices_mod
+
+    short = tuple(v for v in STANDARD_ENGLISH if v.language != "en-GB-WLS")
+    monkeypatch.setattr(voices_mod, "STANDARD_ENGLISH", short)
+    body = tts_client.get("/api/tts/voices").get_json()
+    languages = [a["language"] for a in body["engines"]["standard"]["accents"]]
+    assert "en-GB-WLS" not in languages and "en-GB" in languages
 
 
 def test_a_tuned_seat_is_read_by_the_voice_the_listener_chose(tts_client, tts, game):
@@ -1147,6 +1188,77 @@ def test_a_tuned_clip_is_charged_and_cached_like_any_other(tts_client, tts, game
     assert len(tts.calls) == calls        # the second is the cache, not Polly
 
 
+def test_a_seat_can_be_cast_by_its_accent_rather_than_by_a_voice_name(tts_client, tts, game):
+    """What the roster's `accents` are for. A listener who wants the innkeeper
+    Australian does not care which Australian voice, and an accent survives a
+    roster change that retires the voice a stored id names."""
+    australians = {v.id for v in STANDARD_ENGLISH if v.language == "en-AU"}
+    assert len(australians) > 1, "a one-voice accent would not show a deal at all"
+
+    rv = tts_client.get(speak_url(game) + "&accent=en-AU")
+    assert rv.status_code == 200
+    assert rv.headers["X-Dnd-Voice"] in australians
+
+    # Dealt from the seat's own hash, so the seat keeps whichever Australian
+    # voice it was given instead of wandering from line to line — which is what
+    # makes the accent worth storing rather than just hearing once.
+    again = tts_client.get(speak_url(game, text="Another line entirely.") + "&accent=en-AU")
+    assert again.headers["X-Dnd-Voice"] == rv.headers["X-Dnd-Voice"]
+
+    # A named voice is the more specific answer and wins, which is also the way
+    # out when the deal inside an accent lands somewhere the listener dislikes.
+    named = tts_client.get(speak_url(game) + "&accent=en-AU&voice=Amy")
+    assert named.headers["X-Dnd-Voice"] == "Amy"
+
+
+def test_an_accent_the_pool_cannot_serve_falls_back_to_the_casting(tts_client, tts, game):
+    """A stored tune outlives the roster it was made against, and an accent
+    outlives it more easily than a voice does — an engine that drops the one
+    Welsh voice serves no Welsh at all. A 400 there would take a seat off the
+    air for a preference; falling back keeps it speaking in the voice it was
+    cast in, and keys as the untuned clip so nothing is re-bought."""
+    plain = tts_client.get(speak_url(game))
+    assert plain.status_code == 200
+    rv = tts_client.get(speak_url(game) + "&accent=fr-FR")
+    assert rv.status_code == 200
+    assert rv.headers["X-Dnd-Voice"] == plain.headers["X-Dnd-Voice"]
+    assert rv.headers["ETag"] == plain.headers["ETag"]
+
+
+def test_a_volume_or_a_compressor_is_a_different_clip(tts_client, tts, game):
+    """Both are written into the SSML, so each changes the document Polly is
+    sent — and a different document is a different clip, which has to key,
+    cache and revalidate on its own rather than be served the untuned bytes a
+    browser already holds under the immutable year-long cache."""
+    plain = tts_client.get(speak_url(game))
+    louder = tts_client.get(speak_url(game) + "&volume=3")
+    levelled = tts_client.get(speak_url(game) + "&drc=1")
+    assert plain.status_code == louder.status_code == levelled.status_code == 200
+    assert len({plain.headers["ETag"], louder.headers["ETag"],
+                levelled.headers["ETag"]}) == 3
+    # `drc` is a switch and arrives as text: the words are parsed in
+    # `tune_from`, so the route hands over what the query string said and one
+    # place decides what "on" means.
+    assert tts_client.get(speak_url(game) + "&drc=on").headers["ETag"] == \
+        levelled.headers["ETag"]
+
+
+def test_the_new_controls_left_alone_key_exactly_as_they_always_did(tts_client, tts, game):
+    """The deployed cache is the whole point. Every clip on the box was
+    rendered before these controls existed, and a tune that says nothing has to
+    spell the key it spelled then — otherwise shipping a slider quietly re-buys
+    an entire transcript at $4/1M characters."""
+    before = tts_client.get(speak_url(game)).headers["ETag"]
+    blank = "&" + urlencode({name: "" for name in (
+        "voice", "rate", "pitch", "size", "growl", "cave",
+        "volume", "drc", "accent", "ring", "tremolo", "muffle", "crush")})
+    assert tts_client.get(speak_url(game) + blank).headers["ETag"] == before
+    # And so does an explicit "as recorded, compressor off": 0 dB and a
+    # switched-off compressor are what the untuned clip already was, so saying
+    # them out loud must not mint a second copy of it.
+    assert tts_client.get(speak_url(game) + "&volume=0&drc=0").headers["ETag"] == before
+
+
 # -- the monster treatment, under the listener's hand ------------------------
 
 def test_the_roster_reports_the_bounds_a_control_may_offer(tts_client, tts):
@@ -1167,6 +1279,62 @@ def test_the_roster_reports_the_bounds_a_control_may_offer(tts_client, tts):
     tts.monster_fx = False
     assert tts_client.get("/api/tts/voices").get_json()["fx"]["available"] is False
     tts.monster_fx = True
+
+
+def test_the_roster_reports_the_volume_bound_and_the_four_new_treatments(tts_client, tts):
+    """The controls the bench added, bounded by the constants that clamp them
+    rather than by numbers repeated here. A slider built wider than the server
+    enforces is a listener dragging past the end and hearing nothing change; a
+    narrower one cannot reach what the server would have allowed."""
+    from tts.voices import VOLUME_MAX_DB, VOLUME_MIN_DB, tune_from
+
+    body = tts_client.get("/api/tts/voices").get_json()
+    volume = body["limits"]["volume"]
+    assert volume == {"min": VOLUME_MIN_DB, "max": VOLUME_MAX_DB, "auto": 0}
+    # Asymmetric on purpose — the top is where the headroom runs out, the
+    # bottom is taste — so neither end may be inferred from the other.
+    assert volume["min"] != -volume["max"]
+    # And the reported bound IS the clamp, not a second number that agrees
+    # today: `tune_from` is what every one of these query strings goes through.
+    assert tune_from(volume=9999).volume_db == volume["max"]
+    assert tune_from(volume=-9999).volume_db == volume["min"]
+
+    fx = body["fx"]
+    for name in ("ring", "tremolo", "muffle", "crush"):
+        assert fx[name] == {"min": 0, "max": 100}, name
+        assert getattr(tune_from(**{name: 9999}), name + "_pct") == fx[name]["max"]
+        assert getattr(tune_from(**{name: -9999}), name + "_pct") == fx[name]["min"]
+    # `drc` is a switch, not a range: `ssml` naming it per engine is the whole
+    # answer, and a bound here would be a number no control could use.
+    assert "drc" not in body["limits"] and "drc" not in fx
+
+
+def test_the_four_new_treatments_reach_a_monster_and_are_ignored_elsewhere(tts_client, tts,
+                                                                          game):
+    """They are post-synthesis DSP (`tts/dsp.py`), so only a seat that already
+    has a treatment has one to change. On a PC, switching one on would change
+    what the clip *is* — pcm and a WAV rather than Polly's own MP3 — which is
+    not what a slider means; and having dropped it, the key must be the untuned
+    one, or an ordinary seat re-buys its lines for a control that did nothing.
+    """
+    monster = speak_url(game, key="monster:mon_1")
+    plain = tts_client.get(monster)
+    assert plain.status_code == 200
+    keys = {plain.headers["ETag"]}
+    for name in ("ring", "tremolo", "muffle", "crush"):
+        rv = tts_client.get(monster + "&%s=70" % name)
+        assert rv.status_code == 200, name
+        assert rv.mimetype == "audio/wav"          # still the treated shape
+        keys.add(rv.headers["ETag"])
+    assert len(keys) == 5, "each treatment has to be its own clip"
+
+    ordinary = speak_url(game, key="pc_1")
+    untuned = tts_client.get(ordinary)
+    assert untuned.status_code == 200
+    tuned = tts_client.get(ordinary + "&ring=70&tremolo=70&muffle=70&crush=70")
+    assert tuned.status_code == 200
+    assert tuned.mimetype == untuned.mimetype == "audio/mpeg"
+    assert tuned.headers["ETag"] == untuned.headers["ETag"]
 
 
 def monster_cast(key="monster:mon_6", size="L", **kw):

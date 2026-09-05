@@ -402,6 +402,12 @@ def roster():
     on `neural`, Polly accepts `<prosody rate>` and drops the rest, so the page
     has to be told rather than left to guess from the engine's name.
 
+    `accents` is the same argument one level up: it is the list a seat may be
+    cast BY, rather than the list of voices it may be cast TO, and it is
+    derived from the engine's own pool for the reason `ssml` is derived from
+    the engine — an accent the pool cannot serve is a control that falls back
+    to the casting and looks broken.
+
     Anonymous and free, like the rest of the read side: it lists, it never
     renders.
     """
@@ -415,6 +421,8 @@ def roster():
         PITCH_MIN_PCT,
         RATE_MAX_PCT,
         RATE_MIN_PCT,
+        VOLUME_MAX_DB,
+        VOLUME_MIN_DB,
         accent_for,
         allowed_ssml,
     )
@@ -426,6 +434,26 @@ def roster():
             return jsonify({"available": False, "engines": {}})
         engines[engine] = {
             "ssml": sorted(allowed_ssml(engine)),
+            # What `&accent=` may ask for on THIS engine: the distinct
+            # languages this pool can actually serve, not the accent table's
+            # own list. An accent names a set of voices rather than a voice,
+            # and `retune` deals inside that set by the seat's own hash — which
+            # is what lets a seat be cast as Welsh and stay whichever Welsh
+            # voice it got across a roster change, where a stored voice id goes
+            # stale. So it has to come off the same pool the casting deals
+            # from: an accent offered that the pool cannot serve is ignored at
+            # `retune` and falls back to the casting, which a listener reads as
+            # a control that does nothing.
+            #
+            # Sorted by the code rather than by the name, because `accent_for`
+            # falls back to the code for a locale nobody has named yet: sorting
+            # by the name would let a word added to `ACCENTS` reorder a
+            # listener's menu for a reason that has nothing to do with the
+            # roster. The page has both halves and can order them its own way.
+            "accents": [
+                {"language": code, "accent": accent_for(code)}
+                for code in sorted({str(v.language or "") for v in pool if v.language})
+            ],
             "voices": [
                 {
                     "id": v.id,
@@ -444,14 +472,28 @@ def roster():
             "engines": engines,
             # The bounds a control may offer, from the code that enforces them,
             # so a slider cannot be built with a range the server will clamp.
-            # `rate` and `pitch` are the SSML ones and apply to any seat the
-            # engine allows them on; the rest are the monster treatment
-            # (`tts/dsp.py`) and exist only where `monster_fx` is on — with it
-            # off, a monster is made out of standard-only SSML instead and
-            # there is nothing here to move.
+            # `rate`, `pitch` and `volume` are the SSML ones and apply to any
+            # seat the engine allows them on — which is per engine and is what
+            # each engine's `ssml` reports, so a page reads a bound from here
+            # and whether the control exists at all from there. The rest are
+            # the monster treatment (`tts/dsp.py`) and exist only where
+            # `monster_fx` is on — with it off, a monster is made out of
+            # standard-only SSML instead and there is nothing here to move.
+            #
+            # `drc` is deliberately absent: it is a switch, not a range, so
+            # `ssml` naming it is the whole answer and a bound would be a
+            # number a control could not use.
             "limits": {
                 "rate": {"min": RATE_MIN_PCT, "max": RATE_MAX_PCT, "auto": 100},
                 "pitch": {"min": PITCH_MIN_PCT, "max": PITCH_MAX_PCT, "auto": 0},
+                # dB against the voice as recorded, so `auto` is 0 and means
+                # exactly "as recorded" rather than "unset" — the one place a
+                # listener can push one seat under the narrator it keeps
+                # talking over. Asymmetric on purpose (`VOLUME_MAX_DB` is where
+                # the headroom runs out and past it a listener buys clipping
+                # rather than loudness), which is why both ends are read from
+                # `tts/voices.py` rather than mirrored from one of them.
+                "volume": {"min": VOLUME_MIN_DB, "max": VOLUME_MAX_DB, "auto": 0},
             },
             "fx": {
                 "available": bool(getattr(svc, "monster_fx", False)),
@@ -460,6 +502,17 @@ def roster():
                 "size": {"min": -MAX_SIZE_PCT, "max": MAX_SIZE_PCT},
                 "growl": {"min": 0, "max": 100},
                 "cave": {"min": 0, "max": 100},
+                # The four that came with the bench, on the same 0–100 scale
+                # the other treatments use: 0 is the effect switched off and
+                # 100 is as far as `tts/dsp.py` will take it. Percent rather
+                # than the physical unit underneath each one (Hz, bits,
+                # feedback) because a listener is dragging one slider per
+                # sound, and the mapping from that to the unit is the DSP
+                # module's to own and to change without moving this control.
+                "ring": {"min": 0, "max": 100},
+                "tremolo": {"min": 0, "max": 100},
+                "muffle": {"min": 0, "max": 100},
+                "crush": {"min": 0, "max": 100},
             },
         }
     )
@@ -609,6 +662,28 @@ def speak(game_id: str):
     # config token. A tuned clip is a different clip, so it keys, caches and
     # revalidates separately, and turning a tune off goes back to clips that
     # are very likely already paid for.
+    #
+    # Every value is handed over exactly as it arrived: `tune_from` does the
+    # parsing and the clamping, including reading `drc` as a switch, so there
+    # is one place that decides what "9999" or "yes" means rather than two that
+    # agree until someone edits one. Nothing here is validated against the
+    # roster either — `retune` holds `voice` and `accent` against the pool at
+    # the point of use, and ignores what it cannot serve.
+    #
+    # Named arguments from `volume` on, because `tune_from` appends its
+    # parameters rather than slotting them in: a positional list is a query
+    # string silently re-pointed at the wrong control the next time one is
+    # added, which is the class of bug a listener reports as "the rate slider
+    # changes the room".
+    #
+    # What each one costs is the same thing: a distinct tune is a distinct
+    # cache entry and so a clip paid for once more. `volume` and `drc` are SSML
+    # and so re-key ANY seat (they change the document Polly is sent, wherever
+    # `ssml` says the engine reads them); `ring`/`tremolo`/`muffle`/`crush` join
+    # size/growl/cave in the post-synthesis treatment and so re-key only a
+    # monster, because `retune` drops a treatment asked for on a seat that has
+    # none. Bounded by the same budget as everything else here, which is what
+    # makes a spread of tunes affordable to offer at all.
     tune = tune_from(
         request.args.get("voice"),
         request.args.get("rate"),
@@ -616,6 +691,13 @@ def speak(game_id: str):
         request.args.get("size"),
         request.args.get("growl"),
         request.args.get("cave"),
+        volume=request.args.get("volume"),
+        drc=request.args.get("drc"),
+        accent=request.args.get("accent"),
+        ring=request.args.get("ring"),
+        tremolo=request.args.get("tremolo"),
+        muffle=request.args.get("muffle"),
+        crush=request.args.get("crush"),
     )
     try:
         cast, ckey = svc.cache_key_for(key, text, gender, age, size=size, tune=tune)

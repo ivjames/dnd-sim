@@ -74,6 +74,8 @@ __all__ = [
     "PITCH_MAX_PCT",
     "RATE_MIN_PCT",
     "RATE_MAX_PCT",
+    "VOLUME_MIN_DB",
+    "VOLUME_MAX_DB",
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_SIZE_BANDS",
@@ -352,6 +354,25 @@ RATE_MIN_PCT, RATE_MAX_PCT = 20, 200
 #: `tts/dsp.py`, not through this.
 PITCH_MIN_PCT, PITCH_MAX_PCT = -50, 50
 
+#: `<prosody volume>`, in dB against the voice as recorded. A listenability
+#: bound like the pitch one rather than an API one: Polly takes far more than
+#: this, and far more is not useful in either direction.
+#:
+#: +6 dB is where the headroom runs out, which is arithmetic rather than
+#: taste. A Polly line comes back peaking somewhere around a quarter to a half
+#: of full scale — the same reading `DRIVE_REF` in `tts/dsp.py` is built on —
+#: so +6 dB is exactly a doubling of amplitude and puts the loudest of them on
+#: the ceiling. Past that a listener buys clipping instead of loudness, and a
+#: monster's clip has the treatment's own gain applied after this.
+#:
+#: -12 dB is taste, and it is the direction there is more reason to want: this
+#: is how one seat is pushed under the narrator it keeps talking over. Below
+#: about -12 dB a line stops being quieter and starts being absent under
+#: whatever room the listener is sitting in, which sounds exactly like the
+#: seat having failed — and a slider that can make a seat look broken is a
+#: support question rather than a preference.
+VOLUME_MIN_DB, VOLUME_MAX_DB = -12, 6
+
 
 @dataclass(frozen=True)
 class Cast:
@@ -376,13 +397,31 @@ class Cast:
     #: `pcm` and served as a WAV, because the treatment has to happen between
     #: the two — see `PollyTTS._synthesize_now`.
     fx: MonsterFX | None = None
+    #: The listener's own two (`Tune`), and the only fields here nothing is
+    #: dealt: `cast_for` leaves both at their defaults and only `retune` sets
+    #: them. Declared after `fx` rather than beside the other SSML fields so
+    #: that a positional `Cast(...)` written before they existed still means
+    #: what it meant — the same append-never-insert rule `cache_key` keeps.
+    volume_db: int = 0     # <prosody volume>, dB against the voice as recorded
+    drc: bool = False      # <amazon:effect name="drc">, the compressor
 
     def cache_key(self) -> str:
         base = f"{self.engine}|{self.voice_id}|{self.pitch_pct}|{self.rate_pct}|{self.vtl_pct}"
         # Appended only when there is one, so an untreated cast spells exactly
         # what it always did — the same rule, and the same reason, as
         # `PollyTTS.cache_key_for`.
-        return base + ("|" + self.fx.token() if self.fx else "")
+        if self.fx:
+            base += "|" + self.fx.token()
+        # And the same rule once more for the listener's two: a cast that asks
+        # for neither spells what it spelled before they existed, so no clip
+        # already rendered and paid for is retired by their arrival. That is
+        # why they are written on the end instead of into the five fixed
+        # fields, where a sixth would have moved every key on the box.
+        if self.volume_db:
+            base += f"|vol{self.volume_db:+d}dB"
+        if self.drc:
+            base += "|drc"
+        return base
 
 
 def hash_key(s: str) -> int:
@@ -697,18 +736,33 @@ def escape(text: str) -> str:
 #:          can be a mid-sentence fragment when one sentence runs past the
 #:          chunk cap. Not worth the risk for a rate nudge, so generative gets
 #:          the plain text.
+#:   volume `<prosody volume>` — the same sentence as pitch, read the other
+#:          way: "Generative, Neural, and Long-Form voices support the volume
+#:          and rate attributes, but don't support the pitch attribute"
+#:          (…/prosody-tag.html). So volume goes wherever rate goes, and is
+#:          withheld from generative for rate's reason and not for its own —
+#:          it is written as an attribute of the same tag, and the tag is what
+#:          generative restricts to whole sentences.
+#:   drc    `<amazon:effect name="drc">` — "Full availability" on neural and
+#:          long-form, all tags work on standard, "Not available" on
+#:          generative
+#:          (https://docs.aws.amazon.com/polly/latest/dg/supportedtags.html).
+#:          The one thing here that
+#:          survives an engine change intact, which is why it is worth
+#:          offering: a seat that is hard to hear stays levelled whatever
+#:          engine the table moves to.
 #:
-#: Both dates read 2026-09-04.
+#: pitch, vtl and rate read 2026-09-04; volume and drc read 2026-09-05.
 ENGINE_SSML: dict[str, frozenset[str]] = {
-    "standard": frozenset({"pitch", "rate", "vtl"}),
-    "neural": frozenset({"rate"}),
-    "long-form": frozenset({"rate"}),
+    "standard": frozenset({"pitch", "rate", "vtl", "volume", "drc"}),
+    "neural": frozenset({"rate", "volume", "drc"}),
+    "long-form": frozenset({"rate", "volume", "drc"}),
     "generative": frozenset(),
 }
 
 
 def allowed_ssml(engine: str) -> frozenset[str]:
-    """Which of pitch/rate/vtl this engine will accept.
+    """Which of pitch/rate/vtl/volume/drc this engine will accept.
 
     The one place the `ENGINE_SSML` lookup happens, including its default: an
     engine nobody has heard of is written for the one this app is built around
@@ -735,14 +789,33 @@ def ssml_for(text: str, cast: Cast, engine: str = "") -> str:
     `standard` is real and is the reason `standard` is the default: with no
     pitch and no vocal-tract-length, two characters dealt the same voice cannot
     be told apart, and a monster is only a voice rather than a big one.
+
+    The listener's own two — `volume_db` and `drc` — are written under the same
+    rule and are simply absent where the engine cannot read them, which on
+    generative is both of them.
     """
     allowed = allowed_ssml(engine or cast.engine)
     body = escape(text)
+    # Innermost: the compressor wraps the words, and the prosody and the vocal
+    # tract wrap it. Nesting is the only thing a document can say about order
+    # (Amazon documents neither tag's interaction with the other), so it is
+    # written the way it would read as a chain — the compressor evens out the
+    # line as spoken, and the volume the listener asked for is applied over the
+    # top of that. The other order puts a leveller after the one control whose
+    # whole purpose is to move this seat's level, and lets it undo it.
+    if cast.drc and "drc" in allowed:
+        body = '<amazon:effect name="drc">' + body + "</amazon:effect>"
     prosody = []
     if cast.pitch_pct and "pitch" in allowed:
         prosody.append(f'pitch="{cast.pitch_pct:+d}%"')
     if cast.rate_pct != 100 and "rate" in allowed:
         prosody.append(f'rate="{cast.rate_pct:d}%"')
+    # Signed, always: "+3dB" and "-6dB" are relative to the voice as recorded,
+    # where a bare "3dB" is an absolute the tag reads differently. Appended
+    # after the two that were here first so a cast that sets no volume writes
+    # exactly the document it wrote before.
+    if cast.volume_db and "volume" in allowed:
+        prosody.append(f'volume="{cast.volume_db:+d}dB"')
     if prosody:
         body = "<prosody " + " ".join(prosody) + ">" + body + "</prosody>"
     if cast.vtl_pct and "vtl" in allowed:
@@ -777,11 +850,26 @@ class Tune:
     later roster change moves it. The empty tune is the casting itself, which
     is what "auto" saves.
 
-    The last three are the monster treatment (`tts/dsp.py`) and apply to a
-    monster seat alone, because that is the only seat a treatment exists on:
-    `fx` is None everywhere else, and switching it on for a PC would change
-    what a clip *is* — pcm and a WAV rather than Polly's own MP3 — which is a
-    different decision from recasting one.
+    The seven `_pct` fields — size, growl and cave, and the four that were
+    added under them (ring, tremolo, muffle, crush) — are the monster treatment
+    (`tts/dsp.py`) and apply to a monster seat alone, because that is the only
+    seat a treatment exists on: `fx` is None everywhere else, and switching it
+    on for a PC would change what a clip *is* — pcm and a WAV rather than
+    Polly's own MP3 — which is a different decision from recasting one.
+
+    `language` is the accent, and it is spelled the way the roster spells it: a
+    Polly LanguageCode ("en-GB"), not the word the page shows a listener
+    (`accent_for` turns one into the other). It names a *set* of voices rather
+    than a voice, which is what makes it worth having next to `voice_id` — a
+    listener who wants the innkeeper to sound Welsh does not care which Welsh
+    voice, and a stored answer to "which one" goes stale the moment the roster
+    moves, where "Welsh" survives it.
+
+    `drc` is the one three-state field: True switches the compressor on, False
+    switches it off, and None leaves whatever the cast has. It needs all three
+    because a stored tune has to be able to turn something back OFF, which a
+    plain bool defaulting to False cannot say — that spelling reads "off" and
+    "not mentioned" as the same answer.
     """
 
     voice_id: str = ""
@@ -790,12 +878,21 @@ class Tune:
     size_pct: int | None = None
     growl_pct: int | None = None
     cave_pct: int | None = None
+    volume_db: int | None = None
+    drc: bool | None = None
+    language: str = ""
+    ring_pct: int | None = None
+    tremolo_pct: int | None = None
+    muffle_pct: int | None = None
+    crush_pct: int | None = None
 
     def __bool__(self) -> bool:
-        return bool(self.voice_id) or any(
+        return bool(self.voice_id) or bool(self.language) or any(
             v is not None
-            for v in (self.rate_pct, self.pitch_pct,
-                      self.size_pct, self.growl_pct, self.cave_pct)
+            for v in (self.rate_pct, self.pitch_pct, self.volume_db, self.drc,
+                      self.size_pct, self.growl_pct, self.cave_pct,
+                      self.ring_pct, self.tremolo_pct, self.muffle_pct,
+                      self.crush_pct)
         )
 
 
@@ -816,12 +913,47 @@ def _clamped_int(value, lo: int, hi: int) -> int | None:
     return max(lo, min(hi, n))
 
 
+#: What a switch says when it arrives as text — a query string, a checkbox
+#: somebody serialized, a JSON value written by a page. Both halves are
+#: written down because unset and OFF are different answers here: an unset
+#: `drc` leaves the cast alone, and `drc=0` turns off a compressor the cast
+#: (or an older stored tune, or a later default) had on. A word in neither
+#: list is nothing said, which is the same answer `_clamped_int` gives a value
+#: that is not a number.
+_TRUE_WORDS = frozenset({"1", "true", "t", "yes", "y", "on"})
+_FALSE_WORDS = frozenset({"0", "false", "f", "no", "n", "off"})
+
+
+def _loose_bool(value) -> bool | None:
+    """`value` as a switch — True, False, or None for nothing said."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    said = str(value).strip().lower()
+    if said in _TRUE_WORDS:
+        return True
+    if said in _FALSE_WORDS:
+        return False
+    return None
+
+
 def tune_from(voice_id="", rate=None, pitch=None,
-              size=None, growl=None, cave=None) -> Tune:
-    """A `Tune` from three loose values (query strings, JSON, whatever).
+              size=None, growl=None, cave=None,
+              volume=None, drc=None, accent="",
+              ring=None, tremolo=None, muffle=None, crush=None) -> Tune:
+    """A `Tune` from loose values (query strings, JSON, whatever).
 
     Nothing here validates the voice id against a roster: that needs the pool,
     which is the service's to know, and `retune` does it at the point of use.
+    The same goes for `accent` — a language the pool cannot serve is not an
+    error until there is a pool to hold it against.
+
+    Every parameter after `cave` is appended rather than slotted in, because
+    the caller that matters passes the first six positionally
+    (`web/routes/tts.py`): inserting one would silently re-point a query
+    string at the wrong control, which is the class of bug nobody sees until a
+    listener asks why the rate slider changes the room.
     """
     return Tune(
         voice_id=str(voice_id or "").strip()[:64],
@@ -830,12 +962,22 @@ def tune_from(voice_id="", rate=None, pitch=None,
         size_pct=_clamped_int(size, -MAX_SIZE_PCT, MAX_SIZE_PCT),
         growl_pct=_clamped_int(growl, 0, 100),
         cave_pct=_clamped_int(cave, 0, 100),
+        volume_db=_clamped_int(volume, VOLUME_MIN_DB, VOLUME_MAX_DB),
+        drc=_loose_bool(drc),
+        # Not normalized to a case here: the pool's own spelling is Polly's
+        # ("en-GB"), the match in `retune` is case-insensitive, and what is
+        # stored is what the listener will see reported back.
+        language=str(accent or "").strip()[:32],
+        ring_pct=_clamped_int(ring, 0, 100),
+        tremolo_pct=_clamped_int(tremolo, 0, 100),
+        muffle_pct=_clamped_int(muffle, 0, 100),
+        crush_pct=_clamped_int(crush, 0, 100),
     )
 
 
 def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
-    """`cast` with the listener's choices applied — voice, rate, pitch, and on
-    a monster the treatment itself.
+    """`cast` with the listener's choices applied — voice or accent, rate,
+    pitch, volume, the compressor, and on a monster the treatment itself.
 
     The engine is never changed, and neither is *whether* there is a treatment:
     which engine speaks a seat is a deployment's decision (`engine_for`), and a
@@ -853,30 +995,80 @@ def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
     tempo is read back out of the cast, so changing the size alone keeps how
     fast this particular creature talks.
 
+    **An accent re-deals the seat instead of naming a voice.** `tune.language`
+    is a set of voices, and which of them this seat gets is decided by the
+    module's own hash over the seat's key — the same hash `cast_for` deals
+    with, so a seat keeps whichever voice the accent gave it for exactly as
+    long as its id and the accent hold, across restarts, deploys and any
+    reordering of the roster. A named voice beats an accent, because naming one
+    is the more specific answer and because it is also the way out when the
+    deal inside a language lands somewhere the listener does not want.
+
     A voice id that is not in `pool` is ignored rather than refused. The pool is
     what Polly listed for this engine a moment ago, and a stored tune outlives
     it: a roster change, a language change, or a deployment that moved the
     table to an engine this voice does not serve would otherwise turn every
     line of that seat into a 400. Falling back to the casting is the same
     answer `speech.js` gives for a browser voice that has gone.
+
+    A language the pool cannot serve is ignored for the same reason and by the
+    same argument, one step wider: an accent outlives a roster at least as
+    easily as a voice does — the en-GB-WLS voice is one voice, and an engine
+    that does not serve it serves no Welsh at all — so a stored "Welsh" has to
+    fall back to the casting rather than take the seat off the air. The two
+    ignores compose the way the precedence says: a voice id that no longer
+    resolves is nothing said, so the accent behind it still applies.
     """
     if not tune:
         return cast
 
     voice_id = cast.voice_id
+    language = cast.language
     if tune.voice_id and any(v.id == tune.voice_id for v in pool):
+        # The language is left as the casting dealt it, which is what naming a
+        # voice has always done here — and it is worth writing down that this
+        # is the older behaviour rather than the better one. `/api/tts/cast`
+        # reports `accent_for(cast.language)`, so a seat dealt an Australian
+        # voice and then recast onto Aditi is still announced as Australian.
+        # Correcting it changes what an existing stored tune reports about
+        # itself, which is a decision for whoever owns that page and not one
+        # to make in passing on the way to adding the accent below.
         voice_id = tune.voice_id
+    elif tune.language:
+        # Deduplicated and sorted by id before the pick, exactly as `cast_for`
+        # does it, so the deal does not depend on the order `DescribeVoices`
+        # happened to return. The whole language is dealt from — no gender, no
+        # age, no DM exclusion — because none of those are in a `Tune` to
+        # narrow by, and inventing one here would be this function guessing at
+        # a character it cannot see. A listener who dislikes the voice the
+        # accent dealt names one, which wins.
+        want = tune.language.strip().lower()
+        speakers = sorted(
+            {v.id: v for v in pool
+             if str(v.language or "").strip().lower() == want}.values(),
+            key=lambda v: v.id,
+        )
+        if speakers:
+            spoken = _pick(speakers, hash_key(cast.key))
+            voice_id, language = spoken.id, spoken.language
 
     fx = cast.fx
     treated = fx is not None
     fx_touched = treated and any(
-        v is not None for v in (tune.size_pct, tune.growl_pct, tune.cave_pct)
+        v is not None for v in (tune.size_pct, tune.growl_pct, tune.cave_pct,
+                                tune.ring_pct, tune.tremolo_pct,
+                                tune.muffle_pct, tune.crush_pct)
     )
     if fx_touched:
         fx = MonsterFX(
             size_pct=fx.size_pct if tune.size_pct is None else tune.size_pct,
             growl_pct=fx.growl_pct if tune.growl_pct is None else tune.growl_pct,
             cave_pct=fx.cave_pct if tune.cave_pct is None else tune.cave_pct,
+            ring_pct=fx.ring_pct if tune.ring_pct is None else tune.ring_pct,
+            tremolo_pct=(fx.tremolo_pct if tune.tremolo_pct is None
+                         else tune.tremolo_pct),
+            muffle_pct=fx.muffle_pct if tune.muffle_pct is None else tune.muffle_pct,
+            crush_pct=fx.crush_pct if tune.crush_pct is None else tune.crush_pct,
         )
 
     rate_pct = cast.rate_pct
@@ -895,10 +1087,16 @@ def retune(cast: Cast, tune: Tune | None, pool=()) -> Cast:
     return Cast(
         cast.key,
         voice_id,
-        cast.language,
+        language,
         cast.engine,
         pitch_pct=cast.pitch_pct if tune.pitch_pct is None else tune.pitch_pct,
         rate_pct=rate_pct,
         vtl_pct=cast.vtl_pct,
         fx=fx,
+        # Neither is dealt by the casting, so "unset" here means the cast's own
+        # default and not a value somebody chose — which is why False is worth
+        # spelling: it is how a stored tune says "off", and it has to survive
+        # being read back the way the True did.
+        volume_db=cast.volume_db if tune.volume_db is None else tune.volume_db,
+        drc=cast.drc if tune.drc is None else tune.drc,
     )
