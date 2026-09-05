@@ -157,8 +157,8 @@ def test_the_token_command_is_dispatched_and_documented():
         src = fh.read()
     assert "  token)   shift; cmd_token" in src
     assert "dndsim token [--show|--stdin]" in src
-    # ...and the help says not to put this one in the key store.
-    assert "NOT one to put in /etc/environment" in src
+    # ...and the help says this is the one key nobody types in.
+    assert "not a vendor key: this app's own secret" in src
 
 
 def test_the_token_never_reaches_a_command_line():

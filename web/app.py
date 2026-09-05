@@ -8,8 +8,8 @@ Env:
     DND_SIM_DB        SQLite path (default ./data/dndsim.sqlite3)
     DND_SIM_MOCK      "1" → MockLLMClient, no API calls
     ANTHROPIC_API_KEY required for live mode (on lab980: read from ./.env,
-                      which run.sh sources; `dndsim deploy` adopts it there
-                      from /etc/environment)
+                      which run.sh sources; put there by hand — there is no
+                      box-level key store)
     DND_WRITE_TOKEN   shared secret for the write routes (see web/auth.py).
                       Unset → reads and the stream still work, writes are 503.
     DND_AUDIO_DIR     the picked score (default ./audio) — see AUDIO.md

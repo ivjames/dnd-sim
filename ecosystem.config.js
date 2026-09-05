@@ -9,12 +9,13 @@
 // The platform API keys, the AWS credentials Polly narration uses and the
 // write token — the list is KNOWN_KEYS in bin/dndsim — are NOT set here and
 // are NOT inherited from the shell. They live in /var/www/dndsim/.env (mode
-// 600, gitignored), which `dndsim deploy` writes by copying each value out of
-// /etc/environment, and which run.sh sources before exec'ing python. pm2
+// 600, gitignored) and nowhere else on the box — put there by hand; `dndsim
+// deploy` seeds the non-secret settings and copies no key in from anywhere —
+// and run.sh sources that file before exec'ing python. pm2
 // gives the process the environment of the command that started it, and
 // `pm2 save` writes that into ~/.pm2/dump.pm2 — so the allowlist on the
-// start/restart above is what keeps a known key, or anything else root's
-// login shell holds, out of both. (The other pm2 commands go through the
+// start/restart above is what keeps a known key, or anything else the
+// calling shell holds, out of both. (The other pm2 commands go through the
 // same wrapper as hygiene for the daemon's own environ.) Nothing else from
 // the shell reaches the process either: TZ, proxy variables, a DND_* override
 // belong in .env. Values in .env override the env block below. Never commit
