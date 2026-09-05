@@ -64,6 +64,29 @@ DM_MODEL = os.environ.get("DND_DM_MODEL", "claude-sonnet-5")
 PLAYER_MODEL = os.environ.get("DND_PLAYER_MODEL", "claude-haiku-4-5-20251001")
 SUMMARY_MODEL = os.environ.get("DND_SUMMARY_MODEL", PLAYER_MODEL)
 
+#: Shortest system prefix Anthropic will cache, in tokens, by model id or
+#: prefix (longest prefix wins). Below it the `cache_control` marker is
+#: silently inert — no error, no cache entry — which is how 823 player calls
+#: on Haiku 4.5 read nothing from cache across the first sixteen live games:
+#: the block was ~1,900 tokens against a 4,096 floor. Read on 2026-09-05
+#: from the prompt-caching reference; not a price, so it lives here rather
+#: than in cost.py. Non-Anthropic ids fall through to the default.
+CACHE_MIN_PREFIX_TOKENS: dict[str, int] = {
+    "claude-haiku-4-5": 4096,
+    "claude-sonnet-5": 1024,
+    "claude-opus-5": 512,
+    "claude-fable-5": 512,
+}
+DEFAULT_CACHE_MIN_PREFIX_TOKENS = 1024
+
+
+def cache_min_prefix_tokens(model: str) -> int:
+    """Tokens a system prefix needs before the provider caches it."""
+    hits = [k for k in CACHE_MIN_PREFIX_TOKENS if (model or "").startswith(k)]
+    if not hits:
+        return DEFAULT_CACHE_MIN_PREFIX_TOKENS
+    return CACHE_MIN_PREFIX_TOKENS[max(hits, key=len)]
+
 
 # --- per-model request parameters (CONTRACTS §2, amendment 2026-09-03) ----
 #
@@ -274,6 +297,9 @@ _SHAPE_RE = re.compile(r"RESPONSE_SHAPE:\s*([a-z_]+)")
 _SUGGESTED_RE = re.compile(r"suggested=(\[.*?\])\s*$", re.MULTILINE)
 _COORD_RE = re.compile(r"\(?\s*(-?\d+)\s*,\s*(-?\d+)\s*\)?")
 
+#: Skills the mock DM asks for, in the engine's own spelling.
+_SKILLS = ["Perception", "Stealth", "Investigation", "Survival", "Persuasion"]
+
 _SPEECH = [
     "Stand fast — I have this one!",
     "For the light, and for coin!",
@@ -310,6 +336,17 @@ class MockLLMClient:
         self.seed = seed
         self._rng = random.Random(seed)
         self.calls = 0
+        #: system prefixes this client has already been sent, by model —
+        #: the mock's stand-in for the provider's prompt cache.
+        self._cached: set[tuple[str, str]] = set()
+
+    @staticmethod
+    def _system_text(system: str | list[dict]) -> str:
+        if isinstance(system, str):
+            return system
+        return "\n".join(
+            b.get("text", "") if isinstance(b, dict) else str(b) for b in system or []
+        )
 
     # -- helpers -----------------------------------------------------------
 
@@ -399,6 +436,20 @@ class MockLLMClient:
                 }
             )
         if shape == "dm_adjudication":
+            # One ruling in three asks for a check, so a seeded mock game
+            # walks the skill-check path — and, through the orchestrator,
+            # the surprise it can decide — rather than only narrating.
+            if self._rng.randrange(3) == 0:
+                return json.dumps(
+                    {
+                        "resolution": "skill_check",
+                        "skill": self._rng.choice(_SKILLS),
+                        "dc": 10 + 2 * self._rng.randrange(4),
+                        "actor": None,
+                        "narration": self._rng.choice(_SCENE),
+                        "encounter": None,
+                    }
+                )
             return json.dumps(
                 {
                     "resolution": "narrative",
@@ -447,12 +498,28 @@ class MockLLMClient:
         text = self._payload(shape, prompt)
         # cheap deterministic token estimate: ~4 chars/token
         in_tok = max(1, len(prompt) // 4)
+        # Account for the cache the way the provider does, so a mock run's
+        # total is a usable stand-in for a live one when a budget is sized
+        # from it: a system prefix at or above the model's minimum is written
+        # once (at the write multiple) and read on every later call at the
+        # read multiple; a shorter one is billed as plain input every time,
+        # which is exactly what happens live — the marker is silently inert.
+        sys_tok = len(self._system_text(system)) // 4
+        cache_read = cache_write = 0
+        if sys_tok >= cache_min_prefix_tokens(model):
+            key = (model, self._system_text(system))
+            if key in self._cached:
+                cache_read = sys_tok
+            else:
+                self._cached.add(key)
+                cache_write = sys_tok
+            in_tok = max(1, in_tok - sys_tok)
         return LLMResponse(
             text=text,
             input_tokens=in_tok,
             output_tokens=max(1, len(text) // 4),
-            cache_read_tokens=0,
-            cache_write_tokens=0,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             model=model,
             stop_reason="end_turn",
         )

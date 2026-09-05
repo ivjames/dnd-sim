@@ -275,3 +275,79 @@ def test_mock_client_ignores_the_model_rule():
     a = _call(MockLLMClient(seed=4), f"{ACTION_BLOCK}\nRESPONSE_SHAPE: player_action", model="claude-sonnet-5")
     b = _call(MockLLMClient(seed=4), f"{ACTION_BLOCK}\nRESPONSE_SHAPE: player_action", model="claude-fable-5")
     assert a.text == b.text
+
+
+# -- the mock accounts for the cache the way the provider does ----------------
+
+
+def _mock_call(client, model, system, user="RESPONSE_SHAPE: dm_narration\nSay something."):
+    return client.complete(
+        model=model, system=system, messages=[{"role": "user", "content": user}], max_tokens=64
+    )
+
+
+def test_mock_writes_a_long_system_prefix_once_and_reads_it_after():
+    from llm.client import MockLLMClient, cache_min_prefix_tokens
+
+    client = MockLLMClient(seed=1)
+    model = "claude-haiku-4-5-20251001"
+    block = "R" * (4 * (cache_min_prefix_tokens(model) + 10))  # just over the floor
+    first = _mock_call(client, model, block)
+    second = _mock_call(client, model, block)
+    assert first.cache_write_tokens == len(block) // 4 and first.cache_read_tokens == 0
+    assert second.cache_read_tokens == len(block) // 4 and second.cache_write_tokens == 0
+    # the cached prefix is not billed as plain input as well
+    assert second.input_tokens < len(block) // 4
+
+
+def test_mock_bills_a_short_prefix_as_input_every_time():
+    """Below the model's floor the marker is inert live, so the mock must not cache either."""
+    from llm.client import MockLLMClient, cache_min_prefix_tokens
+
+    client = MockLLMClient(seed=1)
+    model = "claude-haiku-4-5-20251001"
+    block = "R" * (4 * (cache_min_prefix_tokens(model) - 10))
+    for _ in range(2):
+        r = _mock_call(client, model, block)
+        assert r.cache_read_tokens == 0 and r.cache_write_tokens == 0
+        assert r.input_tokens >= len(block) // 4
+
+
+def test_mock_cache_floor_is_per_model():
+    from llm.client import MockLLMClient, cache_min_prefix_tokens
+
+    assert cache_min_prefix_tokens("claude-haiku-4-5-20251001") == 4096
+    assert cache_min_prefix_tokens("claude-sonnet-5") == 1024
+    assert cache_min_prefix_tokens("gpt-5.4-mini") == 1024  # default for the rest
+    client = MockLLMClient(seed=1)
+    block = "R" * (4 * 2000)  # caches on Sonnet 5, not on Haiku 4.5
+    assert _mock_call(client, "claude-sonnet-5", block).cache_write_tokens > 0
+    assert _mock_call(client, "claude-haiku-4-5-20251001", block).cache_write_tokens == 0
+
+
+def test_mock_cache_is_keyed_by_model_and_prefix():
+    from llm.client import MockLLMClient
+
+    client = MockLLMClient(seed=1)
+    block = "R" * (4 * 5000)
+    _mock_call(client, "claude-sonnet-5", block)
+    assert _mock_call(client, "claude-haiku-4-5-20251001", block).cache_write_tokens > 0
+    assert _mock_call(client, "claude-sonnet-5", block + "x").cache_write_tokens > 0
+
+
+def test_mock_dm_sometimes_rules_a_skill_check():
+    """A seeded mock game must walk the skill-check path, or surprise is never exercised."""
+    from llm.client import MockLLMClient
+
+    client = MockLLMClient(seed=3)
+    rulings = [
+        json.loads(_mock_call(client, "claude-sonnet-5", "sys", "RESPONSE_SHAPE: dm_adjudication").text)
+        for _ in range(30)
+    ]
+    kinds = {r["resolution"] for r in rulings}
+    assert kinds == {"narrative", "skill_check"}
+    for r in rulings:
+        if r["resolution"] == "skill_check":
+            assert r["skill"] and isinstance(r["dc"], int) and 10 <= r["dc"] <= 16
+        else:
+            assert r["skill"] is None and r["dc"] is None
