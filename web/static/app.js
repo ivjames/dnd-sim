@@ -2004,7 +2004,7 @@
   // own casting that changes, not a second one in the page: what the lab plays
   // is the file the narration will play.
 
-  var VL = { roster: null, loading: false, audio: null };
+  var VL = { roster: null, loading: false, audio: null, wasPlaying: false };
 
   var VL_SAMPLES = {
     dm: 'The passage narrows. Somewhere ahead, water drips onto stone.',
@@ -2048,7 +2048,25 @@
     });
     if (Object.keys(cur).length) all[key] = cur; else delete all[key];
     voiceSaveSettings();
-    clipForget();          // the clips already fetched are in the old voice
+    clipForgetSeat(key);   // what is already fetched for this seat is the old voice
+  }
+
+  // Drop the fetched clips of ONE seat. Not `clipForget()`, which is for a game
+  // switch: here the narrator may be mid-line, and throwing away the whole
+  // cache would revoke the object URL of the clip playing and of the line
+  // prefetched behind it. The seat is named in the URL, so the URLs to forget
+  // are exactly the ones carrying it — and the one currently loaded into the
+  // <audio> element is left alone to finish.
+  function clipForgetSeat(key) {
+    var needle = 'key=' + encodeURIComponent(key) + '&';
+    var playing = (V.audio && V.audio.src) || '';
+    Object.keys(V.clips).forEach(function (u) {
+      if (u.indexOf(needle) < 0 || V.clips[u] === playing) return;
+      try { URL.revokeObjectURL(V.clips[u]); } catch (e) { /* ignore */ }
+      delete V.clips[u];
+      var i = V.clipOrder.indexOf(u);
+      if (i >= 0) V.clipOrder.splice(i, 1);
+    });
   }
 
   // Play a sample line in one seat's voice, through the server, exactly as the
@@ -2217,6 +2235,12 @@
   }
 
   function vlOpen() {
+    // The narrator is reading a game aloud; a sample played over the top of it
+    // is two voices at once and tells you nothing about either. Paused rather
+    // than muted, so the playhead stays where it was and the line resumes from
+    // the part it had reached when the lab closes.
+    VL.wasPlaying = V.playing;
+    if (V.playing) voicePausePlayback();
     $('voicelab').hidden = false;
     vlRender();
     if (VL.roster || VL.loading || !V.tts.available) return;
@@ -2234,6 +2258,10 @@
   function vlClose() {
     $('voicelab').hidden = true;
     if (VL.audio) { try { VL.audio.pause(); } catch (e) { /* ignore */ } }
+    // Only if the lab is what stopped it: a spectator who paused the narration
+    // first and then opened the lab did not ask for it to start again.
+    if (VL.wasPlaying && !V.playing) voicePlay();
+    VL.wasPlaying = false;
   }
 
   function voiceInit() {
@@ -2273,7 +2301,7 @@
     $('vl-reset').addEventListener('click', function () {
       V.settings.tunes = {};
       voiceSaveSettings();
-      clipForget();
+      clipForget();          // every seat changed at once
       vlRender();
     });
     $('voicelab').addEventListener('click', function (e) {

@@ -40,14 +40,40 @@ def test_every_clip_url_carries_the_seats_tune():
         assert "'&" + param + "='" in body
 
 
-def test_changing_a_tune_drops_the_clips_already_fetched():
+def test_changing_a_tune_drops_that_seats_clips_and_only_those():
     """They are the old voice. Kept, the page would go on playing what the
-    listener has just changed away from until the cache rolled over."""
+    listener has just changed away from until the cache rolled over.
+
+    One seat, not the lot: the narrator may be mid-line, and `clipForget()` —
+    which is for a game switch — would revoke the object URL of the clip
+    playing and of the line prefetched behind it.
+    """
     js = read(APP_JS)
     m = re.search(r"function vlSetTune\(key, patch\) \{(.+?)\n  \}", js, re.S)
     assert m, "vlSetTune has gone"
-    assert "clipForget()" in m.group(1)
-    assert "voiceSaveSettings()" in m.group(1)
+    body = m.group(1)
+    assert "clipForgetSeat(key)" in body
+    assert "clipForget()" not in body
+    assert "voiceSaveSettings()" in body
+
+    seat = re.search(r"function clipForgetSeat\(key\) \{(.+?)\n  \}", js, re.S)
+    assert seat, "clipForgetSeat has gone"
+    # Matched on the seat the URL names, and never the clip in the element.
+    assert "'key=' + encodeURIComponent(key)" in seat.group(1)
+    assert "V.audio && V.audio.src" in seat.group(1)
+
+
+def test_the_lab_does_not_let_the_narrator_talk_over_the_samples():
+    """And resumes only what it stopped: a spectator who paused first and then
+    opened the lab did not ask for the narration to start again."""
+    js = read(APP_JS)
+    o = re.search(r"function vlOpen\(\) \{(.+?)\n  \}", js, re.S)
+    c = re.search(r"function vlClose\(\) \{(.+?)\n  \}", js, re.S)
+    assert o and c, "vlOpen/vlClose have gone"
+    assert "VL.wasPlaying = V.playing" in o.group(1)
+    assert "voicePausePlayback()" in o.group(1)
+    assert "VL.wasPlaying && !V.playing" in c.group(1)
+    assert "voicePlay()" in c.group(1)
 
 
 def test_the_lab_has_a_way_in_and_a_way_out():
