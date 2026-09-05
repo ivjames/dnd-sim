@@ -9,6 +9,9 @@
               anything longer than its cue's window down to it
     verify    re-hash a fetched directory against its manifest
     cues      print the cue table (--json for the machine-readable form)
+    catalog   build and query a local database of incompetech's catalogue —
+              `catalog build`, then `catalog query` with the filters the
+              catalogue's own page does not offer (tempo, duration, date)
 
 Everything writes under `audio/` unless told otherwise. What lands there is
 tracked apart from the two build artefacts — see AUDIO.md, which also carries
@@ -74,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("cues", help="print the cue table")
     c.add_argument("--json", action="store_true")
 
+    _add_catalog(sub)
+
     args = ap.parse_args(argv)
 
     if args.cmd == "cues":
@@ -88,7 +93,154 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_normalize(args)
     if args.cmd == "verify":
         return _cmd_verify(args)
+    if args.cmd == "catalog":
+        return _cmd_catalog(args)
     return 2
+
+
+DEFAULT_DB = DEFAULT_OUT / "incompetech.sqlite3"
+
+
+def _duration(text: str) -> int:
+    """A duration as seconds, written "210", "3:30" or "1:02:03"."""
+    total = 0
+    for part in str(text).split(":"):
+        total = total * 60 + int(part or 0)
+    return total
+
+
+def _add_catalog(sub) -> None:
+    """`catalog build` and `catalog query` — see tools/audio/catalog.py."""
+    cat = sub.add_parser("catalog", help="build and query the incompetech catalogue database")
+    cs = cat.add_subparsers(dest="sub", required=True)
+
+    b = cs.add_parser("build", help="fetch the catalogue and write the database")
+    b.add_argument("--db", type=Path, default=DEFAULT_DB,
+                   help=f"database path (default: {DEFAULT_DB})")
+    b.add_argument("--from-file", type=Path, default=None,
+                   help="read pieces.json from disk instead of fetching it")
+    b.add_argument("--no-check-lookups", action="store_true",
+                   help="skip the second request that checks the genre and "
+                        "collection tables against the catalogue page")
+
+    q = cs.add_parser("query", help="filter the catalogue")
+    q.add_argument("--db", type=Path, default=DEFAULT_DB)
+    q.add_argument("--text", "-t", default="", help="full-text over title + description")
+    q.add_argument("--feel", action="append", default=[],
+                   help="require this feel (repeatable — they AND)")
+    q.add_argument("--feel-any", action="append", default=[],
+                   help="require any one of these feels (repeatable — they OR)")
+    q.add_argument("--instrument", action="append", default=[],
+                   help="require this instrument, matched as a substring (repeatable — they AND)")
+    q.add_argument("--genre", action="append", default=[], help="genre name or id (OR)")
+    q.add_argument("--collection", action="append", default=[], help="collection name (OR)")
+    q.add_argument("--category", action="append", default=[],
+                   help="collection category, e.g. 'Film Scoring Moods' (OR)")
+    q.add_argument("--bpm-min", type=int, default=None)
+    q.add_argument("--bpm-max", type=int, default=None)
+    q.add_argument("--bpm-unknown", action="store_true",
+                   help="only the 246 pieces whose tempo the catalogue never measured")
+    q.add_argument("--min-length", default=None, help="e.g. 180 or 3:00")
+    q.add_argument("--max-length", default=None)
+    q.add_argument("--since", default="", help="uploaded on or after (YYYY-MM-DD)")
+    q.add_argument("--until", default="", help="uploaded on or before (YYYY-MM-DD)")
+    q.add_argument("--limit", type=int, default=25, help="0 for no limit")
+    q.add_argument("--sort", default="title", choices=sorted(_sorts()),
+                   help="default: title")
+    q.add_argument("--desc", action="store_true")
+    q.add_argument("--json", action="store_true", help="machine-readable, with URLs and credit")
+
+
+def _sorts():
+    from .catalog import SORTS
+    return SORTS
+
+
+def _cmd_catalog(args) -> int:
+    if args.sub == "build":
+        return _cmd_catalog_build(args)
+    return _cmd_catalog_query(args)
+
+
+def _cmd_catalog_build(args) -> int:
+    from . import catalog as CAT
+    from . import incompetech as I
+
+    drift: tuple[str, ...] = ()
+    if args.from_file:
+        rows = json.loads(Path(args.from_file).read_text(encoding="utf-8"))
+    else:
+        import httpx
+        with httpx.Client(timeout=60.0, follow_redirects=True,
+                          headers={"User-Agent": "dnd-sim-audio-sourcing/1"}) as client:
+            rows = I.fetch_catalog(client)
+            if not args.no_check_lookups:
+                try:
+                    drift = tuple(I.lookup_drift(I.fetch_lookups(client)))
+                except Exception as exc:            # noqa: BLE001 — advisory only
+                    drift = (f"could not check the lookup tables: {exc}",)
+
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    if args.db.exists():
+        args.db.unlink()        # the database is derived; a build rebuilds it
+    conn = CAT.connect(args.db)
+    try:
+        stats = CAT.build(conn, rows)
+    finally:
+        conn.close()
+
+    print(f"wrote {args.db}")
+    for line in stats.lines():
+        print(line)
+    if drift:
+        print("lookup tables have drifted from the catalogue page:", file=sys.stderr)
+        for note in drift:
+            print(f"  {note}", file=sys.stderr)
+        print("  update tools/audio/incompetech.py by hand", file=sys.stderr)
+    return 0
+
+
+def _cmd_catalog_query(args) -> int:
+    from . import catalog as CAT
+
+    if not args.db.exists():
+        print(f"no database at {args.db}; run `python -m tools.audio catalog build` first",
+              file=sys.stderr)
+        return 2
+    f = CAT.Filters(
+        text=args.text,
+        feels=tuple(args.feel),
+        feels_any=tuple(args.feel_any),
+        instruments=tuple(args.instrument),
+        genres=tuple(args.genre),
+        collections=tuple(args.collection),
+        categories=tuple(args.category),
+        bpm_min=args.bpm_min,
+        bpm_max=args.bpm_max,
+        bpm_unknown=args.bpm_unknown,
+        length_min=_duration(args.min_length) if args.min_length else None,
+        length_max=_duration(args.max_length) if args.max_length else None,
+        uploaded_from=args.since,
+        uploaded_to=args.until,
+        limit=args.limit,
+        sort=args.sort,
+        desc=args.desc,
+    )
+    conn = CAT.connect(args.db)
+    try:
+        rows = CAT.search(conn, f)
+        total = CAT.count(conn, f)
+        info = CAT.meta(conn)
+    finally:
+        conn.close()
+
+    if args.json:
+        print(CAT.dump_json(rows, info))
+        return 0
+    print(CAT.format_rows(rows))
+    shown = f"{len(rows)} of {total}" if total != len(rows) else str(total)
+    print(f"\n{shown} pieces — {info.get('attribution', '')}")
+    return 0
 
 
 def _cmd_cues(args) -> int:

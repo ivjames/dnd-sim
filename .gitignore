@@ -24,6 +24,14 @@ htmlcov/
 /audio/candidates.json
 /audio/picker.html
 
+# The incompetech catalogue database. Derived: one command and one HTTP
+# request rebuild it, and it is a dev-tool artefact rather than part of the
+# pack the runtime serves, so it is not committed — vendoring someone else's
+# 1442-row catalogue into git would only go stale and churn. (`*.sqlite3`
+# below already catches it; it is named here so the reason is written down.)
+/audio/incompetech.sqlite3
+/audio/incompetech.json
+
 # logs / local
 *.log
 .env

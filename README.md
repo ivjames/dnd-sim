@@ -910,8 +910,15 @@ picks up the bed the fight is being fought to.
 Nothing in the page names a cue or an event kind: the manifest carries the
 match rules, so re-picking the audio changes what the game sounds like without
 touching a line of JavaScript. The pack's credits are in the Score panel,
-because most of it is CC BY and attribution is a condition of playing it. Full
-notes, the source table and the licence rules: [AUDIO.md](AUDIO.md).
+because most of it is CC BY and attribution is a condition of playing it.
+
+Picking a bed by ear is easier with something to pick from, so `python -m
+tools.audio catalog build` normalises incompetech's whole catalogue — 1442 CC
+BY pieces, one request — into a local SQLite database, and `catalog query`
+filters it on tempo, duration, feel combinations, collection and upload date,
+none of which the catalogue's own page can do. The database is a build
+artefact and is not committed. Full notes, the source table and the licence
+rules: [AUDIO.md](AUDIO.md).
 
 ## Deployment
 

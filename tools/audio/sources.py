@@ -29,6 +29,8 @@ from dataclasses import asdict, dataclass, field
 
 import httpx
 
+from . import incompetech
+
 __all__ = [
     "Candidate",
     "Source",
@@ -258,19 +260,13 @@ class IncompetechSource(Source):
 
     name = "incompetech"
     needs = ""
-    CATALOG = "https://incompetech.com/music/royalty-free/pieces.json"
-    FILES = "https://incompetech.com/music/royalty-free/mp3-royaltyfree/"
-    PAGE = "https://incompetech.com/music/royalty-free/index.html?isrc="
-    AUTHOR = "Kevin MacLeod"
-    LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
-    GENRES = {
-        "2": "African", "3": "Blues", "4": "Classical", "5": "Contemporary",
-        "6": "Disco", "7": "Electronica", "8": "Funk", "9": "Holiday",
-        "10": "Horror", "11": "Jazz", "12": "Latin", "13": "Modern",
-        "14": "Musical", "15": "Polka", "16": "Pop", "18": "Reggae",
-        "19": "Rock", "20": "Silent Film Score", "21": "Ska", "22": "Soundtrack",
-        "23": "Stings", "24": "Unclassifiable", "25": "World", "26": "Urban",
-    }
+    # The catalogue's URLs, licence and lookup tables live in `incompetech.py`
+    # — one transcription of someone else's numbering, not two.
+    CATALOG = incompetech.CATALOG_URL
+    FILES = incompetech.MP3_BASE
+    PAGE = incompetech.DETAIL_BASE
+    AUTHOR = incompetech.AUTHOR
+    LICENSE_URL = incompetech.LICENSE_URL
     # Words that match everything in a music catalogue and so rank nothing.
     STOP = frozenset({"music", "loop", "short", "bed", "track", "sound", "the", "and", "for"})
 
@@ -288,7 +284,7 @@ class IncompetechSource(Source):
     def _haystack(self, p: dict) -> str:
         return " ".join(str(p.get(k) or "") for k in
                         ("title", "description", "feel", "instruments")
-                        ).lower() + " " + self.GENRES.get(str(p.get("genre")), "").lower()
+                        ).lower() + " " + (incompetech.genre_name(p.get("genre")) or "").lower()
 
     def search(self, query: str, *, dur: tuple[float, float], limit: int,
                group: str = "") -> list[Candidate]:
@@ -314,7 +310,7 @@ class IncompetechSource(Source):
             filename = (p.get("filename") or "").strip()
             title = (p.get("title") or filename or "untitled").strip()
             tags = [t.strip() for t in (p.get("feel") or "").split(",") if t.strip()]
-            genre = self.GENRES.get(str(p.get("genre")))
+            genre = incompetech.genre_name(p.get("genre"))
             if genre:
                 tags.append(genre)
             out.append(Candidate(

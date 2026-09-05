@@ -42,7 +42,7 @@ itself as a JSON file.
 |---|---|---|---|---|
 | [Freesound](https://freesound.org/docs/api/) | effects, stings, swells, ambience, some loops | CC0, CC BY, CC BY-NC (the harvester keeps the first two) | [free, instant](https://freesound.org/apiv2/apply/) → `FREESOUND_API_KEY` | 60 requests/min, 2000/day. Originals need OAuth2; previews do not (see below) |
 | [Jamendo](https://developer.jamendo.com/v3.0) | full-length music beds | CC, per track via `license_ccurl` | [free](https://devportal.jamendo.com/) → `JAMENDO_CLIENT_ID` | Their API terms govern the free tier — read them before anything commercial |
-| [incompetech](https://incompetech.com/music/royalty-free/music.html) | music beds and stings — **not** ambience | CC BY 4.0, all of it | none | Kevin MacLeod's 1400-piece catalogue, published whole as [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json) — fetched once per run and searched in memory, so it is one request and no rate limit. Its `feel` vocabulary is *Dark, Eerie, Mysterious, Unnerving, Somber, Epic, Action, Suspenseful*, which is this game's mood list almost exactly |
+| [incompetech](https://incompetech.com/music/royalty-free/music.html) | music beds and stings — **not** ambience | CC BY 4.0, all of it | none | Kevin MacLeod's 1442-piece catalogue, published whole as [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json) — fetched once per run and searched in memory, so it is one request and no rate limit. Its `feel` vocabulary is *Dark, Eerie, Mysterious, Unnerving, Somber, Epic, Action, Suspenseful*, which is this game's mood list almost exactly. Worth more than a per-cue search: see "Searching incompetech properly" |
 | [Internet Archive](https://archive.org/advancedsearch.php) | field-recorded ambience, and music | whatever the uploader declared; the query keeps only public-domain / BY / BY-SA | none | Works with no credentials at all. For ambience the query narrows to field recordings (radio aporee and anything tagged as one), which is the difference between the sound of a crypt and a piece of music about one |
 
 **Why a CC BY catalogue is in the default set:** the `sheep` repo sourced two
@@ -80,6 +80,103 @@ narrowed to field recordings. Generic words are dropped from an Archive query
 before it is sent — every field recording's description says "ambience", so
 ORing that word in returns the collection in its own order and the word that
 picks one out does no work.
+
+## Searching incompetech properly
+
+`harvest` asks each library the cue's own words and keeps what scores. That is
+the right shape for four libraries at once and the wrong one for the question
+"what in this catalogue is dark, slow, and long enough to loop under a scene",
+because incompetech's own page cannot answer it either: it searches one
+lowercased substring over title, instruments and description, ANDs a set of
+feel chips, and offers **no tempo, duration, collection or date filter at
+all**. Those are exactly the axes a bed is chosen on.
+
+So the catalogue gets a local database:
+
+```bash
+.venv/bin/python -m tools.audio catalog build          # one request, ~1 MB, no key
+.venv/bin/python -m tools.audio catalog query \
+    --feel Dark --feel Mysterious --bpm-max 90 --min-length 3:00 --sort bpm
+```
+
+`build` fetches [`pieces.json`](https://incompetech.com/music/royalty-free/pieces.json),
+normalises it and writes `audio/incompetech.sqlite3` — 1442 pieces, one row
+each, keyed by filename. It prints what it ingested and what resolved, and
+takes a second request to check the lookup tables against the catalogue page
+(`--no-check-lookups` skips it, `--from-file` builds from a saved copy).
+
+**The database is a build artefact and is gitignored**, unlike everything else
+under `audio/`. One command rebuilds it, it is not on the runtime path, and a
+vendored copy of someone else's catalogue would go stale and churn in every
+diff. `manifest.json` is committed for the opposite reason: the page reads it,
+and a deploy hard-resets the checkout.
+
+### What normalising it means
+
+The published JSON is thin and dirty, and all of this is real:
+
+| Raw | Stored |
+|---|---|
+| `genre` "10" | a `genre` row — Horror |
+| `collection` "12" | a `collection` row — Hard Electronic, category *Electronic and Rock* |
+| `length` "00:03:20" | `length_s` 200; "00:00:00" (3 rows) is unknown, so NULL |
+| `bpm` "0" (238 rows), null (8) | NULL — "not measured" is not a tempo |
+| `instruments` "Strings, Choir\r\n" | rows in `piece_instrument`, 313 instruments |
+| `feel` "Dark, Eerie" | rows in `piece_feel`, 22 feels |
+| `null` and `""`, used interchangeably | one representation: NULL |
+| `\r\n` inside titles and descriptions, 505 rows with stray whitespace | stripped |
+| `filename` | the working MP3 URL, and the ISRC detail page |
+
+Three of these are traps worth naming.
+
+**`collection` is a `code`, not an `id`.** Each collection in the page's
+JavaScript carries both and they differ for all but a handful; the page's own
+`getCollectionName()` matches on `code`. Joining on `id` still returns a name
+for every row — the wrong one for 133 of them, and code 12 would come back as
+Polka rather than Hard Electronic.
+
+**A tempo of 0 is not slow.** Sixteen per cent of the catalogue says `bpm` 0,
+meaning nobody measured it. Kept as a number it lands at the top of every
+"slow" query; kept as NULL it stays out of a range and `--bpm-unknown` asks
+for it deliberately.
+
+**The `wav` field holds no WAV.** None of its 268 values end in `.wav`; most
+point at a Downloads page that 404s and the rest at a filmmusic.io page that
+has moved. It is stored verbatim as `wav_link` and is never offered as audio.
+
+The lookup tables themselves live in `tools/audio/incompetech.py` — one
+transcription of someone else's numbering, which `sources.py` reads too rather
+than keeping a second copy of. `build` re-reads the page and reports drift
+because a table that has silently gone stale is the failure this cannot
+otherwise see.
+
+### Querying it
+
+Filters AND with each other. `--feel` repeats to mean *all of these* (which is
+the point of the relation), `--feel-any` to mean *any of these*; `--instrument`
+repeats and matches as a substring, so `--instrument drum` finds Drums and Log
+Drums. `--genre`, `--collection` and `--category` OR within themselves.
+
+```bash
+# a bed for a crypt: dark and eerie, slow, long enough to loop
+catalog query --feel Dark --feel Eerie --bpm-max 90 --min-length 3:00 --sort bpm
+
+# the film-scoring shelf, chase tempo, nothing short
+catalog query --category "Film Scoring Moods" --feel Suspenseful \
+              --bpm-min 120 --min-length 2:00 --sort length --desc
+
+# what has he added since the pack was picked?
+catalog query --since 2025-01-01 --feel-any Dark --feel-any Eerie --sort uploaded
+```
+
+`--json` is the scriptable form: whole rows, URLs, and a finished `credit`
+sentence on each one, so a row that leaves the database takes its attribution
+with it. Text search is FTS5 over title and description where the interpreter
+has FTS5 and a LIKE scan where it does not; a build says which it used.
+
+Everything in the catalogue is CC BY 4.0 to Kevin MacLeod, and the `meta`
+table carries the licence, the attribution and the credit wording alongside the
+data.
 
 ## Playing it
 
@@ -287,6 +384,8 @@ what keeps this tool off the runtime path — the page reads a manifest, not
 | `fetch` | download a config. `--config -` reads stdin, `--dry-run` lists without downloading, `--force` re-downloads, `--allow by-nc` widens the licence gate |
 | `verify` | re-hash every file against the manifest |
 | `cues` | print the cue table; `--json` for the machine-readable form |
+| `catalog build` | fetch incompetech's catalogue into `audio/incompetech.sqlite3`. `--db`, `--from-file`, `--no-check-lookups` |
+| `catalog query` | filter it: `--feel` (AND), `--feel-any`, `--instrument`, `--genre`, `--collection`, `--category`, `--bpm-min/--bpm-max/--bpm-unknown`, `--min-length/--max-length`, `--since/--until`, `--text`, `--sort`, `--desc`, `--limit`, `--json` |
 
 `--out` moves the working directory (default `audio/`).
 

@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 from . import cues as C
+from . import incompetech
 from .sources import LICENSE_NAMES, PERMISSIVE
 
 __all__ = ["validate_config", "plan", "fetch_all", "write_manifest", "write_credits",
@@ -218,9 +219,8 @@ def credit_line(credit: dict) -> str:
         "by-sa": "https://creativecommons.org/licenses/by-sa/4.0/",
     }.get(lic, "")
     if credit.get("source") == "incompetech":
-        # incompetech's own house form, as its licence page generates it.
-        return (f'"{title}" Kevin MacLeod (incompetech.com) — Licensed under '
-                f"Creative Commons: By Attribution 4.0 — {lic_url}")
+        # incompetech's own house form, worded once in `incompetech.py`.
+        return incompetech.credit_line(title, lic_url)
     name = {"by": "CC BY", "by-sa": "CC BY-SA"}.get(lic, lic.upper())
     where = f" via {credit['source']}" if credit.get("source") else ""
     return f'"{title}" by {author}{where} — {name}' + (f" — {lic_url}" if lic_url else "")
