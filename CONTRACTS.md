@@ -2145,3 +2145,93 @@ no event kind, and everything it plays it learns from the manifest. A cue with
 no `match` rule (`music_explore`, the swells) is picked but still fires
 nothing; giving it a trigger is a decision about the game, not about the
 player.
+
+### 2026-09-05 — tts/ + web/ — the treatment is a table, and it is seventeen knobs
+
+`MonsterFX` was three integers, and each of them was written out four times:
+once as a field, once in `__post_init__`'s clamp, once in `token()`'s
+positional colon-join, and once more as a `Tune` field in `tts/voices.py` — with
+the route's slider bounds and the voice lab's slider list as a fifth and sixth
+copy that no test held to the other four. Fourteen more effects is fourteen
+times that, so the knobs become tables and everything downstream reads them.
+
+```python
+# tts/dsp.py
+FIELDS: tuple[tuple[str, int, int], ...]      # (field, lo, hi) — DECLARATION order
+BOUNDS: dict[str, tuple[int, int]]            # the same bounds by name
+EFFECT_CHAIN: tuple[tuple[str, str], ...]     # (field, function) — SIGNAL order, no size_pct
+
+@dataclass(frozen=True)
+class MonsterFX:                              # 17 fields, all int, all 0 = falsy
+    def touches_samples(self) -> bool         # False for a size-only treatment
+    def token(self) -> str                    # "fx:size=20,growl=55:<fp>" — only what is dealt
+    def rate_pct(self) -> int                 # unchanged: 100 + size_pct
+    def playback_rate(self, in_rate=SAMPLE_RATE) -> int    # unchanged
+
+# tts/voices.py
+@dataclass(frozen=True)
+class Tune:  voice_id: str; rate_pct: int|None; pitch_pct: int|None
+             fx: tuple[tuple[str, int], ...]  # (field, percent) pairs, only what was asked
+def tune_from(voice_id="", rate=None, pitch=None, size=None, growl=None,
+              cave=None, fx=None, **knobs) -> Tune       # the six positional names unchanged
+DEALT_FX: tuple[str, ...]                     # ("size_pct", "growl_pct", "cave_pct")
+FX_KNOBS: tuple[str, ...]                     # every knob's short name, FIELDS order
+```
+
+1. **Two tables, because they answer different questions.** `FIELDS` is
+   declaration order and keeps `size_pct`, `growl_pct`, `cave_pct` at the front:
+   `MonsterFX(20, 55, 40)` is constructed positionally and has meant those three
+   since there were no others, so a knob inserted ahead of them would silently
+   repoint every positional construction at a different effect. `EFFECT_CHAIN`
+   is the order a signal chain wants — what generates content, then the
+   nonlinearities, the filters, modulation, the room, and last the two that chop
+   the level, because a gate ahead of a reverb tail cuts the tail.
+
+2. **The token spells only what is dealt.** `fx:size=20,growl=55:<fp>` rather
+   than joining all seventeen positionally, so a treatment keys the same length
+   however many knobs exist and adding one nobody has turned on moves no key.
+   `source_fingerprint()` is still folded in, so editing `dsp.py` still retires
+   every clip it made — and that is a fresh `SynthesizeSpeech` at the neural
+   rate, not a second pass over audio already on disk, because what the cache
+   holds is the treated WAV. Costed in `TTS-COSTS.md` §6.
+
+3. **`Tune` carries pairs, not fourteen more fields.** Holding no entry for an
+   untouched knob is what keeps `__bool__` honest and an untuned clip keyed
+   exactly as it always was; pairs rather than a `dict` because the dataclass is
+   frozen and must stay hashable. `tune_from`'s six positional names are
+   unchanged, so the existing call in `web/routes/tts.py` still reads as it did;
+   the other fourteen arrive by keyword or in `fx`, a mapping — an unrecognised
+   key there is ignored (it came off a URL), an unknown keyword raises (a
+   programmer wrote it).
+
+4. **`GET /api/tts/voices` reports the bounds; the page writes none.** `fx` now
+   carries `order` (because `jsonify` sorts keys and the panel must not read
+   `bandgrowl` first) and one entry per knob with `min`, `max`, `auto`, `label`,
+   `hint` and `dealt`. The existing three keep `min`/`max`, so a reader written
+   against the old shape still works. `dealt` is what splits the lab's row: the
+   three the casting gives stay visible, the fourteen fold behind a summary.
+
+5. **The casting is unchanged, deliberately.** `cast_for` still deals
+   `size_pct` from `MONSTER_SIZE_BANDS` and grit and a room from the hash, and
+   nothing deals the other fourteen. They are reachable only through a `Tune`.
+   `DEALT_FX` names the three and a test holds the casting to it.
+
+**Why.** `<amazon:effect vocal-tract-length>` was given up when the treatment
+moved after Polly, and the resample that replaced it takes pitch with the
+formants — a bigger creature, but never the same voice in a different body.
+`formant_pct` is the partial answer: one peaking bell, a cue rather than a
+transform, and the only knob here that moves an emphasis without moving pitch.
+The other thirteen are the things a resample cannot say at all — a swarm, a
+thing that rings, something not holding its shape.
+
+**What did not change.** No monster on the site sounds different: the fourteen
+default to 0 and no casting deals them. `DND_TTS_MONSTER_FX=0` still restores
+the standard-engine VTL arrangement whole. The rate/tempo rule is untouched —
+on a monster a tune's rate is the tempo and multiplies onto `fx.rate_pct()`
+rather than replacing it. `apply()` still answers a size-only treatment without
+reading a sample, which is most monsters and 0.1 ms of the 443 ms a fully dealt
+one costs.
+
+**What is open.** Which creature types should be dealt which knobs. That wants
+ears on it in the voice lab first, and writing it into `cast_for` blind would
+change every monster at the table in one commit.

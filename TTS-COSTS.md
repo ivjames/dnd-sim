@@ -521,12 +521,18 @@ wait for `AudioCache.prune`'s size-triggered LRU. Every edit to the module pays
 it again, which is a reason to land the effects together rather than one at a
 time.
 
-**The CPU cost is unchanged and is still paid once per distinct line.** The
-dealt three-knob treatment measures ~90 ms for a 20-second clip in pure Python
-(the ~150 ms above was measured on other hardware; the arithmetic has not
-changed), and a size-only monster — most of them — is still answered without a
-pass over the samples at all. What a fully-dealt treatment costs cannot be
-measured yet: the fourteen new effects are stubs raising `NotImplementedError`
-as this is written. The chain applies one function per dealt knob, each a pass
-or a few over the clip, so the cost should grow with how many a creature is
-given, not with how many exist.
+**The CPU cost grows with what a creature is dealt, not with what exists.**
+Measured on a 14-second clip (224,000 samples) in pure Python: **0.1 ms** for
+the size-only treatment most monsters get, which is the no-pass path and is
+the sample rate in the WAV header rather than any arithmetic; **66 ms** for the
+three the casting actually deals; **443 ms** for all sixteen sample-touching
+effects at once, which only the voice lab can ask for. The per-effect spread is
+8.7 ms (`_metal`) to 70 ms (`_phaser`, which costs a pass per all-pass stage),
+and the two that were already here are 26 ms (`_saturate`) and 8.9 ms
+(`_cave`) — so the fourteen did not change the cost of what is dealt, because
+what is dealt did not change.
+
+All of that is paid once per distinct line and then cached forever, on a
+request a listener is waiting for and behind a Polly round trip that is itself
+slower than any of these numbers. The budget it was written against was 3
+seconds; the worst case is a seventh of that.
