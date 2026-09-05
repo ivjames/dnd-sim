@@ -21,8 +21,9 @@ dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this box), the port
 is **8071** (first free in the 8060+ range on the droplet), and the platform
 keys live in **`/etc/environment`** — the known-key store on this box — from
 where `dndsim deploy` copies each one once into **`/var/www/dndsim/.env`**,
-which `run.sh` sources on every start. pm2 is launched with every known key
-unset so its dump never carries one. There is no hand runbook: `deploy/INSTALL.md` is a
+which `run.sh` sources on every start. pm2 is launched under `env -i` with an
+allowlist (PATH, HOME, PM2_HOME, TERM, LANG) so its dump never carries a key —
+known or otherwise. There is no hand runbook: `deploy/INSTALL.md` is a
 pointer, `DEPLOY.md` is the doc, and `bin/dndsim` does the work. Don't
 reopen these in a code change; if one has to change, make it a decision.
 
@@ -71,9 +72,11 @@ can lack and still run.
   other, because a deploy here must not depend on another site's untracked
   runtime state (`DNDSIM_KEY_SOURCE` takes a colon-separated list if a second
   file is ever wanted; `GOOGLE_API_KEY` is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
-  `bin/dndsim`, overridable with `DNDSIM_KEYS`, and the same list is what
-  the pm2 launch unsets. `dndsim keys` prints which known keys `.env` and
-  the store hold (names only) and exits 1 without `ANTHROPIC_API_KEY`. State
+  `bin/dndsim`, overridable with `DNDSIM_KEYS`; `DND_WRITE_TOKEN` is the one
+  known key never adopted (it is `dndsim token`'s), and pm2's launch does not
+  consult the list at all — it drops the whole environment. `dndsim keys`
+  prints which known keys `.env` and the store hold (names only) and exits 1
+  without `ANTHROPIC_API_KEY`. State
   is SQLite at `data/dndsim.sqlite3`; `data/`, `.env` and `.venv/` are
   gitignored and survive a deploy's hard reset.
 - vhost: `/etc/nginx/sites-available/dndsim.lab980.com`, written by
