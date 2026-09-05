@@ -197,10 +197,10 @@ def unconfigured_app(db_file, monkeypatch):
 
 
 def test_unset_token_refuses_writes_rather_than_opening_them(db_file, monkeypatch, sample_config):
-    """`dndsim deploy` adopts keys from /etc/environment and never overwrites
-    `.env`, so the first deploy carrying this code lands on a droplet with no
-    token set. Failing open there would ship the hole, still open and now
-    believed closed."""
+    """`dndsim deploy` never writes a token (`dndsim token` does, by hand,
+    afterwards), so the first deploy carrying this code lands on a droplet
+    with no token set. Failing open there would ship the hole, still open and
+    now believed closed."""
     app = unconfigured_app(db_file, monkeypatch)
     try:
         client = app.test_client()

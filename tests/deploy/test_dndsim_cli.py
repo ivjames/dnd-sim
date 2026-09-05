@@ -654,9 +654,14 @@ NO_STORE = ("adopt", "DNDSIM_KEY_SOURCE", "KEY_SOURCE", "NO_ADOPT_KEYS", "known-
 
 def test_nothing_still_describes_a_key_store():
     for doc in ("bin/dndsim", "DEPLOY.md", "ecosystem.config.js", "CLAUDE.md", "deploy/INSTALL.md",
-                "web/app.py", "web/auth.py", "PLAN.md", "README.md", "CONTRACTS.md"):
+                "web/app.py", "web/auth.py", "web/tests/test_auth.py", "PLAN.md", "README.md",
+                "CONTRACTS.md"):
         body = read(os.path.join(ROOT, doc))
-        if doc == "CONTRACTS.md":   # the amendment recording the removal may name what it removed
-            body = body.split("### 2026-09-05 — bin/dndsim — no box-level key store")[0]
+        if doc == "CONTRACTS.md":
+            # The amendment recording the removal may name what it removed; only
+            # that one section is exempt, not whatever is appended after it.
+            head, _, rest = body.partition("### 2026-09-05 — bin/dndsim — no box-level key store")
+            nxt = rest.find("\n### ")
+            body = head + (rest[nxt:] if nxt >= 0 else "")
         for phrase in NO_STORE:
             assert phrase not in body, "%s still says %r" % (doc, phrase)
