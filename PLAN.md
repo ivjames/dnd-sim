@@ -46,7 +46,7 @@ web  →  orchestrator  →  agents  →  llm
 ## Run modes
 - `python -m orchestrator.cli --config examples/goblin_ambush.json --mock --seed 42` — headless, mock LLM, prints events. This is the integration test.
 - `python -m orchestrator.cli --config ... --live` — real API.
-- `python -m web.app` — Flask, reads `ANTHROPIC_API_KEY` from env (on lab980: `.env` in the app dir, sourced by `run.sh`; `dndsim deploy` adopts it there from `/etc/environment`). Mock mode via `DND_SIM_MOCK=1`.
+- `python -m web.app` — Flask, reads `ANTHROPIC_API_KEY` from env (on lab980: `.env` in the app dir, sourced by `run.sh`, put there by hand — there is no box-level key store). Mock mode via `DND_SIM_MOCK=1`.
 
 ## Build plan (Opus builders, parallel)
 | Task | Owner | Files |
@@ -59,6 +59,6 @@ web  →  orchestrator  →  agents  →  llm
 Builders must not edit files outside their ownership. Cross-layer needs go through CONTRACTS.md types; if the other side isn't built yet, code against the contract and stub in tests.
 
 ## Deploy (lab980 protocol)
-Decided 2026-09-03: checkout `/var/www/dndsim`, port 8071, key in `/etc/environment` adopted into `/var/www/dndsim/.env` by the CLI. No hand runbook — on the droplet, as root:
+Decided 2026-09-03: checkout `/var/www/dndsim`, port 8071, keys in `/var/www/dndsim/.env` and nowhere else (revised 2026-09-05: no box-level key store; `/etc/environment` holds none). No hand runbook — on the droplet, as root:
 1. `git clone https://github.com/ivjames/dnd-sim /var/www/dndsim && ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim`
-2. `dndsim deploy` — venv + pip, `.env` (seeds PORT/HOST/DND_SIM_DB, copies `ANTHROPIC_API_KEY` from `/etc/environment`), vhost via `dndsim setup` (`provision-site dndsim ivjames/dnd-sim --port 8071`, DNS + certbot; or the HTTP-only `deploy/nginx-dndsim.conf` fallback), the SSE block (`proxy_buffering off`, hour-long `proxy_read_timeout`, `gzip off`) kept in the vhost, pm2 process `dnd-sim` started under `env -i` with an allowlisted environment (run.sh sources `.env`), probe. Same command for every deploy after. Details: `DEPLOY.md`.
+2. `dndsim deploy` — venv + pip, `.env` (seeds PORT/HOST/DND_SIM_DB; `ANTHROPIC_API_KEY` and the rest are added there with an editor), vhost via `dndsim setup` (`provision-site dndsim ivjames/dnd-sim --port 8071`, DNS + certbot; or the HTTP-only `deploy/nginx-dndsim.conf` fallback), the SSE block (`proxy_buffering off`, hour-long `proxy_read_timeout`, `gzip off`) kept in the vhost, pm2 process `dnd-sim` started under `env -i` with an allowlisted environment (run.sh sources `.env`), probe. Same command for every deploy after. Details: `DEPLOY.md`.

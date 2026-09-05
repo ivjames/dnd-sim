@@ -15,7 +15,8 @@ were given. What is checked:
   in the caller — known key or not — reaches pm2;
 - `pm2 jlist` failing stops a deploy rather than being read as "not
   registered" (a `pm2 start` on a registered process is a silent no-op);
-- `ensure_env` never adopts the write token from the store;
+- `ensure_env` seeds only the non-secret settings and copies no key in from
+  anywhere (there is no key store; the caller's environment is not one);
 - `deploy` survives a failing `setup` (subshell), and repairs the SSE block.
 
 The deploy tests run against a throwaway clone of this repo, so the
@@ -438,26 +439,38 @@ def test_save_is_skipped_and_says_why_when_pm2_is_unreadable(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# ensure_env: the write token is never adopted
+# ensure_env: no key store — nothing is copied into .env from anywhere
 # ---------------------------------------------------------------------------
 
-def test_ensure_env_adopts_vendor_keys_but_never_the_write_token(tmp_path):
-    store = str(tmp_path / "environment")
+def test_ensure_env_seeds_settings_and_copies_no_key_from_anywhere(tmp_path):
+    """There is no box-level key store any more: nothing in the caller's
+    environment and no other file feeds .env. Only the non-secret settings
+    are seeded; the keys are reported by name and the missing DM key warned
+    about, pointing at an editor rather than at some other file."""
     envf = str(tmp_path / ".env")
-    write(store, "ANTHROPIC_API_KEY=sk-ant-adoptme\nCARTESIA_API_KEY=cart-notknown\n"
-                 "DND_WRITE_TOKEN=tok-stays-in-store\n")
-    out = run("ensure_env", DNDSIM_KEY_SOURCE=store, DNDSIM_ENV_FILE=envf)
+    out = run("ensure_env", DNDSIM_ENV_FILE=envf,
+              ANTHROPIC_API_KEY="sk-ant-from-shell", DND_WRITE_TOKEN="tok-from-shell")
     assert out.returncode == 0, out.stderr
     body = read(envf)
-    assert "ANTHROPIC_API_KEY=sk-ant-adoptme" in body
-    assert "DND_WRITE_TOKEN" not in body
-    assert "CARTESIA_API_KEY" not in body
-    assert "DND_WRITE_TOKEN is in the key store" in out.stderr
-    assert "NOT adopted" in out.stderr
+    assert "PORT=8071" in body and "HOST=127.0.0.1" in body and "DND_SIM_DB=" in body
+    for name in ("ANTHROPIC_API_KEY", "DND_WRITE_TOKEN", "CARTESIA_API_KEY"):
+        assert name not in body, name + " was written into .env"
+    assert "keys present: none" in out.stdout
+    assert "no ANTHROPIC_API_KEY in" in out.stderr
+    assert "editor" in out.stderr and "dndsim restart" in out.stderr
+    assert "/etc/environment" not in out.stdout + out.stderr
     # names only, ever: no value reaches stdout/stderr, seeds included.
-    for value in ("sk-ant-adoptme", "tok-stays-in-store", "=8071", "=127.0.0.1"):
+    for value in ("sk-ant-from-shell", "tok-from-shell", "=8071", "=127.0.0.1"):
         assert value not in out.stdout + out.stderr
     assert "seeded PORT" in out.stdout
+    # a key already there is reported by name and never overwritten or printed
+    write(envf, "PORT=8071\nANTHROPIC_API_KEY=sk-ant-mine\n")
+    out = run("ensure_env", DNDSIM_ENV_FILE=envf, ANTHROPIC_API_KEY="sk-ant-from-shell")
+    assert out.returncode == 0, out.stderr
+    assert "ANTHROPIC_API_KEY=sk-ant-mine" in read(envf)
+    assert "present: ANTHROPIC_API_KEY" in out.stdout
+    assert "no ANTHROPIC_API_KEY" not in out.stderr
+    assert "sk-ant-mine" not in out.stdout + out.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -512,10 +525,8 @@ def deploy_fixture(tmp_path, curl_code: str = "200", vhost: bool = True, jlist_f
     enabled = tmp_path / "enabled"; enabled.mkdir()
     if vhost:
         write(str(avail / "test.example"), vhost_without_block())
-    store = str(tmp_path / "environment")
-    write(store, "ANTHROPIC_API_KEY=sk-ant-adoptme\nDND_WRITE_TOKEN=tok-in-store\n")
     env = dict(NGINX_AVAIL=str(avail), NGINX_ENABLED=str(enabled), BACKUP_ROOT=str(tmp_path / "backups"),
-               DNDSIM_FQDN="test.example", DNDSIM_BRANCH=current_branch(), DNDSIM_KEY_SOURCE=store,
+               DNDSIM_FQDN="test.example", DNDSIM_BRANCH=current_branch(),
                DNDSIM_PROBE_TRIES="1", DNDSIM_PORT="8099", **LEAKS)
     return clone, bindir, env, logs
 
@@ -534,14 +545,16 @@ def test_deploy_end_to_end_repairs_the_vhost_and_keeps_pm2_clean(tmp_path):
         "jlist", "start ecosystem.config.js --only dnd-sim", "jlist", "save"]
     vhost = read(os.path.join(env["NGINX_AVAIL"], "test.example"))
     assert SSE_BEGIN in vhost
-    # the keys: adopted into .env, and none of them anywhere near pm2
+    # the keys: the caller exports several and none is copied into .env (there
+    # is no key store, and the shell is not one), nor gets anywhere near pm2
     dotenv = read(os.path.join(clone, ".env"))
-    assert "ANTHROPIC_API_KEY=sk-ant-adoptme" in dotenv
-    assert "DND_WRITE_TOKEN" not in dotenv
+    for name in LEAKS:
+        assert name not in dotenv, name + " was copied into .env"
     seen = read(logs["env"])
     for name in LEAKS:
         assert name + "=" not in seen, name + " reached pm2"
-    assert "sk-ant-adoptme" not in out.stdout + out.stderr
+    for value in LEAKS.values():
+        assert value not in out.stdout + out.stderr
 
 
 def test_deploy_survives_a_failing_setup_and_says_so(tmp_path):
@@ -628,6 +641,22 @@ def test_the_docs_describe_the_allowlist_not_an_unset_list():
             assert phrase not in body, "%s still says %r" % (doc, phrase)
     for doc in ("DEPLOY.md", "ecosystem.config.js", "CLAUDE.md"):
         assert "env -i" in read(os.path.join(ROOT, doc)), doc
-    assert "NOT one to put in /etc/environment" in src
-    assert 'NO_ADOPT_KEYS="$WRITE_TOKEN_KEY"' in src
+    assert "not a vendor key: this app's own secret" in src
+    assert "nowhere else on the box" in src
+
+
+# There is no box-level key store any more (2026-09-05): nothing in the script
+# or the docs may still describe keys being copied in from one.
+NO_STORE = ("adopt", "DNDSIM_KEY_SOURCE", "KEY_SOURCE", "NO_ADOPT_KEYS", "known-key store",
+            "key store on this box", "in the store", "from the store")
+
+
+def test_nothing_still_describes_a_key_store():
+    for doc in ("bin/dndsim", "DEPLOY.md", "ecosystem.config.js", "CLAUDE.md", "deploy/INSTALL.md",
+                "web/app.py", "web/auth.py", "PLAN.md", "README.md", "CONTRACTS.md"):
+        body = read(os.path.join(ROOT, doc))
+        if doc == "CONTRACTS.md":   # the amendment recording the removal may name what it removed
+            body = body.split("### 2026-09-05 — bin/dndsim — no box-level key store")[0]
+        for phrase in NO_STORE:
+            assert phrase not in body, "%s still says %r" % (doc, phrase)
     assert "logs [--lines N]" in src and "[-n N]" not in src

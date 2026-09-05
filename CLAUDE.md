@@ -18,12 +18,14 @@ about this site rather than about the platform. For the box itself, read the
 This repo's own runbook and the lab980 conventions used to disagree on three
 points. All three are decided (2026-09-03) and the files agree: the checkout
 dir is **`/var/www/dndsim`** (always `/var/www/<stub>` on this box), the port
-is **8071** (first free in the 8060+ range on the droplet), and the platform
-keys live in **`/etc/environment`** — the known-key store on this box — from
-where `dndsim deploy` copies each one once into **`/var/www/dndsim/.env`**,
-which `run.sh` sources on every start. pm2 is launched under `env -i` with an
-allowlist (PATH, HOME, PM2_HOME, TERM, LANG) so its dump never carries a key —
-known or otherwise. There is no hand runbook: `deploy/INSTALL.md` is a
+is **8071** (first free in the 8060+ range on the droplet), and the keys live
+in **`/var/www/dndsim/.env`** and nowhere else on the box — revised
+2026-09-05: there is **no box-level key store**; `/etc/environment` holds no
+API key and `dndsim deploy` copies nothing from anywhere. A key goes into
+`.env` with an editor (never `echo` on a command line), `run.sh` sources the
+file on every start, and pm2 is launched under `env -i` with an allowlist
+(PATH, HOME, PM2_HOME, TERM, LANG) so its dump never carries a key — known or
+otherwise. There is no hand runbook: `deploy/INSTALL.md` is a
 pointer, `DEPLOY.md` is the doc, and `bin/dndsim` does the work. Don't
 reopen these in a code change; if one has to change, make it a decision.
 
@@ -67,15 +69,14 @@ can lack and still run.
   `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` that Polly narration reads through
   boto3, `DND_SIM_MOCK`, `DND_SIM_DB`, the `DND_*_MODEL` overrides and the
   `DND_TTS*` narration knobs (full table in README and `DEPLOY.md`). The app itself reads `os.environ` only; there is
-  no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600) and adopts
-  every known key it lacks into it from `/etc/environment` — that file and no
-  other, because a deploy here must not depend on another site's untracked
-  runtime state (`DNDSIM_KEY_SOURCE` takes a colon-separated list if a second
-  file is ever wanted; `GOOGLE_API_KEY` is accepted for `GEMINI_API_KEY`); the list is `KNOWN_KEYS` in
+  no `python-dotenv`. `dndsim deploy` writes `.env` (mode 600), seeds `PORT`,
+  `HOST` and `DND_SIM_DB`, and reports which known keys it holds (names
+  only); it copies no key in from anywhere — the keys are put there by hand,
+  one `KEY=value` line each, with an editor. The list is `KNOWN_KEYS` in
   `bin/dndsim`, overridable with `DNDSIM_KEYS`; `DND_WRITE_TOKEN` is the one
-  known key never adopted (it is `dndsim token`'s), and pm2's launch does not
+  `dndsim token` generates rather than one you type; pm2's launch does not
   consult the list at all — it drops the whole environment. `dndsim keys`
-  prints which known keys `.env` and the store hold (names only) and exits 1
+  prints which known keys `.env` holds (names only) and exits 1
   without `ANTHROPIC_API_KEY`. State
   is SQLite at `data/dndsim.sqlite3`; `data/`, `.env` and `.venv/` are
   gitignored and survive a deploy's hard reset.
@@ -86,30 +87,31 @@ can lack and still run.
 
 ## Deploying
 
-On the droplet, as root. First time, with `ANTHROPIC_API_KEY` (and whichever
-other platform keys you have) already in `/etc/environment`:
+On the droplet, as root. First time:
 
 ```bash
 git clone https://github.com/ivjames/dnd-sim /var/www/dndsim \
   && ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim \
-  && dndsim deploy
+  && dndsim deploy                     # seeds .env; warns that no key is in it yet
+${EDITOR:-nano} /var/www/dndsim/.env   # ANTHROPIC_API_KEY=sk-ant-... and any others, one per line
+dndsim restart && dndsim token
 ```
 
 Every time after:
 
 ```bash
-dndsim deploy      # reset to origin/main, venv + pip, .env (adopt keys), vhost via
+dndsim deploy      # reset to origin/main, venv + pip, .env (seed, report keys), vhost via
                    # setup if missing, SSE block repaired, pm2 start/restart (env -i
                    # allowlist), save if online, probe; exit 1 unless local health is 200
 dndsim setup       # once, idempotent: provision-site (or HTTP-only fallback vhost),
                    # SSE block in the vhost, pm2-root check; --dry-run shows the diff
 dndsim status      # HEAD, pm2, .env + per-key presence, upstream family, vhost + SSE
                    # block, local + public /api/health, cert days
-dndsim keys        # per-key present/absent in .env and /etc/environment (names only);
-                   # exit 1 if ANTHROPIC_API_KEY is missing from .env
+dndsim keys        # per-key present/absent in .env (names only); exit 1 if
+                   # ANTHROPIC_API_KEY is missing from it
 dndsim token       # set the write token and use it: generate → .env → restart →
                    # verify against the running app → print. --show reads it back,
-                   # --stdin takes your own. This key never goes in /etc/environment.
+                   # --stdin takes your own. Like every key, it lives in .env only.
 dndsim logs        # tail this app's pm2 logs
 ```
 
@@ -254,11 +256,9 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   site down but nobody can start a game until it is set. **`dndsim token`** is
   how it is set — generate into `.env`, restart, check it against the running
   app, print it to paste into the page — and rotation is the same command
-  again. Unlike a vendor key it is deliberately **not** in `/etc/environment`:
-  adoption exists for the box's shared platform keys, and a second copy of this
-  one would be a place to leak it from and to forget on a rotation. It is on
-  `KNOWN_KEYS` so `keys`/`status` report it, and it is the one known key
-  `deploy` never adopts from the store.
+  again. Like every key it lives in `.env` and nowhere else; unlike a vendor
+  key it is generated rather than typed, so nobody has to see it. It is on
+  `KNOWN_KEYS` so `keys`/`status` report it.
   The page keeps it in `localStorage` and hides the New game button, the
   pause/resume/stop row and the note form until the server accepts it.
 - **Live mode is real money.** Each game config carries `budget_usd`; the

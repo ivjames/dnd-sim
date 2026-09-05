@@ -8,7 +8,7 @@
 # pip into .venv. There is no hand runbook: this script carries the whole
 # bring-up and every deploy, idempotently.
 #
-#   dndsim deploy    sync to origin/main, venv + pip, .env (adopt the keys),
+#   dndsim deploy    sync to origin/main, venv + pip, .env (seed PORT/HOST/DB),
 #                    vhost if missing (-> setup), pm2 start/restart, probe
 #   dndsim setup     box-outward half, once: provision-site (DNS, vhost, TLS)
 #                    or the HTTP-only vhost fallback; SSE block in the vhost;
@@ -18,27 +18,27 @@
 #   dndsim status    HEAD, pm2 state, .env + per-key presence, upstream family,
 #                    vhost + SSE block, local + public /api/health, cert days
 #   dndsim keys      read-only: which known keys are present/absent in .env
-#                    and in the key store (names only); exit 1 if
-#                    ANTHROPIC_API_KEY is missing from .env
+#                    (names only); exit 1 if ANTHROPIC_API_KEY is missing
 #
-# Where the keys live (decided 2026-09-03): the platform API keys are kept in
-# /etc/environment, the known-key store on this box. The app reads them from
-# ./.env, which run.sh sources. `deploy` copies each one across once — parses
-# the /etc/environment line, appends KEY=... to .env (mode 600), never prints
-# a value, never puts one in any argv — and starts/restarts pm2 through
-# `env -i` with an allowlist (PATH, HOME, PM2_HOME and TERM when set, LANG).
-# pm2 gives the process the environment of the command that started it and
-# `pm2 save` writes that into dump.pm2, so the allowlist on start/restart is
-# what keeps the root shell's environment — a known key, or whatever else
-# /etc/environment holds — out of both. The process gets its keys from
-# run.sh sourcing .env, not from pm2.
+# Where the keys live (decided 2026-09-03, revised 2026-09-05): in ./.env,
+# mode 600, gitignored, which run.sh sources — and nowhere else on the box.
+# There is no box-level key store any more: /etc/environment holds no API
+# key, `deploy` copies nothing from anywhere, and a key gets into .env with an
+# editor (one KEY=value line; never `echo` on a command line, where the value
+# lands in shell history and a world-readable /proc/<pid>/cmdline). `deploy`
+# seeds the non-secret settings (PORT, HOST, DND_SIM_DB), reports which known
+# keys .env holds (names only) and starts/restarts pm2 through `env -i` with
+# an allowlist (PATH, HOME, PM2_HOME and TERM when set, LANG). pm2 gives the
+# process the environment of the command that started it and `pm2 save`
+# writes that into dump.pm2, so the allowlist on start/restart is what keeps
+# whatever the calling shell holds out of both. The process gets its keys
+# from run.sh sourcing .env, not from pm2.
 #
 # The set of keys is KNOWN_KEYS below (one per LLM platform or inference host
 # the app can seat at the table — llm/providers.py PROVIDERS, same names —
 # plus the AWS pair that Amazon Polly reads the game aloud with, and
-# DND_WRITE_TOKEN, the shared secret the write routes require, which is on
-# the list to be reported and is the one key `deploy` never adopts from the
-# store). Any subset is fine: only ANTHROPIC_API_KEY is warned about
+# DND_WRITE_TOKEN, the shared secret the write routes require, which
+# `dndsim token` writes). Any subset is fine: only ANTHROPIC_API_KEY is warned about
 # when missing, because the default DM needs it; a seat whose platform has
 # no key fails at game creation with a message naming the variable. A new
 # platform needs no code change here — DNDSIM_KEYS overrides the list.
@@ -47,11 +47,9 @@
 #   DNDSIM_FQDN         default dndsim.lab980.com
 #   DNDSIM_BRANCH       default main
 #   DNDSIM_PORT         default 8071
-#   DNDSIM_KEY_SOURCE   colon-separated files the keys are adopted from, first hit wins
-#                       (default /etc/environment, this box's known-key store — and only
-#                       that: a deploy here must not read another site's runtime state)
-#   DNDSIM_ENV_FILE     default <app dir>/.env    (where they are adopted to)
-#   DNDSIM_KEYS         space-separated list of key names to adopt and report
+#   DNDSIM_ENV_FILE     default <app dir>/.env    (the file the keys are read
+#                       from and the non-secret settings seeded into)
+#   DNDSIM_KEYS         space-separated list of key names to report
 #                       (default: the KNOWN_KEYS list below)
 #   DNDSIM_PROBE_TRIES  default 10: how many seconds deploy/restart give the app
 #                       to answer /api/health with 200 before calling it down
@@ -68,39 +66,33 @@ ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 FQDN="${DNDSIM_FQDN:-dndsim.lab980.com}"
 BRANCH="${DNDSIM_BRANCH:-main}"
 PORT="${DNDSIM_PORT:-8071}"
-KEY_SOURCE="${DNDSIM_KEY_SOURCE:-/etc/environment}"
-IFS=: read -r -a KEY_SOURCES <<< "$KEY_SOURCE"
 ENV_FILE="${DNDSIM_ENV_FILE:-$ROOT/.env}"
 # The platform API keys, one per LLM platform, and the AWS credentials Polly
-# narration needs: adopted from KEY_SOURCE into ENV_FILE by deploy and
-# reported by status/keys. Names only ever appear in output — never values.
+# narration needs: read from ENV_FILE and reported by deploy/status/keys.
+# Names only ever appear in output — never values.
 # DNDSIM_KEYS (space-separated) replaces the list, so a new platform needs no
 # code change. (pm2's launch does not consult this list: it drops the whole
 # environment, see pm2_clean.)
 #
 # AWS_REGION is on the list and is not a secret; it is here because boto3 has
 # to read it from the same .env as the pair it goes with, and because a
-# credential adopted without its region is a narrator that cannot start.
+# credential without its region is a narrator that cannot start.
 # CARTESIA_API_KEY stays off the list: it is text-to-speech this app does not
-# use, and adopting a key nothing reads only spreads it further.
+# use, and reporting a key nothing reads only invites someone to add it.
 #
 # DND_WRITE_TOKEN is not a vendor key: it is a secret, it belongs in .env
-# rather than in git, and it is reported like the others — but it is the one
-# known key deploy never adopts (NO_ADOPT_KEYS below). It is not REQUIRED_KEY
+# rather than in git, and it is reported like the others; `dndsim token` is
+# what writes it (WRITE_TOKEN_KEY below). It is not REQUIRED_KEY
 # — its absence stops writes (503) and leaves reading, the SSE stream and any
 # running game alone, so a deploy without it does not take the site down. See
 # web/auth.py.
 DEFAULT_KNOWN_KEYS="ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY SILICONFLOW_API_KEY DEEPINFRA_API_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION DND_WRITE_TOKEN"
 read -r -a KNOWN_KEYS <<< "${DNDSIM_KEYS:-$DEFAULT_KNOWN_KEYS}"
 REQUIRED_KEY="ANTHROPIC_API_KEY"   # the default DM's platform; the only key whose absence is a warning
-# Known keys that are never adopted from the store. The write token is this
-# app's own, written by `dndsim token`, and the help text says not to put it
-# in /etc/environment; if a copy ends up there anyway it must not be honoured,
-# or the help text is a lie and the store has quietly become the token's
-# second home. Reported like any other key; adopted never.
+# The write token is this app's own, generated straight into .env by
+# `dndsim token` (cmd_token) rather than typed in; named here so keys/status
+# can say so. Reported like any other key.
 WRITE_TOKEN_KEY="DND_WRITE_TOKEN"
-NO_ADOPT_KEYS="$WRITE_TOKEN_KEY"
-adoptable() { local k; for k in $NO_ADOPT_KEYS; do [ "$1" != "$k" ] || return 1; done; return 0; }
 REPO="ivjames/dnd-sim"
 APP="dnd-sim"                 # pm2 process name, from ecosystem.config.js
 ECOSYSTEM="ecosystem.config.js"
@@ -133,8 +125,8 @@ usage() {
 dndsim — operate dndsim.lab980.com (Python/Flask app behind nginx, pm2 process dnd-sim).
 
 Usage:
-  dndsim deploy [--no-install]   sync to origin/main, venv + pip, .env (adopts
-                                 every known platform key from /etc/environment),
+  dndsim deploy [--no-install]   sync to origin/main, venv + pip, .env (seeds
+                                 PORT/HOST/DB, reports which keys it holds),
                                  vhost if missing (runs setup), pm2 start/restart
                                  under a scrubbed environment (env -i), SSE block
                                  repaired in the vhost, probe; exit 1 unless
@@ -148,10 +140,10 @@ Usage:
   dndsim status                  HEAD, pm2, .env + per-key presence, upstream
                                  family, vhost + SSE block, local/public
                                  /api/health, cert
-  dndsim keys                    read-only: per-key present/absent in .env and in
-                                 the key store (names only, never values), what
-                                 pm2 is launched with; exit 1 if
-                                 ANTHROPIC_API_KEY is missing from .env
+  dndsim keys                    read-only: per-key present/absent in .env
+                                 (names only, never values), what pm2 is
+                                 launched with; exit 1 if ANTHROPIC_API_KEY
+                                 is missing from .env
   dndsim token [--show|--stdin]  set the write token and use it: generate one,
                                  write it to .env, restart so the app reads it,
                                  check it against the running app, and print it
@@ -162,26 +154,30 @@ Usage:
 First time on the droplet (as root), the whole bring-up is:
   git clone https://github.com/ivjames/dnd-sim /var/www/dndsim
   ln -sf /var/www/dndsim/bin/dndsim /usr/local/bin/dndsim
-  dndsim deploy
+  dndsim deploy                        # seeds .env; warns that no key is in it yet
+  ${EDITOR:-nano} /var/www/dndsim/.env  # add ANTHROPIC_API_KEY=sk-ant-... (and any others)
+  dndsim restart
   dndsim token
 
-The one hand step is having the platform keys in /etc/environment beforehand.
-Known keys (any subset is fine; ANTHROPIC_API_KEY is the one the default DM
-needs, and a seat whose platform has no key fails at game creation naming it):
-  ANTHROPIC_API_KEY  OPENAI_API_KEY  GEMINI_API_KEY (or GOOGLE_API_KEY, adopted
-  under the GEMINI name)  XAI_API_KEY  MISTRAL_API_KEY  DEEPSEEK_API_KEY
-  SILICONFLOW_API_KEY  DEEPINFRA_API_KEY  (the last two are hosts, seated as
-  siliconflow:<id> / deepinfra:<id>; CARTESIA_API_KEY in the store is a
-  text-to-speech key this app does not use, and is deliberately not on this list)
+The keys live in /var/www/dndsim/.env and nowhere else on the box (decided
+2026-09-05: no box-level key store; /etc/environment holds no API key, and
+`deploy` copies nothing from anywhere). Add them with an editor, one KEY=value
+line each — not with `echo` on a command line, which puts the value in shell
+history and a world-readable /proc/<pid>/cmdline. Known keys (any subset is
+fine; ANTHROPIC_API_KEY is the one the default DM needs, and a seat whose
+platform has no key fails at game creation naming it):
+  ANTHROPIC_API_KEY  OPENAI_API_KEY  GEMINI_API_KEY  XAI_API_KEY
+  MISTRAL_API_KEY  DEEPSEEK_API_KEY  SILICONFLOW_API_KEY  DEEPINFRA_API_KEY
+  (the last two are hosts, seated as siliconflow:<id> / deepinfra:<id>;
+  CARTESIA_API_KEY is a text-to-speech key this app does not use, and is
+  deliberately not on this list)
   AWS_ACCESS_KEY_ID  AWS_SECRET_ACCESS_KEY  AWS_REGION  — Amazon Polly, which
   reads the game aloud. Without them the spectator's browser speaks it instead,
   which costs nothing and sounds like it.
-  DND_WRITE_TOKEN  — not a vendor key and NOT one to put in /etc/environment.
-  It is this app's own secret, so `dndsim token` generates it straight into
-  .env; a copy in the key store would be one more place to leak it from and one
-  more to forget on a rotation. It is the one known key `deploy` never adopts
-  (a copy found in the store is reported and left there); it is on the known
-  list so `keys`/`status` report it. Without it, creating a game, sending
+  DND_WRITE_TOKEN  — not a vendor key: this app's own secret, generated
+  straight into .env by `dndsim token` rather than typed in, so nobody has to
+  see it. It is on the known list so `keys`/`status` report it. Without it,
+  creating a game, sending
   a DM note and pause/resume/stop answer 503 while reading, the SSE stream and
   any running game are unaffected — so a deploy that forgets it does not take
   the site down, but nobody can start a game until: dndsim token
@@ -194,7 +190,6 @@ shell's environment. The app reads .env through run.sh instead — which is
 also the only place a TZ, proxy or DND_* setting for it can live now.
 
 Env: DNDSIM_FQDN, DNDSIM_BRANCH (default main), DNDSIM_PORT (default 8071),
-     DNDSIM_KEY_SOURCE (colon-separated; default /etc/environment),
      DNDSIM_ENV_FILE (default ./.env),
      DNDSIM_KEYS (space-separated key names; replaces the known list above),
      DNDSIM_PROBE_TRIES (default 10; seconds deploy/restart wait for a 200).
@@ -204,11 +199,11 @@ USAGE
 need_root() { [ "$(id -u)" -eq 0 ] || die "run as root."; }
 
 # ---------------------------------------------------------------------------
-# .env handling. Each key is read from KEY_SOURCE and written to ENV_FILE with
-# shell builtins only (read/printf), so it never appears in any process's
+# .env handling. Everything is read from and written to ENV_FILE with shell
+# builtins only (read/printf), so no value ever appears in any process's
 # argv — /proc/<pid>/cmdline is world-readable, environ is not. Nothing here
 # logs a value. `env_file_get` is the one parser; tests source this file and
-# point it at temp files via DNDSIM_KEY_SOURCE / DNDSIM_ENV_FILE.
+# point it at a temp file via DNDSIM_ENV_FILE.
 # ---------------------------------------------------------------------------
 env_file_get() {  # $1=file $2=KEY -> value on stdout ('' if absent). Never echo the result.
   local file="$1" key="$2" line val found=0
@@ -274,32 +269,10 @@ env_file_set() {  # $1=file $2=KEY $3=value — replace every existing line for 
   env_file_append "$file" "$key" "$val"
 }
 
-# Alias sources: a key the store may hold under a different name. Adoption
-# reads the alias only when the store lacks the canonical name, and writes the
-# value to .env under the canonical name — the app reads one name per platform.
-key_alias() {  # $1=KEY -> alias name on stdout ('' if none)
-  case "$1" in GEMINI_API_KEY) printf 'GOOGLE_API_KEY';; esac
-}
-
-source_key_name() {  # $1=KEY -> two lines, "<file>" then "<name>": the first source holding
-  local key="$1" alias f  # KEY (canonical name first, then its alias); nothing if none does.
-  alias="$(key_alias "$key")"  # Two lines, not one space-joined line: a path may contain
-  for f in "${KEY_SOURCES[@]}"; do  # spaces, and the caller reads it back line by line.
-    # First file that holds the key wins, under either name; within a file the
-    # canonical name beats the alias. Source order is the documented contract.
-    if env_file_has "$f" "$key"; then printf '%s\n%s\n' "$f" "$key"; return 0; fi
-    if [ -n "$alias" ] && env_file_has "$f" "$alias"; then printf '%s\n%s\n' "$f" "$alias"; return 0; fi
-  done
-  return 0
-}
-
-key_matrix() {  # $1=file [$2=--aliases] -> "present: A B  absent: C" (names only); aliases noted as A(via B)
-  local file="$1" aliases="${2:-}" key alias present="" absent=""
+key_matrix() {  # $1=file -> "present: A B  absent: C" (names only)
+  local file="$1" key present="" absent=""
   for key in "${KNOWN_KEYS[@]}"; do
-    alias="$(key_alias "$key")"
     if env_file_has "$file" "$key"; then present="$present $key"
-    elif [ "$aliases" = "--aliases" ] && [ -n "$alias" ] && env_file_has "$file" "$alias"; then
-      present="$present $key(via $alias)"
     else absent="$absent $key"; fi
   done
   printf 'present:%s  absent:%s' "${present:- none}" "${absent:- none}"
@@ -315,32 +288,13 @@ ensure_env() {
   env_file_seed "$envf" PORT "$PORT"
   env_file_seed "$envf" HOST "127.0.0.1"
   env_file_seed "$envf" DND_SIM_DB "$ROOT/data/dndsim.sqlite3"
-  # One pass over the known keys: adopt each one that .env lacks (absent or
-  # empty) and the store has, under its canonical name. Never overwrites an
-  # existing value; never prints one. A second run adopts nothing. The write
-  # token is skipped — and called out if the store holds a copy anyway.
-  local key hit srcf src val
-  for key in "${KNOWN_KEYS[@]}"; do
-    if ! adoptable "$key"; then
-      if [ -n "$(source_key_name "$key")" ]; then
-        warn "$key is in the key store (${KEY_SOURCES[*]}) and is NOT adopted from there: it belongs in $envf only, via: dndsim token. Remove it from the store."
-      fi
-      continue
-    fi
-    env_file_has "$envf" "$key" && continue
-    hit="$(source_key_name "$key")"
-    [ -n "$hit" ] || continue
-    { IFS= read -r srcf; IFS= read -r src; } <<< "$hit"
-    val="$(env_file_get "$srcf" "$src")"
-    env_file_append "$envf" "$key" "$val"
-    unset val
-    if [ "$src" = "$key" ]; then log "$envf: adopted $key from $srcf"
-    else log "$envf: adopted $key from $srcf (held there as $src)"; fi
-  done
+  # No key is copied in from anywhere: .env is the only place on the box a
+  # key for this app lives, and an editor is how it gets there. Report what
+  # it holds, names only, and warn about the one the default DM needs.
   log "$envf: keys $(key_matrix "$envf")"
   if ! env_file_has "$envf" "$REQUIRED_KEY"; then
-    warn "no $REQUIRED_KEY in $envf or any of: ${KEY_SOURCES[*]} — the default DM needs it; live games will fail (mock mode still works)."
-    warn "put it in ${KEY_SOURCES[0]} ($REQUIRED_KEY=sk-ant-...) and re-run: dndsim deploy"
+    warn "no $REQUIRED_KEY in $envf — the default DM needs it; live games will fail (mock mode still works)."
+    warn "add it there with an editor (one $REQUIRED_KEY=sk-ant-... line; not echo, which puts the value in shell history) and run: dndsim restart"
   fi
   chmod 600 "$envf"
 }
@@ -353,11 +307,11 @@ ensure_env() {
 # the environment of the CLI command that asked for it — not the daemon's —
 # and `pm2 save` writes that process's environment into ~/.pm2/dump.pm2. So
 # the environment of the start/restart command is exactly what reaches the
-# app and the dump. A root login shell on this box carries every line of
-# /etc/environment — the platform keys, and whatever else is kept there
-# (CARTESIA_API_KEY today, anything added tomorrow) — so unsetting a known
-# list is one key behind by construction; an allowlist cannot be. The app
-# gets its keys from run.sh sourcing .env, so pm2 never needs any of them.
+# app and the dump. Whatever the calling shell happens to hold — a key
+# exported for one command, a token, anything added tomorrow — would go the
+# same way, so unsetting a known list is one name behind by construction; an
+# allowlist cannot be. The app gets its keys from run.sh sourcing .env, so
+# pm2 never needs any of them.
 #
 # jlist, save and logs go through the same function as hygiene: the first
 # of them after a reboot is what spawns the daemon, and this keeps the
@@ -785,10 +739,6 @@ cmd_status() {
     printf 'env:       %s missing — run: dndsim deploy\n' "$ENV_FILE"
     printf 'keys:      (no .env)\n'
   fi
-  local f; for f in "${KEY_SOURCES[@]}"; do
-    if [ -r "$f" ]; then printf 'key store: %s  %s\n' "$f" "$(key_matrix "$f" --aliases)"
-    else printf 'key store: %s  unreadable\n' "$f"; fi
-  done
   printf 'upstream:  %s\n' "$(upstream_family 2>&1)"
   local vhost
   if vhost="$(vhost_path)"; then
@@ -812,20 +762,16 @@ cmd_status() {
 }
 
 cmd_keys() {
-  # Read-only, names only. The same matrix `status` prints, for both files,
-  # plus which key is never adopted and what pm2 is launched with. Exit 1 when
-  # the default DM's key is not in .env, so a bring-up script can gate on it.
+  # Read-only, names only. The same matrix `status` prints, plus which key
+  # `dndsim token` owns and what pm2 is launched with. Exit 1 when the
+  # default DM's key is not in .env, so a bring-up script can gate on it.
   printf 'known keys: %s\n' "${KNOWN_KEYS[*]}"
-  printf 'not adopted: %s  (set with: dndsim token)\n' "$NO_ADOPT_KEYS"
+  printf 'token:      %s  (set with: dndsim token)\n' "$WRITE_TOKEN_KEY"
   if [ -e "$ENV_FILE" ]; then printf 'env:        %s  %s\n' "$ENV_FILE" "$(key_matrix "$ENV_FILE")"
   else printf 'env:        %s missing — run: dndsim deploy\n' "$ENV_FILE"; fi
-  local f; for f in "${KEY_SOURCES[@]}"; do
-    if [ -r "$f" ]; then printf 'key store:  %s  %s\n' "$f" "$(key_matrix "$f" --aliases)"
-    else printf 'key store:  %s  unreadable\n' "$f"; fi
-  done
   printf 'pm2 launch: %s\n' "$(pm2_env_names)"
   if env_file_has "$ENV_FILE" "$REQUIRED_KEY"; then return 0; fi
-  warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Put it in ${KEY_SOURCES[0]} and run: dndsim deploy"
+  warn "$REQUIRED_KEY is missing from $ENV_FILE — the default DM needs it. Add it there with an editor and run: dndsim restart"
   return 1
 }
 
@@ -833,12 +779,9 @@ cmd_token() {
   # Set the write token and then use it: write .env, restart so the app reads
   # it, and prove the round trip against the running server.
   #
-  # This key is not adopted from /etc/environment the way a vendor key is, and
-  # does not need to be there. Adoption exists because the platform keys are
-  # the box's, shared between sites and pre-placed; this one is this app's
-  # alone, generated here, and a copy in a second file would be one more place
-  # to leak it from and one more to forget on a rotation. `.env` is the file
-  # `run.sh` sources, so `.env` is where it lives.
+  # Like every other key it lives in `.env` — the file `run.sh` sources — and
+  # nowhere else on the box; unlike the vendor keys it is generated here
+  # rather than typed in, so nobody ever has to see it.
   need_root
   local mode="set" token=""
   case "${1:-}" in

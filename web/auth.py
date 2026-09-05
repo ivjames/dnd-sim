@@ -45,11 +45,10 @@ from typing import Any, Callable
 from flask import current_app, jsonify, request
 
 #: Where the secret comes from. On lab980 it lives in `/var/www/dndsim/.env`,
-#: which `run.sh` sources, and `dndsim token` is what puts it there. Unlike a
-#: vendor key it is not kept in `/etc/environment`: adoption exists for the
-#: box's shared platform keys, and this one is this app's own. It is on
-#: `KNOWN_KEYS` in `bin/dndsim` so `keys`/`status` report it — and it is the
-#: one known key `dndsim deploy` never adopts from the store.
+#: which `run.sh` sources, and `dndsim token` is what puts it there — the same
+#: file every platform key lives in, and the only one on the box; the
+#: difference is that this one is generated rather than typed in. It is on
+#: `KNOWN_KEYS` in `bin/dndsim` so `keys`/`status` report it.
 ENV_VAR = "DND_WRITE_TOKEN"
 
 #: The request header carrying it.

@@ -139,7 +139,7 @@ world stay the engine's and the DM's.
 |---|---|---|
 | `PORT` | `8071` | Listen port. |
 | `HOST` | `127.0.0.1` | Bind address. Keep it loopback; nginx fronts it. |
-| `ANTHROPIC_API_KEY` | — | Required for live mode whenever a seat names a `claude-*` model (the defaults do). On lab980, `dndsim deploy` copies it from `/etc/environment` into `.env`, which `run.sh` sources. |
+| `ANTHROPIC_API_KEY` | — | Required for live mode whenever a seat names a `claude-*` model (the defaults do). On lab980 it lives in `.env`, which `run.sh` sources — put there by hand; nothing copies it in. |
 | `OPENAI_API_KEY` | — | Needed only if a seat names a `gpt-*` model (OpenAI, `https://api.openai.com/v1`). |
 | `XAI_API_KEY` | — | Needed only if a seat names a `grok-*` model (xAI, `https://api.x.ai/v1`). |
 | `MISTRAL_API_KEY` | — | Needed only if a seat names a `mistral-*` / `ministral-*` / `magistral-*` / `codestral-*` model (`https://api.mistral.ai/v1`). |
@@ -329,10 +329,9 @@ dndsim token --stdin  # use your own, read from stdin (not an argument: argv is
                       # world-readable through /proc)
 ```
 
-It writes `.env` and nothing else. Unlike a platform key it is not kept in
-`/etc/environment`: that file exists so `dndsim deploy` can adopt the box's
-shared vendor keys, and this secret is this app's own — a second copy would be
-one more place to leak it from and one more to forget on a rotation.
+It writes `.env` and nothing else — the same file every platform key lives
+in, and the only one. The difference is that this secret is this app's own,
+so it is generated rather than typed in.
 
 Three POSTs deliberately take no token. `POST /api/games/<id>/hold` is the
 narration lease — every anonymous listener renews one every few seconds, it
@@ -929,7 +928,7 @@ notes, the source table and the licence rules: [AUDIO.md](AUDIO.md).
 
 See [DEPLOY.md](DEPLOY.md). Short version: on the lab980 droplet, `git clone`
 to `/var/www/dndsim`, symlink `bin/dndsim` onto PATH, and `dndsim deploy` does
-the rest — venv, `.env` (key adopted from `/etc/environment`), vhost with the
+the rest — venv, `.env` (seeded; the keys go in by hand), vhost with the
 SSE block (`proxy_buffering off`; the stream dies without it), pm2 process
 `dnd-sim` on 127.0.0.1:8071 — idempotently, every time.
 

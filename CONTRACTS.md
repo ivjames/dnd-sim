@@ -595,10 +595,10 @@ which object sits behind it in live mode and how a model id reaches a seat.
      and is matched full-id first; the bare wire id is consulted only when
      the explicit provider is the one its prefix routes to anyway — so
      DeepSeek's `thinking` field never reaches `deepinfra:deepseek-ai/…`.
-   - `bin/dndsim` knows `SILICONFLOW_API_KEY` and `DEEPINFRA_API_KEY` (adopted
-     from `/etc/environment` into `.env`; pm2 is launched under an `env -i`
-     allowlist, so no key reaches it). `CARTESIA_API_KEY`, also in that
-     store, is text-to-speech and is not a provider.
+   - `bin/dndsim` knows `SILICONFLOW_API_KEY` and `DEEPINFRA_API_KEY` (read
+     from `.env`, where every key lives; pm2 is launched under an `env -i`
+     allowlist, so no key reaches it). `CARTESIA_API_KEY` is text-to-speech
+     and is not a provider.
 
 ### 2026-09-03 — engine (builder A: `engine/actions.py`, `engine/srd.py`, `engine/characters.py`)
 
@@ -1320,8 +1320,8 @@ reads the environment mid-request.
    an anonymous caller gets a 401 rather than a 400 that would tell it what a
    valid request looks like.
 
-5. **An unset token fails closed.** The token is not a vendor key adopted from
-   the box's store; `dndsim token` generates it into `.env` (see DEPLOY.md),
+5. **An unset token fails closed.** The token is not a vendor key anyone
+   types in; `dndsim token` generates it into `.env` (see DEPLOY.md),
    so a deploy alone never produces one and the first deploy carrying this code
    lands on a server where the token is not set. Failing open there would ship a no-op — the hole
    still open and now believed closed. Failing closed costs one edit to
@@ -2278,3 +2278,25 @@ strict alternation with spawn order. Hence a salted rehash finalized through
 **Cost.** `cache_key_for` keys on the voice id, so every monster clip on disk
 is orphaned and re-synthesized once at the neural rate; no DM, PC or NPC key
 moves. Costed in `TTS-COSTS.md` §6.
+
+### 2026-09-05 — bin/dndsim — no box-level key store
+
+**What changed.** `dndsim deploy` no longer copies any key into `.env` from
+anywhere. `/etc/environment` (the "known-key store" the 2026-09-03 decision
+named) holds no API key any more, and there is no replacement store: each
+app's `.env` on the droplet is the only copy of any key it uses. `deploy`
+still seeds the non-secret settings (`PORT`, `HOST`, `DND_SIM_DB`), reports
+which known keys `.env` holds (names only) and warns when `ANTHROPIC_API_KEY`
+is absent, pointing at an editor. `DNDSIM_KEY_SOURCE` and the
+`GOOGLE_API_KEY` alias are gone with the copying; `DNDSIM_KEYS`,
+`DNDSIM_ENV_FILE`, `dndsim keys` and `dndsim token` stay.
+
+**Why.** pm2 snapshots the launching shell into every process and into
+`~/.pm2/dump.pm2`, and `/etc/environment` is exported into every root login
+shell, so a key kept there had an indefinite on-disk lifetime in every app's
+registration whether or not that app used it (found in 20 of 21 on
+2026-09-05). Removing the store removes the source; an allowlisted `env -i`
+launch stays as the second line of defence. Owner's decision, 2026-09-05.
+
+**Contract.** Nothing in `web/`, `orchestrator/`, `agents/` or `llm/`
+changes: the app reads `os.environ`, which `run.sh` fills from `.env`.
