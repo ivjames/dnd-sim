@@ -522,15 +522,26 @@ it again, which is a reason to land the effects together rather than one at a
 time.
 
 **The CPU cost grows with what a creature is dealt, not with what exists.**
-Measured on a 14-second clip (224,000 samples) in pure Python: **0.1 ms** for
+Measured on a 14-second clip (224,000 samples) in pure Python: **0.3 ms** for
 the size-only treatment most monsters get, which is the no-pass path and is
-the sample rate in the WAV header rather than any arithmetic; **66 ms** for the
-three the casting actually deals; **443 ms** for all sixteen sample-touching
+the sample rate in the WAV header rather than any arithmetic; **61 ms** for the
+three the casting actually deals; **478 ms** for all sixteen sample-touching
 effects at once, which only the voice lab can ask for. The per-effect spread is
-8.7 ms (`_metal`) to 70 ms (`_phaser`, which costs a pass per all-pass stage),
-and the two that were already here are 26 ms (`_saturate`) and 8.9 ms
-(`_cave`) — so the fourteen did not change the cost of what is dealt, because
-what is dealt did not change.
+8.7 ms (`_metal`) to 91 ms (`_suboctave`, which pays for a pitch search before
+it can place a grain — see below), with `_phaser` next at 70 ms for its pass
+per all-pass stage; the two that were already here are 26 ms (`_saturate`) and
+8.9 ms (`_cave`), so the fourteen did not change the cost of what is dealt,
+because what is dealt did not change.
+
+`_suboctave` is the one that got dearer rather than cheaper on second look. It
+shipped with a fixed grain hop, which meant the two overlapping grains read the
+source a fixed distance apart and the octave survived only where that distance
+was a whole number of pitch periods — at 160 and 240 Hz it arrived as ordered,
+and at 90, 110, 130, 190, 220 and 250 it cancelled to under 1% and left a
+flutter doublet where it should have been. Human speech is 85-255 Hz, so the
+knob did nothing for most voices. The hop is now a whole number of *estimated*
+periods, which costs a decimated autocorrelation per 48 ms block (12 ms of the
+91) and buys the octave at every fundamental a voice uses.
 
 All of that is paid once per distinct line and then cached forever, on a
 request a listener is waiting for and behind a Polly round trip that is itself

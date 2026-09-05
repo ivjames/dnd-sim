@@ -183,6 +183,30 @@ def goertzel(values, freq: float, rate: int = SAMPLE_RATE) -> float:
     return math.sqrt(max(0.0, magnitude)) / count
 
 
+def in_band(values, freq: float, chunks: int = 8, rate: int = SAMPLE_RATE) -> float:
+    """`goertzel`, but averaged over `chunks` shorter windows — a wider bin.
+
+    A one-second window makes a 1 Hz-wide bin, and a bin that narrow answers
+    "is there a tone at exactly this frequency", which is not the question
+    anywhere the thing under test tracks a pitch it had to estimate. The
+    sub-octave lands at half the *estimated* fundamental, and the estimate is
+    good to about half a percent — nine cents, well under what anyone can hear
+    and enough to walk a 1 Hz bin half out of it and read a real octave as a
+    50% loss.
+
+    Eight windows makes the bin 8 Hz wide, which tolerates that offset and
+    still hears nothing where there is nothing. It is deliberately not a free
+    pass: `test_the_sub_octave_lands_on_the_octave_and_not_near_it` pins how
+    far the pitch may actually be off, so what this widening tolerates is
+    measured somewhere rather than assumed.
+    """
+    width = len(values) // chunks
+    if width < 2:
+        return goertzel(values, freq, rate)
+    return sum(goertzel(values[k * width:(k + 1) * width], freq, rate)
+               for k in range(chunks)) / chunks
+
+
 def biggest_step(work: list[float]) -> float:
     """The largest jump between neighbouring samples, which is what a click
     is."""
@@ -808,32 +832,95 @@ def test_the_sub_octave_puts_an_octave_under_the_voice():
     assert goertzel(work, f0) == pytest.approx(before, rel=0.02)
 
 
-def test_the_sub_octave_cancels_itself_where_the_grain_hop_lands_out_of_phase():
-    """A known sharp edge of the crude method, pinned rather than hidden.
+def test_the_sub_octave_arrives_at_every_fundamental_a_human_voice_uses():
+    """The defect this test used to pin, now the other way round.
 
-    Grains are cross-faded at a fixed half-grain hop with no phase alignment —
-    "crude next to a phase vocoder and much cheaper", as the docstring says —
-    so the two overlapping grains read the source a fixed 200 samples apart.
-    Where that offset is a whole number of periods of the input the two agree
-    and the octave arrives at full weight (the test above, at 160 Hz); where it
-    is half a period they cancel, and what is left is the beat between them
-    rather than the octave.
+    Two grains overlap at every output sample and each reads at half speed, so
+    they read the source `hop/2` apart — a phase difference at the fundamental,
+    which means they ADD where that offset is a whole number of periods and
+    CANCEL where it is half of one. With the hop fixed at half a fixed grain
+    that made the effect a function of the speaker: at a 400-sample hop the
+    octave arrived at full weight at 160 Hz and 240 Hz and vanished at 120,
+    140, 180, 200 and 220, leaving a ±20 Hz flutter doublet where it should
+    have been. Five of those seven are inside the 85-255 Hz a human voice
+    occupies, so the knob did nothing for most speakers.
 
-    A pure held tone is the worst case and a real voice is not one, but a
-    sustained vowel is close enough that this is audible as a ~20 Hz flutter
-    where a clean octave was ordered. Nothing downstream can see it.
+    The hop is now a whole number of estimated pitch periods, so it is right
+    for whatever it is given. Swept across the range rather than tested at one
+    pitch, because one pitch is exactly how the old arrangement passed.
     """
-    f0 = 200.0                       # 200 samples of source is 2.5 periods
-    work = sine(f0, seconds=1.0)
-    before = goertzel(work, f0)
+    for f0 in (90.0, 110.0, 130.0, 160.0, 190.0, 220.0, 250.0):
+        work = sine(f0, seconds=1.0)
+        # Narrow bin for this one: `in_band`'s wider one is wide enough to
+        # catch the skirt of the fundamental itself, which is not the thing
+        # being asked about here.
+        assert goertzel(work, f0 / 2) < 1.0         # nothing down there to start
+        before = goertzel(work, f0)
+        dsp._suboctave(work, 100, SAMPLE_RATE)
+        arrived = in_band(work, f0 / 2)
+        assert arrived == pytest.approx(before * dsp.SUBOCTAVE_MAX_MIX, rel=0.08), (
+            f"the octave under {f0:.0f} Hz arrived at "
+            f"{arrived / before:.3f} of the fundamental"
+        )
+        # ...and the voice itself is still where it was, underneath it.
+        assert goertzel(work, f0) == pytest.approx(before, rel=0.03)
+
+
+def test_the_sub_octave_lands_on_the_octave_and_not_near_it():
+    """What `in_band`'s wider bin is allowed to tolerate, measured.
+
+    The grain hop is two estimated periods, so the octave is at half the
+    *estimated* pitch rather than half the true one, and a systematically wrong
+    estimate would be a systematically detuned monster — audible as an
+    interval, not as a loss. Scanning either side says how far off it actually
+    lands: within a percent, which is under twenty cents and under what a
+    voice's own pitch does inside a syllable.
+    """
+    for f0 in (110.0, 190.0, 250.0):
+        work = sine(f0, seconds=1.0)
+        dsp._suboctave(work, 100, SAMPLE_RATE)
+        offsets = [d / 1000.0 for d in range(-40, 41, 2)]
+        best = max(offsets, key=lambda d: goertzel(work, f0 / 2 * (1.0 + d)))
+        assert abs(best) <= 0.01, f"the octave under {f0:.0f} Hz landed {best:+.1%} out"
+
+
+def test_the_sub_octave_falls_back_to_a_fixed_grain_where_there_is_no_pitch():
+    """Noise has no period to be in phase with — and nothing periodic to
+    cancel either, which is why the fixed grain is still the right answer
+    there and `SUBOCTAVE_GRAIN_S` is still a constant.
+
+    What must not happen is the estimator finding a "period" in a fricative and
+    handing back a grain length that wanders: the effect has to stay bounded,
+    finite and quiet on material it cannot track.
+    """
+    state = 12345
+    noise = []
+    for _ in range(SAMPLE_RATE):
+        state = (1103515245 * state + 12345) % (2 ** 31)
+        noise.append(8000.0 * (state / (2 ** 30) - 1.0))
+    periods, _block = dsp._periods(noise, SAMPLE_RATE)
+    assert periods and not any(periods), "noise was called voiced"
+    work = list(noise)
     dsp._suboctave(work, 100, SAMPLE_RATE)
-    at_octave = goertzel(work, f0 / 2)
-    assert at_octave < 0.05 * before * dsp.SUBOCTAVE_MAX_MIX
-    # The energy is not lost, only moved: the beat sits either side of the
-    # octave, one grain-length apart from it.
-    sideband = SAMPLE_RATE / (SAMPLE_RATE * dsp.SUBOCTAVE_GRAIN_S)
-    assert goertzel(work, f0 / 2 - sideband) > 10 * at_octave
-    assert goertzel(work, f0 / 2 + sideband) > 10 * at_octave
+    assert all(v == v and abs(v) < 1e9 for v in work)
+    assert rms(work) == pytest.approx(rms(noise), rel=0.6)
+
+
+def test_the_period_search_is_the_search_the_constants_describe():
+    """`_periods` answers in samples of the rate it was handed, over the range
+    the constants name — the two facts `_suboctave` relies on to turn an
+    answer into a hop, and the two a change to the decimation could break
+    silently."""
+    for rate in (SAMPLE_RATE, 12903, 20000):
+        for f0 in (dsp.SUBOCTAVE_MIN_HZ + 10.0, 150.0, dsp.SUBOCTAVE_MAX_HZ - 10.0):
+            found = [p for p in dsp._periods(sine(f0, 0.5, rate=rate), rate)[0] if p]
+            assert found, f"{f0:.0f} Hz at {rate} Hz went undetected"
+            # An octave error is harmless here — a whole number of periods is
+            # still a whole number of periods — so what is checked is that the
+            # answer is a MULTIPLE of the period, not that it is the period.
+            for period in found:
+                ratio = period / (rate / f0)
+                assert abs(ratio - round(ratio)) < 0.02 and 1 <= round(ratio) <= 3
 
 
 # -- the breath, which is the only effect with a generator in it -------------
@@ -928,11 +1015,17 @@ def test_the_level_hold_gives_way_to_the_format_when_there_is_no_headroom():
 def test_the_whole_chain_at_once_stacks_that_loss_rather_than_cancelling_it():
     """Nothing on the casting asks for this and only the voice lab can — but a
     lab that hands back something 3 dB down is a lab someone will trust about
-    loudness, so the number is written down."""
+    loudness, so the number is written down.
+
+    It was 0.70 while the sub-octave was cancelling itself at most pitches:
+    an effect that was not arriving was also not adding to the crest factor
+    that `_to_pcm` is scaling for. Fixing the octave put it back where it
+    belongs, and this number is the receipt.
+    """
     hot = voice()
     everything = MonsterFX(**{name: 60 for name, _ in EFFECT_CHAIN})
     treated, _rate = apply(hot, everything)
-    assert rms(treated) / rms(hot) == pytest.approx(0.70, abs=0.03)
+    assert rms(treated) / rms(hot) == pytest.approx(0.67, abs=0.03)
     assert peak(treated) <= dsp.PEAK
     # And with headroom, the same sixteen at the same setting cost nothing.
     quiet = voice(top=8000)

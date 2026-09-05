@@ -118,13 +118,63 @@ MAX_FEEDBACK = 0.6
 # is unarguable-with, and someone who wants a different monster needs to know
 # what the current one was aiming at before they move it.
 
-#: The grain the sub-octave is built from. It has to hold several cycles of
-#: the thing it is halving — a 180 Hz fundamental is 5.6 ms, so 50 ms is nine
-#: of them — or the half-speed read has a fragment rather than a waveform. The
-#: ceiling is the other way: a grain much longer than a phoneme cross-fades
-#: one sound over the next and the line stops being words. 50 ms is the usual
-#: granular compromise and this is no cleverer than usual.
+#: The grain the sub-octave falls back to where a block has no pitch in it —
+#: a fricative, a breath, a silence. Voiced blocks do not use it: their grain
+#: is four pitch periods, because a grain that is not a whole number of periods
+#: cancels the octave it was asked for (see `_suboctave`). It has to hold
+#: several cycles of the thing it is halving — a 180 Hz fundamental is 5.6 ms,
+#: so 50 ms is nine of them — and a grain much longer than a phoneme
+#: cross-fades one sound over the next until the line stops being words. 50 ms
+#: is the usual granular compromise and this is no cleverer than usual.
 SUBOCTAVE_GRAIN_S = 0.050
+
+#: The rate the sub-octave's period search runs at, after decimation. The
+#: search costs (lags x samples), and both halve with the rate: the 80-300 Hz
+#: range is 14 lags here against about 150 at 16 kHz. The floor under it is
+#: resolution — at 1.5 kHz the shortest period being looked for is 5 samples
+#: and the longest 19, which is coarse enough to need the parabolic
+#: interpolation in `_periods` and fine enough for it to work.
+SUBOCTAVE_PITCH_RATE_HZ = 1500.0
+
+#: The fundamentals the period search will consider. A human voice runs about
+#: 85-255 Hz and Polly's roster is human voices; this is that with a margin
+#: either side, and it is deliberately not wider — every extra lag is another
+#: pass over every block, and a "period" found at 60 Hz in a 200 Hz voice would
+#: be a grain three times longer than it should be.
+SUBOCTAVE_MIN_HZ = 80.0
+SUBOCTAVE_MAX_HZ = 300.0
+
+#: How often the period is re-estimated. Speech pitch moves continuously, so
+#: this is a trade between following it and paying for it: 48 ms is about two
+#: to three re-estimates per syllable, and holds a block long enough to see
+#: three periods of the slowest voice the search looks for.
+SUBOCTAVE_BLOCK_S = 0.048
+
+#: How high the autocorrelation peak has to stand against the block's own
+#: energy before the block is called voiced. Below this there is no period to
+#: lock a grain to — and nothing periodic to cancel either, which is why an
+#: unvoiced block can have the fixed grain without the defect that motivated
+#: all of this.
+#:
+#: The two populations are further apart than a voicing threshold usually gets
+#: to be, because the decimation has already thrown away everything that is not
+#: near the fundamental. Measured over these blocks: white noise peaks at
+#: 0.31-0.39 and highpassed noise — a fricative — at 0.39, while voiced
+#: material sits at 0.94-0.99 and only falls to 0.66 when it is made to glide a
+#: quarter-octave at 0.9 Hz *and* buried in noise at its own level. 0.55 is the
+#: middle of that gap; the cost of being wrong is small either way (a fricative
+#: given a grain length, or a vowel given the fixed one) which is the other
+#: reason not to agonise over it.
+SUBOCTAVE_VOICED = 0.55
+
+#: The floor under the accumulated window weight the grains are divided by.
+#: Variable-length windows do not sum to exactly 1, so the sum is divided out
+#: — but at the very start of a clip only the rising half of the first window
+#: has landed and the sum approaches 0, where an honest division would turn the
+#: first grain into a bang. Floored, that stretch is a fade-in over half a
+#: grain instead. 0.35 caps the correction at about 3x, which is far more than
+#: a pitch change between neighbouring grains can ask for.
+SUBOCTAVE_MIN_WEIGHT = 0.35
 
 #: How much sub-octave is mixed under a dry voice held at 1.0, at
 #: `suboctave_pct = 100`. Under, never level with: the intelligibility of the
@@ -650,19 +700,44 @@ def _to_pcm(work: list[float], level: float = 0.0) -> array:
 def _suboctave(work: list[float], pct: int, rate: int) -> None:
     """An octave under the voice, mixed beneath it: the classic fiend.
 
-    Overlap-add: grains of `SUBOCTAVE_GRAIN_S` are read at half speed against
-    a full-speed write pointer and cross-faded with a Hann window, which
-    halves the frequency of everything without halving the duration. Crude
-    next to a phase vocoder and much cheaper — and mixed *under* the dry voice
-    at `pct`, never replacing it, so the intelligibility of the line is the dry
-    signal's and only the weight underneath it is this.
+    Overlap-add: grains are read at half speed against a full-speed write
+    pointer and cross-faded with a Hann window, which halves the frequency of
+    everything without halving the duration. Crude next to a phase vocoder and
+    much cheaper — and mixed *under* the dry voice at `pct`, never replacing
+    it, so the intelligibility of the line is the dry signal's and only the
+    weight underneath it is this.
 
-    The hop is half a grain, which is why the window is Hann: two Hann windows
-    overlapped 50% sum to exactly 1, so the cross-fade neither dips nor bulges
-    between grains and no per-grain gain correction is needed. The first half
-    grain has only one window over it, so the sub-octave fades in over 25 ms
-    rather than starting at full weight — inaudible under a dry voice that
-    does not, and cheaper than the special case that would remove it.
+    **The hop is a whole number of pitch periods, and that is not a
+    refinement — it is the difference between the effect working and not.**
+    Two grains overlap at every output sample, and because each reads at half
+    speed they read the source `hop/2` samples apart. That offset is a phase
+    difference of `2π·(hop/2)/P` at the fundamental, so the two grains add
+    only where `hop/2` is a whole number of periods and *cancel* where it is
+    half of one. A fixed hop therefore has an answer for one pitch and its
+    multiples and the opposite answer a semitone either side: at a 400-sample
+    hop the octave arrived at full weight at 160 Hz and 240 Hz and vanished at
+    120, 140, 180, 200 and 220 — which is most of the 85-255 Hz a human voice
+    occupies, so the knob did nothing for most speakers while leaving a ±20 Hz
+    flutter doublet where the octave should have been.
+
+    So `_periods` estimates the period per block and the hop is `2·P`, which
+    puts the read offset at exactly one period. One period rather than two or
+    three because the phase error grows with the multiple: a 20% error in P
+    costs `cos(0.2π) = 0.81` of the octave at `hop = 2P` and `cos(0.4π) = 0.31`
+    at `4P`, and a cheap estimator is allowed to be 20% wrong. It is allowed to
+    be an octave wrong for free, though — an estimate of `2P` still gives a
+    read offset of a whole number of periods — which is why the estimator below
+    can use plain autocorrelation and ignore the octave errors it is famous
+    for.
+
+    Grain length is twice the hop, so it changes with the pitch. That breaks
+    the one thing a fixed 50%-overlap Hann gives you free — successive windows
+    summing to exactly 1 — so the accumulated window weight is carried
+    alongside and divided out. The divisor is floored (`SUBOCTAVE_MIN_WEIGHT`)
+    rather than trusted: at the very start of the clip only the rising half of
+    the first window has landed, and dividing by a weight approaching zero
+    would turn the first grain into a bang. Floored, it is a fade-in over half
+    a grain instead, under a dry voice that does not fade in.
 
     Reading at half speed means the source index advances by a half sample,
     which is either a sample or the midpoint of two — so the interpolation is
@@ -674,24 +749,137 @@ def _suboctave(work: list[float], pct: int, rate: int) -> None:
     would make this a feedback loop rather than a pitch shift.
     """
     n = len(work)
-    grain = max(4, int(rate * SUBOCTAVE_GRAIN_S))
-    grain -= grain % 2          # even, so the half-grain hop is exact
-    half = grain // 2
-    window = [0.5 - 0.5 * math.cos(2.0 * math.pi * j / grain) for j in range(grain)]
+    periods, block = _periods(work, rate)
+    # Where a block is unvoiced there is no period to be in phase with, and
+    # nothing periodic to cancel either, so the fixed grain is fine there and
+    # `SUBOCTAVE_GRAIN_S` is what it is for.
+    fallback = max(4, int(rate * SUBOCTAVE_GRAIN_S) // 2)
     sub = [0.0] * n
-    for start in range(0, n, half):
-        stop = min(grain, n - start)
+    weight = [0.0] * n
+    windows: dict[int, list[float]] = {}
+    last = len(periods) - 1
+    cursor = 0.0
+    while cursor < n:
+        pos = int(cursor)
+        # The block the grain starts in, which is the pitch it will be read at.
+        period = periods[min(pos // block, last)] if last >= 0 else 0.0
+        advance = 2.0 * period if period else float(fallback)
+        if advance < 4.0:
+            advance = float(fallback)
+        # The hop is carried as a float and only the grain STARTS are rounded.
+        # Rounding the hop itself instead costs a fraction of a sample every
+        # grain, always in the same direction, and a read offset that slips
+        # steadily is not a phase error but a frequency one: at 200 Hz a hop
+        # rounded from 160.0 to 159 put the octave at 99.4 Hz rather than
+        # 100 Hz and kept sliding. Carried, the error is bounded at half a
+        # sample — a couple of degrees at these frequencies, and it does not
+        # accumulate.
+        nxt = int(cursor + advance)
+        hop = nxt - pos if nxt > pos else 1
+        grain = 2 * hop
+        window = windows.get(grain)
+        if window is None:
+            window = [0.5 - 0.5 * math.cos(2.0 * math.pi * j / grain) for j in range(grain)]
+            windows[grain] = window
+        stop = min(grain, n - pos)
         for j in range(stop):
-            src = start + (j >> 1)
+            src = pos + (j >> 1)
             if j & 1:
                 nxt = src + 1 if src + 1 < n else src
                 value = 0.5 * (work[src] + work[nxt])
             else:
                 value = work[src]
-            sub[start + j] += window[j] * value
+            shape = window[j]
+            sub[pos + j] += shape * value
+            weight[pos + j] += shape
+        cursor += advance
     mix = (pct / 100.0) * SUBOCTAVE_MAX_MIX
     for i in range(n):
-        work[i] += mix * sub[i]
+        carried = weight[i]
+        work[i] += mix * sub[i] / (carried if carried > SUBOCTAVE_MIN_WEIGHT
+                                   else SUBOCTAVE_MIN_WEIGHT)
+
+
+def _periods(work: list[float], rate: int) -> tuple[list[float], int]:
+    """The pitch period, in samples, once per block — and how long a block is.
+
+    Zero where there is no pitch. The block length is returned rather than
+    recomputed by the caller because the two have to agree exactly: it is a
+    whole number of decimated samples, and a caller deriving it from seconds
+    would be off by a sample and would drift a whole block out over a long
+    line.
+
+    Autocorrelation, which is the cheapest estimator that works on a voice, on
+    a signal decimated to `SUBOCTAVE_PITCH_RATE_HZ`. Decimation is what makes
+    it affordable: the whole 80-300 Hz search is 14 lags at 1.5 kHz where it
+    would be 150 at 16 kHz, and the cost of this is (lags x samples) whatever
+    the block size. It is also most of the filtering — a boxcar sum of `step`
+    samples is a lowpass with its first null exactly at the decimated rate, so
+    the sum that builds each decimated sample is the anti-aliasing filter, for
+    free, in one C-level `sum` per output sample.
+
+    A resolution argument for `SUBOCTAVE_PITCH_RATE_HZ`: at 1.5 kHz a 180 Hz
+    period is 8.3 samples, so a whole-lag answer is within 6% and the parabolic
+    interpolation below takes it under 2%. `_suboctave` tolerates 20%. Halving
+    the rate again would halve the cost and put the shortest period at 5
+    samples, where neither of those is true any more.
+
+    Voicing is the peak's height against the block's own energy. Below
+    `SUBOCTAVE_VOICED` the block is a fricative, a silence or a breath, and it
+    gets 0 — there is no period to lock to, and forcing one on noise would
+    make the grain length wander for no gain.
+    """
+    step = max(1, int(round(rate / SUBOCTAVE_PITCH_RATE_HZ)))
+    count = (len(work) - step + 1) // step
+    span = max(4, int((rate / step) * SUBOCTAVE_BLOCK_S))
+    if count < 4:
+        return [], span * step
+    # C-level `sum` over a short slice per decimated sample: O(n) in total, and
+    # the boxcar is the anti-alias filter as well as the decimation.
+    coarse = [sum(work[i * step:i * step + step]) for i in range(count)]
+    coarse_rate = rate / step
+    shortest = max(2, int(coarse_rate / SUBOCTAVE_MAX_HZ))
+    longest = max(shortest + 1, int(coarse_rate / SUBOCTAVE_MIN_HZ) + 1)
+    out: list[float] = []
+    start = 0
+    while start < count:
+        width = min(span, count - start - longest)
+        if width < shortest * 2:
+            # Not enough left to see two periods of the slowest voice in.
+            out.append(out[-1] if out else 0.0)
+            start += span
+            continue
+        head = coarse[start:start + width]
+        energy = 0.0
+        for v in head:
+            energy += v * v
+        best = 0.0
+        best_lag = 0
+        scores = {}
+        for lag in range(shortest, longest + 1):
+            tail = coarse[start + lag:start + lag + width]
+            score = 0.0
+            for a, b in zip(head, tail):
+                score += a * b
+            scores[lag] = score
+            if score > best:
+                best = score
+                best_lag = lag
+        if best_lag and energy > 0.0 and best > SUBOCTAVE_VOICED * energy:
+            # Parabolic interpolation through the peak and its neighbours: the
+            # true maximum of a correlation is almost never on a whole lag, and
+            # three points are enough to say where between them it is.
+            left = scores.get(best_lag - 1, best)
+            right = scores.get(best_lag + 1, best)
+            bend = left - 2.0 * best + right
+            offset = 0.5 * (left - right) / bend if bend < 0.0 else 0.0
+            if offset < -0.5 or offset > 0.5:
+                offset = 0.0
+            out.append((best_lag + offset) * step)
+        else:
+            out.append(0.0)
+        start += span
+    return out, span * step
 
 
 def _noise(work: list[float], pct: int, rate: int) -> None:
