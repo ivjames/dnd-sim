@@ -29,6 +29,7 @@ from tts.voices import (
     MONSTER_CAVE,
     MONSTER_GROWL,
     MONSTER_GROWL_ALWAYS,
+    MONSTER_GENDERS,
     MONSTER_SIZE,
     MONSTER_SIZE_BANDS,
     MONSTER_TEMPO,
@@ -42,6 +43,7 @@ from tts.voices import (
     gender_for_pronouns,
     hash_key,
     is_child_voice,
+    monster_gender,
     normalize_age,
     normalize_creature_size,
     normalize_gender,
@@ -351,6 +353,125 @@ def test_a_gender_the_roster_cannot_answer_is_a_worse_match_not_a_silence():
     only_women = [Voice("Astrid", "sv-SE", "Female"), Voice("Elin", "sv-SE", "Female")]
     cast = cast_for("pc_1", only_women, "Astrid", "male")
     assert cast.voice_id == "Elin"          # dealt anyway, rather than raising
+
+
+# -- a monster's half of the roster ------------------------------------------
+
+#: The slots a game actually fills. `mon_N` is spawn order across the whole
+#: game (`orchestrator/game.py: _spawn_monsters`), so these are the creatures
+#: any real fight gives lines to.
+SLOTS = [f"monster:mon_{i}" for i in range(1, 10)]
+
+
+def voices_by_gender(pool, dm="Brian"):
+    women = {v.id for v in pool if v.gender == "Female" and not is_child_voice(v)}
+    men = {v.id for v in pool if v.gender == "Male" and not is_child_voice(v)}
+    return women - {dm}, men - {dm}
+
+
+def test_a_monster_is_dealt_a_half_of_the_roster():
+    """Nothing states a gender for a gnoll, so the casting deals it one.
+
+    Not a claim about the creature — it is the same pool constraint a stated
+    pronoun puts on a character, arrived at by hash because there is nobody to
+    ask. What it buys is below; this is only that the deal and the pick agree.
+    """
+    women, men = voices_by_gender(STANDARD_ENGLISH)
+    for key in SLOTS:
+        want = monster_gender(key)
+        assert want in MONSTER_GENDERS
+        got = cast_for(key, STANDARD_ENGLISH, "Brian", size="M").voice_id
+        assert got in (women if want == "female" else men), (key, want, got)
+
+
+def test_the_skew_of_the_roster_does_not_reach_the_table():
+    """The bug this exists to fix.
+
+    Polly's English roster is about two women to every man — ten to five on
+    `STANDARD_ENGLISH`, and the DM's own voice comes out of the men — so a
+    monster dealt from the whole of it came out female roughly three times in
+    four. Over the two or three creatures a fight gives lines to that is not
+    heard as a tendency; it is heard as every monster in the game being the
+    same woman with grit on her. Both halves have to show up across the slots a
+    game fills, on the built-in roster and on a lopsided invented one alike.
+    """
+    lopsided = list(STANDARD_ENGLISH) + [
+        Voice(f"Extra{i}", "en-US", "Female") for i in range(10)
+    ]
+    for pool in (STANDARD_ENGLISH, lopsided):
+        women, men = voices_by_gender(pool)
+        cast = [cast_for(k, pool, "Brian", size="M").voice_id for k in SLOTS]
+        assert any(v in women for v in cast), cast
+        assert any(v in men for v in cast), cast
+
+    # And specifically the two slots most fights ever fill.
+    assert monster_gender("monster:mon_1") != monster_gender("monster:mon_2")
+
+
+def test_the_half_is_dealt_off_bits_that_actually_move():
+    """Why it is a second hash and not another slice of the one.
+
+    FNV-1a over ids that differ only in their last character barely disturbs
+    the high bits: `monster:mon_1` … `monster:mon_9` hash to 0x978cd3f5,
+    0x948ccf3c, 0x958cd0cf … — nine values that agree exactly through bits 14
+    to 23, and again through bits 28 to 31. A slice inside either run is not a
+    weak deal, it is a constant, and every monster in a game would be dealt the
+    same half of the roster. This is that trap written down: replace
+    `monster_gender` with `(h >> 28) % 2` and the last assertion is what fails.
+    """
+    hs = [hash_key(k) for k in SLOTS]
+    assert len({(h >> 14) & 0x3FF for h in hs}) == 1, "bits 14-23 do move after all"
+    assert len({h >> 28 for h in hs}) == 1, "bits 28-31 do move after all"
+    assert len({monster_gender(k) for k in SLOTS}) == 2
+
+
+def test_a_monster_keeps_its_half_for_as_long_as_its_id_does():
+    """Deterministic in the key and nothing else — not the size, not the
+    engine, not the order the roster arrived in."""
+    for key in SLOTS:
+        want = monster_gender(key)
+        assert monster_gender(key) == want
+        for size in ("T", "S", "M", "L", "H", "G", ""):
+            for pool in (STANDARD_ENGLISH, list(reversed(STANDARD_ENGLISH))):
+                cast = cast_for(key, pool, "Brian", size=size, engine="neural")
+                women, men = voices_by_gender(pool)
+                assert cast.voice_id in (women if want == "female" else men)
+
+
+def test_a_stated_gender_still_wins_over_the_deal():
+    """The voice lab names a voice, but a caller may name a gender instead —
+    and a named one is not a default to be overruled."""
+    women, men = voices_by_gender(STANDARD_ENGLISH)
+    for key in SLOTS:
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", "female", size="M").voice_id in women
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", "male", size="M").voice_id in men
+
+
+def test_nobody_but_a_monster_is_dealt_a_half():
+    """A character who states nothing is still cast from the whole roster.
+
+    That is `PRONOUN_GENDERS`' argument and it is untouched: the roster's
+    limitation is not laundered into a character sheet. A monster has no sheet
+    to launder it into, which is the whole reason it can be dealt one.
+    """
+    women, men = voices_by_gender(STANDARD_ENGLISH)
+    seats = [f"pc_{i}" for i in range(1, 9)] + ["npc"]
+    cast = [cast_for(k, STANDARD_ENGLISH, "Brian").voice_id for k in seats]
+    assert any(v in women for v in cast) and any(v in men for v in cast)
+    # The pool it was dealt from is the whole one, so the pick is the plain
+    # hash over it — the same voice it was cast in before monsters got halves.
+    others = sorted({v.id: v for v in STANDARD_ENGLISH}.values(), key=lambda v: v.id)
+    others = [v for v in others if v.id != "Brian" and not is_child_voice(v)]
+    for key, got in zip(seats, cast):
+        assert got == others[hash_key(key) % len(others)].id
+
+
+def test_a_single_gender_roster_still_casts_a_monster():
+    """Swedish ships two women. A half the roster cannot answer is a worse
+    match, not a silence — the same trade a stated gender makes."""
+    only_women = [Voice("Astrid", "sv-SE", "Female"), Voice("Elin", "sv-SE", "Female")]
+    for key in SLOTS:
+        assert cast_for(key, only_women, "Astrid", size="M").voice_id == "Elin"
 
 
 # -- age ---------------------------------------------------------------------
