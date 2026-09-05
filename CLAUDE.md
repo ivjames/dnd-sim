@@ -138,7 +138,14 @@ step does, the env keys, and how to confirm what is live: `DEPLOY.md`.
   **A speaking monster is made after Polly, not by it** (`tts/dsp.py`): its
   clip is asked for as `pcm`, played back at a different sample rate — pitch
   and formants together, which is a bigger creature — with grit or a stone
-  room dealt to some of them, and served as `audio/wav`. The duration that
+  room dealt to some of them, and served as `audio/wav`. **How big it sounds is
+  its stat block's `size`**, one band of `MONSTER_SIZE_BANDS` each, because the
+  voice key is `monster:mon_6` and `mon_6` is spawn order: dealt from the key
+  alone, an Ogre came out smaller than the Gnoll it walked in behind. The band
+  is the creature's and the value within it is the hash's, so two gnolls still
+  differ; `web/routes/tts.py: _creature_size_for` reads the size off the live
+  `Combatant` (or the persisted snapshot, which has always carried it) rather
+  than off the query string, for the reason `_member_for` gives. The duration that
   shift would cost is bought back with `<prosody rate>`, and the level the grit
   would add is taken back off, so a monster is a different voice rather than a
   slower or louder one. That is why monsters are no longer held on the standard

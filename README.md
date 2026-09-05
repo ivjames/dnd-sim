@@ -574,6 +574,13 @@ playback rate slows it by, so a monster is a different voice and not a slower
 one. Only the grit and the room touch samples, once per line, and every clip is
 cached forever.
 
+**How big it sounds comes from the stat block**, not from where it stands in
+the initiative order: each SRD size — Tiny through Gargantuan — has its own
+band of shifts, and the creature's own hash picks within that band. So an ogre
+is reliably deeper than a gnoll, four goblins are all goblin-sized, and no two
+of them are the same goblin: what tells them apart is the voice they were dealt
+and the grit and room behind it.
+
 **That is why a monster no longer needs its own engine.** It used to be
 synthesized on `standard`, alone, because the one thing that could make an
 ordinary voice sound like a creature — `<amazon:effect vocal-tract-length>` —

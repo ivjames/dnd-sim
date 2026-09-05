@@ -8,6 +8,7 @@ browser sends the voice key, the server deals the voice.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
@@ -18,10 +19,14 @@ import pytest
 from tts.voices import (
     ACCENTS,
     CHILD_VOICE_IDS,
+    AUDIBLE_SIZE_PCT,
+    DEFAULT_SIZE_BAND,
     ENGINE_SSML,
     MONSTER_CAVE,
     MONSTER_GROWL,
+    MONSTER_GROWL_ALWAYS,
     MONSTER_SIZE,
+    MONSTER_SIZE_BANDS,
     MONSTER_TEMPO,
     MONSTER_VTL,
     STANDARD_ENGLISH,
@@ -34,6 +39,7 @@ from tts.voices import (
     hash_key,
     is_child_voice,
     normalize_age,
+    normalize_creature_size,
     normalize_gender,
     accent_for,
     ssml_for,
@@ -101,6 +107,113 @@ def test_a_monster_never_just_sounds_like_a_person():
     # An ordinary seat is never given the treatment.
     for key in ("dm", "npc", "pc_1"):
         assert cast_for(key, STANDARD_ENGLISH, "Brian").fx is None
+
+
+def test_how_big_a_monster_sounds_is_the_creature_and_not_the_slot():
+    """The bug this fixes, stated as the case that showed it.
+
+    A voice key is `monster:mon_N` where N is spawn order, so a hash over the
+    key alone knows only which slot a creature took. In `gnoll_pyre` that put
+    the Ogre (Large) at +9% and a Gnoll (Medium) at +34%: the gnoll sounded
+    bigger than the ogre. The band now comes from the stat block.
+    """
+    ogre = cast_for("monster:mon_6", STANDARD_ENGLISH, "Brian", size="L")
+    gnoll = cast_for("monster:mon_3", STANDARD_ENGLISH, "Brian", size="M")
+    goblin = cast_for("monster:mon_3", STANDARD_ENGLISH, "Brian", size="S")
+    assert ogre.fx.size_pct > gnoll.fx.size_pct > goblin.fx.size_pct
+
+    # Whatever slot each of them lands in — the property has to hold for the
+    # whole roster, not for the one arrangement that showed the bug.
+    for slot in range(1, 40):
+        by_size = [cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size=sz).fx.size_pct
+                   for sz in ("T", "S", "M", "L", "H", "G")]
+        assert by_size == sorted(by_size), (slot, by_size)
+        assert len(set(by_size)) == len(by_size)      # and never a tie across bands
+
+
+def test_every_monster_is_audibly_one():
+    """The barmaid problem, which the bands reintroduced by another door.
+
+    `MONSTER_VTL` and the size bands both exclude 0 so that no monster is dealt
+    no treatment. But the bands must be monotonic and non-overlapping and `M`
+    straddles zero — a person-sized creature IS the size of the voice it was
+    dealt — so a Medium creature's shift can only ever be small, and about one
+    in four was then dealt no grit and no room on top of it: an ordinary voice
+    reading a monster's lines. Medium is the commonest size at a table that
+    talks.
+    """
+    for band in MONSTER_SIZE_BANDS:
+        for slot in range(1, 200):
+            fx = cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size=band).fx
+            audible = (abs(fx.size_pct) >= AUDIBLE_SIZE_PCT or fx.growl_pct or fx.cave_pct)
+            assert audible, (band, slot, fx)
+
+    # The grit that fills in is real grit, and it is this creature's rather
+    # than one value for everyone it happens to.
+    filled = {cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size="M").fx.growl_pct
+              for slot in range(1, 200)}
+    assert MONSTER_GROWL_ALWAYS and 0 not in MONSTER_GROWL_ALWAYS
+    assert set(MONSTER_GROWL_ALWAYS) <= filled and len(filled - {0}) > 1
+
+    # A creature big enough to say it on its own keeps whatever it was dealt,
+    # including nothing: the rule fills a gap, it does not paint everyone.
+    assert any(not cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian", size="G").fx.growl_pct
+               for slot in range(1, 200))
+
+
+def test_two_of_one_creature_still_differ_from_each_other():
+    """The band is the creature's; the value within it is this creature's.
+    Four goblins in a fight must not be one goblin four times."""
+    goblins = [cast_for(f"monster:mon_{i}", STANDARD_ENGLISH, "Brian", size="S")
+               for i in range(1, 9)]
+    assert len({c.fx.size_pct for c in goblins}) > 1
+    # ...and every one of them is still a goblin.
+    assert all(c.fx.size_pct in MONSTER_SIZE_BANDS["S"] for c in goblins)
+
+
+def test_the_bands_are_monotonic_and_do_not_overlap():
+    """"Bigger creature" and "lower voice" cannot be allowed to disagree, and
+    an overlap at a boundary is exactly how they would: a Large at the bottom
+    of its band sounding like a Medium at the top of its."""
+    order = ["T", "S", "M", "L", "H", "G"]
+    assert list(MONSTER_SIZE_BANDS) == order
+    top = None
+    for name in order:
+        band = MONSTER_SIZE_BANDS[name]
+        assert band == tuple(sorted(band)) and len(set(band)) == len(band)
+        assert 0 not in band                       # no monster is dealt no treatment
+        if top is not None:
+            assert min(band) > top
+        top = max(band)
+    # Every value the union claims, and nothing else.
+    assert set(MONSTER_SIZE) == {v for b in MONSTER_SIZE_BANDS.values() for v in b}
+
+
+def test_a_size_nothing_states_is_the_default_band():
+    """An unknown creature, or a replay whose snapshot cannot name the speaker.
+    It has to be a real band rather than a silence or a spread of its own."""
+    for said in ("", None, "colossal", "?", 7):
+        cast = cast_for("monster:mon_1", STANDARD_ENGLISH, "Brian", size=said)
+        assert cast.fx.size_pct in MONSTER_SIZE_BANDS[DEFAULT_SIZE_BAND]
+    assert cast_for("monster:mon_1", STANDARD_ENGLISH, "Brian") == \
+        cast_for("monster:mon_1", STANDARD_ENGLISH, "Brian", size=DEFAULT_SIZE_BAND)
+
+
+def test_a_stated_size_is_read_the_two_ways_anything_writes_it():
+    """The SRD letter is what `engine/data/monsters.json` carries; the word is
+    what a person writes. Both reach this from game state."""
+    assert normalize_creature_size("L") == normalize_creature_size("large") == "L"
+    assert normalize_creature_size("  Large  ") == "L"
+    assert normalize_creature_size("GARGANTUAN") == "G"
+    for junk in ("", None, "big", "XL", 3, True):
+        assert normalize_creature_size(junk) == ""
+
+
+def test_size_is_read_for_monsters_and_nobody_else():
+    """A PC has a stat sheet, not a stat block, and no size to be cast by."""
+    for key in ("dm", "npc", "pc_1"):
+        assert cast_for(key, STANDARD_ENGLISH, "Brian", size="G") == \
+            cast_for(key, STANDARD_ENGLISH, "Brian")
 
 
 def test_the_old_standard_only_treatment_is_still_there_behind_the_switch():
@@ -376,3 +489,47 @@ def test_an_accent_nobody_has_named_is_reported_rather_than_guessed():
     assert accent_for(None) == ""
     # Case is Polly's, not ours.
     assert accent_for("EN-us") == ACCENTS["en-us"]
+
+
+def test_no_two_monsters_in_a_shipped_scenario_sound_alike():
+    """The property the bands could plausibly have broken.
+
+    Narrowing the size shift to the creature's own band takes distinctness out
+    of it: four goblins now sit within six percent of each other where they
+    used to span the whole palette. That is correct — four goblins SHOULD sound
+    alike in size — but only if what is left (the voice, the grit, the room,
+    the tempo) still tells them apart. So this walks every creature in every
+    shipped scenario and asserts no two of them are dealt the same everything.
+
+    The spawn order is `orchestrator/game.py: _spawn_monsters`' — encounters in
+    order, `mon_N` counting up across the whole game — and is restated here
+    rather than imported, because `tts/` may not import the orchestrator. If
+    that numbering ever changes this keeps passing while testing the wrong
+    roster; what it cannot do is pass on a roster that has a collision in it.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, "engine", "data", "monsters.json")) as fh:
+        sizes = {m["name"]: m.get("size") for m in json.load(fh)}
+
+    scenarios = sorted(glob.glob(os.path.join(root, "examples", "*.json")))
+    assert scenarios, "no scenarios to check"
+    for path in scenarios:
+        with open(path) as fh:
+            scenario = json.load(fh).get("scenario") or {}
+        seen: dict[tuple, str] = {}
+        slot = 0
+        for encounter in scenario.get("encounters") or []:
+            for entry in encounter.get("monsters") or []:
+                for _ in range(int(entry.get("count", 1))):
+                    slot += 1
+                    cast = cast_for(f"monster:mon_{slot}", STANDARD_ENGLISH, "Brian",
+                                    size=sizes.get(entry["name"], ""))
+                    fx = cast.fx
+                    heard = (cast.voice_id, fx.size_pct, fx.growl_pct, fx.cave_pct,
+                             cast.rate_pct)
+                    who = f"mon_{slot} ({entry['name']})"
+                    assert heard not in seen, (
+                        f"{os.path.basename(path)}: {who} sounds exactly like "
+                        f"{seen[heard]}"
+                    )
+                    seen[heard] = who
