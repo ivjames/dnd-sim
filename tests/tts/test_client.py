@@ -15,7 +15,7 @@ import pytest
 
 from tts.cache import AudioCache
 from tts.client import DEFAULT_ENGINE, PollyTTS, TTSError, from_env
-from tts.voices import STANDARD_ENGLISH, Cast, ssml_for
+from tts.voices import STANDARD_ENGLISH, Cast, ssml_for, tune_from
 
 MP3 = b"\xff\xfb\x90\x00pretend-audio"
 
@@ -387,6 +387,37 @@ def test_a_monster_stays_on_the_tables_engine_and_is_treated_afterwards(tmp_path
 
     # Which means one rate on the bill, where the split crossed two.
     assert svc.render("monster:ogre_1", "x" * 100).usd == pytest.approx(16.0 / 10_000)
+
+
+def test_a_treatment_with_every_knob_at_zero_is_the_plain_voice(tmp_path):
+    """`MonsterFX` promises that a seat with no treatment keys, and sounds,
+    exactly like the plain voice it is — and a falsy `MonsterFX` is not None, so
+    three places had to agree on reading it as falsy rather than as present.
+
+    Reachable from the voice lab: the casting never deals an all-zero treatment
+    (no size band contains 0, and `MONSTER_GROWL_ALWAYS` covers the case where
+    it rounds to nothing), but a listener dragging a monster's sliders to 0 gets
+    exactly this cast. `render` used to read it as present while
+    `media_type_for` and `cache_key_for` read it as absent, which served a WAV
+    under an `audio/mpeg` header and filed it under the key an untreated seat
+    computes for the same voice and line.
+    """
+    svc = PollyTTS(AudioCache(str(tmp_path), 0), client=FakePolly(), engine="neural")
+    flat_tune = tune_from(size=0, growl=0, cave=0)
+
+    assert svc.cast("monster:goblin_1").fx                    # dealt a treatment
+    flat = svc.cast("monster:goblin_1", tune=flat_tune)
+    assert flat.fx is not None and not flat.fx                # the shape that split them
+
+    assert svc.media_type_for(flat) == "audio/mpeg"
+    result = svc.render("monster:goblin_1", "Fee fi.", tune=flat_tune)
+    assert result.media_type == "audio/mpeg"
+    assert svc.client().calls[-1]["OutputFormat"] == "mp3"
+    assert "SampleRate" not in svc.client().calls[-1]
+
+    # And it keys as the plain voice: no fx segment, so it cannot collide with
+    # a treated clip and does not re-render one that is already on disk.
+    assert "fx:" not in result.key
 
 
 def test_the_old_split_is_what_turning_the_treatment_off_restores(tmp_path):

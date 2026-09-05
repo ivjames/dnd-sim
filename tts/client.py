@@ -454,7 +454,16 @@ class PollyTTS:
         client = self.client()
         if client is None:
             raise TTSError("no Polly client (boto3 missing, or no AWS credentials)")
-        pcm = cast.fx is not None
+        # `bool(cast.fx)`, not `is not None`: a treatment whose every knob is 0
+        # IS the plain voice, and `MonsterFX` says so — "a seat with no
+        # treatment must key, and sound, exactly like the plain voice it is".
+        # `media_type_for` and `cache_key_for` have always read it that way, and
+        # this line reading it the other way was a real disagreement rather than
+        # a stylistic one: a listener who dragged a monster's three sliders to 0
+        # got PCM wrapped in a WAV, a header saying `audio/mpeg` because
+        # `media_type_for` disagreed, and those bytes filed under the key an
+        # untreated seat on the same voice and line computes.
+        pcm = bool(cast.fx)
         stream = None
         try:
             resp = client.synthesize_speech(
