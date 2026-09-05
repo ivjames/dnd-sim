@@ -1090,9 +1090,12 @@ with the browser's voices kept as a real fallback rather than deleted.
 
    **This is not an engine field.** `CharacterSheet` (§1.3) is unchanged and
    `build_character` ignores the key: gender has no rules meaning in 5e, the
-   engine stays pure, and the DM and player prompts do not see it. `dm`, `npc`
-   and `monster:<id>` have no character record and are cast from the whole pool
-   as before.
+   engine stays pure, and the DM and player prompts do not see it. `dm` and
+   `npc` have no character record and are cast from the whole pool as before.
+   `monster:<id>` has none either, and is dealt a half of the roster from its
+   own hash instead — see the 2026-09-05 amendment: nothing can state a
+   constraint for a creature, and no constraint is not neutral against a roster
+   that is nine women to three men once the children and the DM are out of it.
 
    Polly reports `Gender` as exactly `Female` or `Male`, so a character who
    states neither — or states nothing — is dealt from the **whole** pool rather
@@ -2235,3 +2238,42 @@ one costs.
 **What is open.** Which creature types should be dealt which knobs. That wants
 ears on it in the voice lab first, and writing it into `cast_for` blind would
 change every monster at the table in one commit.
+
+### 2026-09-05 — tts/ — a monster is dealt a half of the roster
+
+`cast_for` narrowed the voice pool only where a character stated something:
+`pronouns` (or the legacy `gender`) for a party member, `age` for a child. A
+`monster:<id>` seat states nothing, so it was dealt from the whole pool — and
+the whole pool is not neutral. `STANDARD_ENGLISH` is ten women to five men, and
+by the time the deal happens `cast_for` has already dropped the children (Ivy,
+Kevin) and the DM's own voice (Brian, and the default DM is a man): nine to
+three. A monster came out female roughly three times in four, and since the
+casting is keyed on spawn order alone it was the SAME voices in every game.
+
+```python
+# tts/voices.py
+MONSTER_GENDERS: tuple[str, ...]              # ("female", "male")
+MONSTER_GENDER_SALT: str                      # "gender:" — prefixed before rehashing
+def monster_gender(key: str) -> str           # the half, deterministic in the key
+def _mix32(h: int) -> int                     # lowbias32 avalanche over a 32-bit word
+```
+
+`cast_for` deals the half where — and only where — a monster key arrives with
+no stated gender; a stated one still wins, and every other seat is untouched.
+`CharacterSheet` is unchanged, no engine or agent code reads any of it, and
+`PRONOUN_GENDERS`' rule is unchanged: a character who states `they/them`, a
+neopronoun set or nothing is still dealt from the whole pool, because a
+character has a sheet the roster's limitation would be laundered into and a
+gnoll does not.
+
+Deal quality is load-bearing rather than incidental, in both directions of the
+word. FNV-1a over ids differing only in their last character leaves bits 14-23
+and 28-31 identical across `monster:mon_1` … `monster:mon_9`, so a slice up
+there deals every monster in a game the same half; and its low bit is the
+parity of the key's code units, so a slice down there deals the halves in
+strict alternation with spawn order. Hence a salted rehash finalized through
+`_mix32`, and two tests that fail on either degeneracy returning.
+
+**Cost.** `cache_key_for` keys on the voice id, so every monster clip on disk
+is orphaned and re-synthesized once at the neural rate; no DM, PC or NPC key
+moves. Costed in `TTS-COSTS.md` §6.

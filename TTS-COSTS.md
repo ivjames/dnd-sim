@@ -547,3 +547,45 @@ All of that is paid once per distinct line and then cached forever, on a
 request a listener is waiting for and behind a Polly round trip that is itself
 slower than any of these numbers. The budget it was written against was 3
 seconds; the worst case is a seventh of that.
+
+### A monster is dealt a half of the roster, and the cache turns over again
+
+A monster had no gender constraint on it, because nothing can state one for a
+gnoll: it was dealt from the whole roster. That is not neutral. Polly's English
+roster is about two women to every man, and the pool a monster is dealt from is
+worse than the roster: the built-in `STANDARD_ENGLISH` is ten to five, but
+`cast_for` drops the children (Ivy, Kevin) and the DM's own voice (Brian, and
+the default DM is a man) before the deal, leaving **nine to three**. So "the
+whole roster" came out female roughly three times in four, and over the two or three
+creatures a fight actually gives lines to that is not heard as a tendency. It is
+heard as every monster in the game being the same woman with grit on her.
+`MONSTER_GENDERS` deals the half off the key's own hash and the pick happens
+within it, so the seat still keeps its voice for as long as its id does. Three
+male voices is a thin half, and it shows: on the built-in roster `mon_5` and
+`mon_6` are both Joey, so two creatures side by side in the same fight can
+share a voice more often than they did when the pool was whole. That is the
+trade, and it is the right way round — a repeated voice under a different size,
+grit and room is still a different creature, where a table cast entirely out of
+one half of the roster is not. The suite holds every shipped scenario to no two
+of its creatures being dealt the same voice, size, grit, room and tempo at
+once, which is the property that actually has to hold.
+
+**The cost is the monster clips on disk, once.** `cache_key_for` keys on the
+engine, the voice id and the SSML document, so changing which voice a creature
+is dealt orphans its clips exactly as an edit to `dsp.py` orphans them through
+`MonsterFX.token()`. Most monster keys move — that is the point of the change —
+and each is a fresh `SynthesizeSpeech` at the neural $16/1M. Bounded the same
+way as every turnover recorded above: **only** monster clips move (a DM, PC or
+NPC cast is untouched, so narration, which is most of what a game says, keeps
+every key), monsters are a small share of a game's spoken characters, and the
+orphans are not deleted but wait for `AudioCache.prune`'s LRU.
+
+**One thing was left undone deliberately.** The same lopsidedness in FNV-1a that
+made a bit-slice unusable for the half — `monster:mon_1` through
+`monster:mon_9` agree exactly through bits 14 to 23 — means `MONSTER_TEMPO`'s
+`(h >> 16) % 4` is reading two bits that never move: every creature in a normal
+game is dealt 90%, the slowest of the four, and has been since the tempo was
+dealt. It is a real defect with an audible consequence and the fix is the same
+one line. It is not in this change because it was not asked for, and because
+it is worth landing knowing it pays this same turnover a second time — or
+landing together with anything else that moves a monster's cast.

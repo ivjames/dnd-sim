@@ -553,6 +553,18 @@ roster hold. They are read from the game's own party list, never from the
 request that asks for the clip — this endpoint spends money, and pronouns in
 the query string would be a way to walk the whole roster a paid clip at a time.
 
+A monster states nothing and has nothing to state it in, and that is not the
+same as leaving the pool whole. Polly's English roster is about two women to
+every man, and the pool a monster is dealt from is worse than the roster — the
+children and the DM's own voice are out of it before the deal, leaving nine
+women to three men on the built-in roster — so "cast from everything" came out
+female roughly three times in four, and over the two or three creatures a fight
+gives lines to that is heard as every monster in the game being one voice. A
+`monster:<id>` seat is therefore dealt a half of the roster from its own hash
+and the voice is picked within it, so a creature keeps its voice for as long as
+its id does. A character is never dealt one: the paragraph above is the whole
+rule for anybody with a party spec.
+
 The mapping runs one way, from pronouns to a set of voices, and it is not a
 claim that a pronoun is a gender. Polly's roster is `Female` and `Male`; there
 is no third kind of voice on it. So a character who goes by `they/them`, or by

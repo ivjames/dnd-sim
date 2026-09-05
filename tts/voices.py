@@ -10,7 +10,7 @@ who is speaking (`dm`, a party member's own id, `npc`, or `monster:<id>`) and
 sends the key with the line. The hash below is the same FNV-1a the browser
 uses, so a given actor lands on the same seat every time.
 
-Three things differ from the browser's casting, all because Polly is not a
+Four things differ from the browser's casting, all because Polly is not a
 device voice list:
 
   * There are no novelty voices. `speech.js` casts a speaking monster out of
@@ -32,6 +32,10 @@ device voice list:
     Bexley read in a nine-year-old's voice is a casting bug and not a
     surprise worth keeping. `speech.js` cannot make the same distinction:
     `SpeechSynthesisVoice` reports no age, exactly as it reports no gender.
+  * Polly reports a voice's gender and the browser does not, so this is the
+    one half of the narrator that can deal a monster a side of the roster —
+    and has to, because the roster is lopsided and a monster is the one seat
+    with nobody to state a preference for it. `MONSTER_GENDERS`.
 """
 
 from __future__ import annotations
@@ -74,6 +78,9 @@ __all__ = [
     "PITCH_MAX_PCT",
     "RATE_MIN_PCT",
     "RATE_MAX_PCT",
+    "MONSTER_GENDERS",
+    "monster_gender",
+    "MONSTER_GENDER_SALT",
     "MONSTER_VTL",
     "MONSTER_SIZE",
     "MONSTER_SIZE_BANDS",
@@ -244,6 +251,51 @@ AGES = {"child": "child", "kid": "child", "boy": "child", "girl": "child",
 #: runs the two implementations against each other. `inf` and `nan` are
 #: excluded here as well, though the range check below would have caught them.
 _NUMERIC_AGE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\Z")
+
+#: Which half of the roster a monster is dealt from, chosen by its own hash.
+#:
+#: Not a claim that a gnoll has a gender. It is the same answer
+#: `gender_for_pronouns` gives for a character — which voices this seat may be
+#: dealt from, and nothing else — reached differently because there is nobody
+#: to ask: a monster has no party spec, no pronouns and no persona, so it used
+#: to be dealt from the whole roster and inherited whatever that roster is made
+#: of. Polly's English roster is about two women to every man, and the pool a
+#: monster is actually dealt from is worse than the roster: `STANDARD_ENGLISH`
+#: is ten to five, but `cast_for` has already dropped the children (Ivy, Kevin)
+#: and the DM's own voice (Brian, and the default DM is always a man) by the
+#: time the deal happens, leaving **nine to three**. So "the whole roster" came
+#: out female roughly three times in four. Over the two or
+#: three creatures a fight actually gives lines to, that is not a tendency a
+#: listener hears as a tendency — it is every monster in the game sounding like
+#: a woman with grit on her, most games.
+#:
+#: This does not make a monster sound like a man or a woman; the size shift and
+#: the grit are what make it sound like a creature. It makes the creatures
+#: differ from each other, which is the whole reason the casting is a hash and
+#: not a constant. A character is never dealt one of these: a stated pronoun
+#: narrows the pool and a stated nothing leaves it whole, which is
+#: `PRONOUN_GENDERS`' argument and is untouched here.
+MONSTER_GENDERS: tuple[str, ...] = ("female", "male")
+
+#: What is hashed to deal `MONSTER_GENDERS`: this, and then the voice key.
+#:
+#: A second hash rather than another slice of the one `cast_for` already has,
+#: and NOT because the bits ran out. FNV-1a over ids that differ only in their
+#: last character leaves whole runs of the word untouched — `monster:mon_1`
+#: through `monster:mon_9` hash to 0x978cd3f5, 0x948ccf3c, 0x958cd0cf and so
+#: on: nine values agreeing exactly through bits 14 to 23, and again through
+#: bits 28 to 31. A slice inside either run is not a weak deal, it is a
+#: constant, and every monster in a game would have been dealt the same half of
+#: the roster — this bug wearing a different hat.
+#:
+#: Salting and rehashing is half the answer; `_mix32` is the other half, and
+#: the low bits need it as badly as the high ones needed the salt. See there.
+#:
+#: The same arithmetic is why `MONSTER_TEMPO` is dealt `(h >> 16) % 4` and
+#: every creature in a game comes out at 90%: bits 16 and 17 are inside that
+#: first run. Left alone here on purpose — it is a separate defect with its own
+#: audible consequence, and folding it in would have made this change two.
+MONSTER_GENDER_SALT = "gender:"
 
 # Timbre shifts dealt to monsters: never 0, because a monster whose only
 # treatment rounded to "no treatment" is a goblin that sounds like the barmaid.
@@ -481,6 +533,49 @@ def accent_for(language: str) -> str:
     return ACCENTS.get(code.lower(), code)
 
 
+def _mix32(h: int) -> int:
+    """A finalizer over a 32-bit word: every output bit depends on every input bit.
+
+    Needed because `hash_key`'s LOW bit is as degenerate as its high ones, in a
+    way that is not visible until something takes it modulo two. FNV-1a xors a
+    code unit in and multiplies by an odd prime, and an odd multiplier preserves
+    the low bit — so `hash_key(s) & 1` is exactly the parity of the low bits of
+    `s`, and nothing else about `s` reaches it. Dealt straight, that makes the
+    half a monster is cast in the parity of its id: `mon_1` … `mon_9` strictly
+    alternate, every even slot in every game is one half and every odd slot the
+    other, and a one-character change to the id scheme flips all of them at
+    once. It looks like a good spread on the roster the site ships, which is
+    what makes it worth writing down rather than leaving to be discovered.
+
+    This is Wang/Stafford's lowbias32 avalanche, the tail of a hash rather than
+    a hash: `hash_key` still decides everything it decided before, and this is
+    only applied where a decision comes off very few of its bits.
+    """
+    h &= 0xFFFFFFFF
+    h ^= h >> 16
+    h = (h * 0x7FEB352D) & 0xFFFFFFFF
+    h ^= h >> 15
+    h = (h * 0x846CA68B) & 0xFFFFFFFF
+    h ^= h >> 16
+    return h
+
+
+def monster_gender(key: str) -> str:
+    """Which half of the roster this monster is dealt from. See `MONSTER_GENDERS`.
+
+    Deterministic in the voice key and nothing else, like every other thing a
+    monster is dealt: `monster:mon_3` is cast the same way in every game, and
+    two creatures in one fight are cast independently of each other. There is
+    no attempt to balance a table — the casting sees one seat at a time, so a
+    fight of four is four independent deals and can come out three to one.
+    Independence is the property to want here rather than balance: a table that
+    was made to alternate would be a table whose next creature is known from
+    its last, which is the thing this is fixing.
+    """
+    h = hash_key(MONSTER_GENDER_SALT + str(key or ""))
+    return MONSTER_GENDERS[_mix32(h) % len(MONSTER_GENDERS)]
+
+
 def normalize_gender(gender: str) -> str:
     """"female", "male", or "" for no constraint. See `GENDERS`."""
     return GENDERS.get(str(gender or "").strip().lower(), "")
@@ -567,7 +662,10 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
 
     `gender` narrows the pool to voices Polly reports as that gender, and `age`
     decides whether the character is dealt a child's voice. Both come from the
-    character, not from whoever asked for the clip.
+    character, not from whoever asked for the clip. A monster has no character
+    to come from, so where nothing is stated it is dealt a half of the roster
+    off its own hash rather than the whole of a roster that is two-thirds
+    women — `MONSTER_GENDERS` makes that argument at length.
 
     `monster_fx` says how a monster is made to sound like one: with a
     `MonsterFX` applied after synthesis (the default, and what lets a monster
@@ -622,6 +720,14 @@ def cast_for(key: str, pool, dm_voice: str = "", gender: str = "",
     # within the narrowed set is the same hash as ever, so a character keeps
     # its voice for as long as its gender and the roster do.
     want = normalize_gender(gender)
+    # A monster is dealt one, because nothing can state one for it and "no
+    # constraint" is not neutral against a roster that is two-thirds women: it
+    # hands the skew straight to the listener, who hears it as every creature
+    # in the game having been cast out of the same handful of voices. Only
+    # where nothing was said — a caller that names a gender for a monster (the
+    # voice lab, a test) has named one, and is not overruled here.
+    if not want and is_monster_key(key):
+        want = monster_gender(key)
     if want:
         matching = [v for v in others if v.gender.lower() == want]
         # A language whose standard voices are all one gender (Korean ships
