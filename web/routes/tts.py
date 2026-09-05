@@ -409,7 +409,15 @@ def roster():
     if svc is None or not svc.available():
         return jsonify({"available": False, "engines": {}})
 
-    from tts.voices import accent_for, allowed_ssml  # noqa: PLC0415
+    from tts.dsp import MAX_SIZE_PCT  # noqa: PLC0415
+    from tts.voices import (  # noqa: PLC0415
+        PITCH_MAX_PCT,
+        PITCH_MIN_PCT,
+        RATE_MAX_PCT,
+        RATE_MIN_PCT,
+        accent_for,
+        allowed_ssml,
+    )
 
     engines = {}
     for engine in dict.fromkeys((svc.engine, svc.monster_engine)):
@@ -434,6 +442,25 @@ def roster():
             "engine": svc.engine,
             "monster_engine": svc.monster_engine,
             "engines": engines,
+            # The bounds a control may offer, from the code that enforces them,
+            # so a slider cannot be built with a range the server will clamp.
+            # `rate` and `pitch` are the SSML ones and apply to any seat the
+            # engine allows them on; the rest are the monster treatment
+            # (`tts/dsp.py`) and exist only where `monster_fx` is on — with it
+            # off, a monster is made out of standard-only SSML instead and
+            # there is nothing here to move.
+            "limits": {
+                "rate": {"min": RATE_MIN_PCT, "max": RATE_MAX_PCT, "auto": 100},
+                "pitch": {"min": PITCH_MIN_PCT, "max": PITCH_MAX_PCT, "auto": 0},
+            },
+            "fx": {
+                "available": bool(getattr(svc, "monster_fx", False)),
+                # Signed the way vocal-tract-length was: positive is a longer
+                # tract, a bigger creature, a lower voice.
+                "size": {"min": -MAX_SIZE_PCT, "max": MAX_SIZE_PCT},
+                "growl": {"min": 0, "max": 100},
+                "cave": {"min": 0, "max": 100},
+            },
         }
     )
 
@@ -583,7 +610,12 @@ def speak(game_id: str):
     # revalidates separately, and turning a tune off goes back to clips that
     # are very likely already paid for.
     tune = tune_from(
-        request.args.get("voice"), request.args.get("rate"), request.args.get("pitch")
+        request.args.get("voice"),
+        request.args.get("rate"),
+        request.args.get("pitch"),
+        request.args.get("size"),
+        request.args.get("growl"),
+        request.args.get("cave"),
     )
     try:
         cast, ckey = svc.cache_key_for(key, text, gender, age, size=size, tune=tune)

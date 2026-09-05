@@ -1125,6 +1125,11 @@
     if (t.voice) q += '&voice=' + encodeURIComponent(t.voice);
     if (t.rate !== undefined && t.rate !== null) q += '&rate=' + encodeURIComponent(t.rate);
     if (t.pitch !== undefined && t.pitch !== null) q += '&pitch=' + encodeURIComponent(t.pitch);
+    // The monster treatment. Ignored by the server on any other seat, so this
+    // needs no test for what kind of seat it is.
+    ['size', 'growl', 'cave'].forEach(function (f) {
+      if (t[f] !== undefined && t[f] !== null) q += '&' + f + '=' + encodeURIComponent(t[f]);
+    });
     return q;
   }
 
@@ -2178,7 +2183,11 @@
     row.appendChild(sel);
 
     var sliders = el('div', 'vl-sliders');
-    sliders.appendChild(vlSlider('rate', 20, 200, 5,
+    // On a monster this is the tempo: the compensation the size shift needs
+    // rides underneath it, and the server keeps the two multiplied rather than
+    // letting one replace the other.
+    var rateLabel = Speech.isMonsterKey(role.key) ? 'tempo' : 'rate';
+    sliders.appendChild(vlSlider(rateLabel, 20, 200, 5,
       tune.rate === undefined ? null : tune.rate, 100, '%', function (v) {
         vlSetTune(role.key, { rate: v });
         refreshState();
@@ -2201,12 +2210,49 @@
     sliders.appendChild(pitch);
     row.appendChild(sliders);
 
+    // A monster is not an actor with a deep voice: its size, its grit and the
+    // room it stands in are made out of the audio after Polly hands it over
+    // (`tts/dsp.py`), and the casting deals them from the creature's SRD size
+    // and a hash. This is the bench for that — the same three numbers the
+    // treatment is built from, in the order they matter.
+    var fxSpec = (VL.roster && VL.roster.fx) || null;
+    if (Speech.isMonsterKey(role.key) && fxSpec && fxSpec.available) {
+      var fx = el('div', 'vl-fx');
+      fx.appendChild(el('span', 'vl-fxlabel', 'monster'));
+      var fxSliders = el('div', 'vl-fxsliders');
+      [
+        { f: 'size', label: 'size', spec: fxSpec.size, auto: 0,
+          hint: 'Bigger creature, lower voice — the whole spectrum shifts' },
+        { f: 'growl', label: 'growl', spec: fxSpec.growl, auto: 0,
+          hint: 'Saturation: harmonics and grit' },
+        { f: 'cave', label: 'room', spec: fxSpec.cave, auto: 0,
+          hint: 'The space it is standing in' }
+      ].forEach(function (c) {
+        var sl = vlSlider(c.label, c.spec.min, c.spec.max, 1,
+          tune[c.f] === undefined ? null : tune[c.f], c.auto, '%', function (v) {
+            var patch = {};
+            patch[c.f] = v;
+            vlSetTune(role.key, patch);
+            refreshState();
+            if (ttsOn()) vlTest(role, test);
+          });
+        sl.title = c.hint;
+        fxSliders.appendChild(sl);
+      });
+      fx.appendChild(fxSliders);
+      row.appendChild(fx);
+    }
+
     resetBtn = el('button', 'btn btn-small vl-auto', 'auto');
     resetBtn.type = 'button';
     resetBtn.title = 'Back to the voice the server casts for this seat';
     resetBtn.addEventListener('click', function () {
-      vlSetTune(role.key, { voice: null, rate: null, pitch: null });
-      vlRender();
+      // Every field this row can set, including the treatment's — a row that
+      // said "auto" while still carrying a size shift would be a lie, and the
+      // seat would keep it for good.
+      vlSetTune(role.key, { voice: null, rate: null, pitch: null,
+                            size: null, growl: null, cave: null });
+      vlRender();                 // the sliders jump back to the cast values
     });
     row.appendChild(resetBtn);
     refreshState();
