@@ -136,10 +136,10 @@ class Action:                    # what a chooser returns
     actor: str; template_id: str; params: dict; speech: str | None = None
 
 def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]
-# exhaustive for this actor this turn, given remaining action/bonus/movement; includes "end_turn" always; attacks list one template per (weapon,target in reach/range); spells one per (spell, slot level, target) for single-target, one per spell for AoE with needs=["point"]; move as ONE template with needs=["path"] plus up to 6 suggested destinations in params["suggested"]
+# exhaustive for this actor this turn, given remaining action/bonus/movement; includes "end_turn" always (and only that for a surprised creature); attacks list one template per (weapon,target in reach/range); spells one per (spell, slot level, target) for single-target, one per spell for AoE with needs=["point"]; move as ONE template with needs=["path"] plus up to 6 suggested destinations in params["suggested"], each with a reason in params["labels"] (same length and order — 2026-09-05 amendment)
 def apply(state: GameState, action: Action) -> tuple[GameState, list[Event]]
 # validates (raise IllegalAction(msg)), resolves fully (rolls, damage, conditions, opportunity attacks on move, concentration checks, death), returns NEW state (do not mutate) + events
-def start_combat(state, rng_state) -> tuple[GameState, list[Event]]      # rolls initiative, sets mode, round=1, resets turn budgets
+def start_combat(state, rng_state, surprised=None) -> tuple[GameState, list[Event]]      # rolls initiative, sets mode, round=1, resets turn budgets; surprised ∈ {None, "party", "enemy"} marks that side surprised for its first turn (2026-09-05 amendment)
 def advance_turn(state) -> tuple[GameState, list[Event]]                  # end current turn effects, tick durations, start next (round_start when wrapping); handles unconscious actors (auto death save event) and dead ones (skip)
 def combat_over(state) -> str | None                                      # "party" | "enemy" | None (side with no conscious, non-fled members loses)
 def reactions_for(state, trigger: dict) -> list[ActionTemplate]           # opportunity attacks; Phase 1: engine auto-resolves opportunity attacks (no LLM ask)
@@ -2300,3 +2300,111 @@ launch stays as the second line of defence. Owner's decision, 2026-09-05.
 
 **Contract.** Nothing in `web/`, `orchestrator/`, `agents/` or `llm/`
 changes: the app reads `os.environ`, which `run.sh` fills from `.env`.
+
+### 2026-09-05 — engine — six rulings from sixteen live games
+
+`engine/actions.py` and `engine/data/monsters.json`. Every rejected action in
+the corpus was a move refused whole; death saves were logged after the last
+enemy died; five creatures walked into a Spirit Guardians aura unharmed; the
+Goblin Boss threw a javelin and followed it with a scimitar; the far-corner
+move suggestions were taken as a matter of course; and there was no surprise
+rule at all. What changed at the interface, item by item:
+
+1. **A move applies the longest reachable prefix of its waypoints.** Only a
+   first leg that cannot be walked raises `IllegalAction`, and the message
+   says why: `(x,y) is occupied by <name>`, `(x,y) is a wall`, `(x,y) is off
+   the grid`, `there is no route to (x,y)`, or `(x,y) is N ft away; you have
+   M ft`. A later leg that fails ends the move where the previous leg did.
+   The `move` event's data gains `requested: [x,y]` (the last waypoint asked
+   for — always present on a walked move) and, only when a leg was dropped,
+   `truncated_at: [x,y]` (where the mover stopped) and `truncated_reason`
+   (the same text a refusal would have carried), so the orchestrator can
+   tell the chooser what happened. `ft` is the movement actually charged
+   (a backtracking path reported the cost to its final square: 5 ft for a
+   15 ft walk) and `path` is the squares actually walked, not the plan.
+
+2. **No death save is rolled once the fight is decided.** `_advance` decides
+   once, at the top, whether either side still has anyone standing
+   (`combat_over`) and skips the dying without a roll when not. The
+   orchestrator checks `combat_over` right after `advance_turn`, so nothing
+   downstream changes; the two engine tests that fielded a one-PC party
+   whose only member was dying now keep a second PC standing.
+
+3. **Spirit Guardians triggers on entry.** SRD: "when the creature enters the
+   area for the first time on a turn or starts its turn there". Entry is
+   checked after every square of a `move`, after a push and after a
+   teleport; each aura hits a creature at most once per game turn, keyed on
+   the creature as `flags.aura_hits[<caster_id>] = [round, turn_index]` (a
+   per-turn flag; the key rather than the reset is what makes it correct,
+   because a push happens on someone else's turn). A creature the damage
+   drops mid-move stops on the square it entered (`interrupted`, as after an
+   opportunity attack). Flaming Sphere is the only other `persistent_aura`
+   in spells.json and burns a creature that *ends its turn* beside it; the
+   data carries no field to say which trigger an aura has, so the on-entry
+   semantics are Spirit Guardians' alone.
+
+4. **Multiattack routines.** `monsters.json` `multiattack` is either one
+   routine (`["Scimitar", "Scimitar"]`, as before) or, where the SRD says
+   "or", a list of routines (`[[...], [...]]`). An entry is a name or
+   `{"name", "disadvantage": true, "mode": "melee"|"ranged"}`; `mode` pins a
+   `melee_or_ranged` action to one of its two specs. A routine is a multiset:
+   the attacks made consume its entries name by name, what is offered
+   mid-routine is what still completes a routine the attacks so far fit, the
+   consumed entry lends the attack its modifier, and a first attack that fits
+   no routine is a single attack (the Goblin Boss's javelin, the Hill
+   Giant's rock — no longer the first of two). The per-turn flag is
+   `flags.multi_used` (a list of `{"name", "ranged"}`); `multi_index` is
+   gone. Records changed, against SRD 5.1: **Goblin Boss** second scimitar
+   at disadvantage (the gap the 2026-09-03 amendment recorded); **Bandit
+   Captain** two scimitars + a melee dagger *or* two thrown daggers;
+   **Wight** two longswords, longsword + Life Drain, *or* two longbows. The
+   other six (Owlbear, Black Bear, Brown Bear, Ettin, Hill Giant, Troll)
+   were audited and match as they were. `_multiattack()` still returns the
+   flattened entries; `_multiattack_options()` is the structured read.
+
+5. **Move suggestions carry labels, and the far squares are earned.** The
+   move template's `params` keep `suggested: [[x,y], ...]` exactly as
+   before and gain `labels: [str, ...]`, one per square, same order — e.g.
+   `"adjacent to Goblin 2"`, `"adjacent to Goblin 2, also in reach of Goblin
+   3"`, `"15 ft from Goblin 1, out of its reach"`, `"away from all enemies
+   (nearest 40 ft)"`, `"away from Cleric (30 ft)"` for a turned creature.
+   The two squares farthest from every enemy are offered only when the actor
+   is fleeing (turned) or below half its hit points. A healthy creature
+   already engaged, for which nothing is closer, is offered up to two
+   squares that stay in its nearest enemy's reach (`"... (stays in its
+   reach)"`) so the template — which the mock chooser picks a square from —
+   never carries an empty list; only a boxed-in creature falls back to the
+   far squares. `MAX_SUGGESTED` is unchanged at 6.
+
+6. **Surprise.** `start_combat(state, rng_state=None, surprised=None)`;
+   `surprised` is `None`, `"party"` or `"enemy"` (anything else raises
+   `IllegalAction`). Each living member of that side gets the engine-only
+   condition `surprised` (alongside `hidden` and `turned` — no data record):
+   `legal_actions` offers it only `end_turn`, `_can_react` is false for it
+   (so `reactions_for` and `threat_map` ignore it), and `_end_of_turn`
+   removes it with a `condition_remove` when its first turn of the combat
+   ends; a creature whose first turn passes while it is dying loses it
+   silently. The `combat_start` event's data gains `surprised` (the side, or
+   `null`) and its text says "The party is surprised!" / "The enemies are
+   surprised!"; one `condition_add` (`condition="surprised"`) is emitted per
+   creature, after `combat_start` and before the first `turn_start`, for the
+   DM to narrate. No new event kind, so `tests/audio`'s cue table is
+   untouched.
+
+**Why these shapes.** Prefix application rather than a closest-point walk
+because a waypoint is a decision the chooser made and a square short of it
+is not; per-turn keying on `(round, turn_index)` because "first time on a
+turn" is about the game's turn, not the creature's; multisets rather than
+sequences because the SRD's order of listing is not a rule, while the
+consumed entry still carries the modifier the Goblin Boss needs; a condition
+rather than a flag for surprise because it must survive `GameState`
+serialization mid-combat and be visible to the views that already read
+conditions.
+
+**Known cost.** The seeded mock game diverges (every engine change moves the
+RNG stream), so `tests/audio/test_cues.py::test_the_cues_fire_on_a_real_mock_game`,
+which requires a `roll` event (Magic Missile dart or a recharge) inside 8
+rounds of the seed-42 `goblin_ambush` game, no longer finds one: in the new
+course the wizard is down by round 3. That test is bound to a game's course
+rather than to a rule, and `examples/goblin_ambush.json` is being revised
+concurrently, which moves it again.
