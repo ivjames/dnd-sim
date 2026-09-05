@@ -643,6 +643,7 @@ def test_the_docs_describe_the_allowlist_not_an_unset_list():
         assert "env -i" in read(os.path.join(ROOT, doc)), doc
     assert "not a vendor key: this app's own secret" in src
     assert "nowhere else on the box" in src
+    assert "logs [--lines N]" in src and "[-n N]" not in src
 
 
 # There is no box-level key store any more (2026-09-05): nothing in the script
@@ -659,4 +660,3 @@ def test_nothing_still_describes_a_key_store():
             body = body.split("### 2026-09-05 — bin/dndsim — no box-level key store")[0]
         for phrase in NO_STORE:
             assert phrase not in body, "%s still says %r" % (doc, phrase)
-    assert "logs [--lines N]" in src and "[-n N]" not in src
