@@ -50,7 +50,7 @@ _SAVE_DISADVANTAGE = {n: tuple(c.get("save_disadvantage") or ()) for n, c in _CO
 _TURN_FLAGS = (
     "dodging", "disengaged", "sneak_attack_used", "martial_advantage_used",
     "light_weapon_attacked", "cast_bonus_spell", "cast_action_spell",
-    "no_reactions", "multi_index", "moves_taken", "dashes_taken", "turn_ended", "aura_hits",
+    "no_reactions", "multi_used", "moves_taken", "dashes_taken", "turn_ended", "aura_hits",
 )
 
 
@@ -398,18 +398,76 @@ def _best_melee_spec(c: Combatant) -> dict | None:
     return best[1] if best else None
 
 
+def _multiattack_options(c: Combatant) -> list[list[dict]]:
+    """monsters.json `multiattack`: the routines a creature's Attack action may be.
+
+    Either one routine — `["Scimitar", "Scimitar"]` — or, where the SRD says
+    "or", a list of them — `[["Scimitar", "Scimitar", "Dagger"], [...]]`. An
+    entry is an action name or `{"name": ..., "disadvantage": true, "mode":
+    "melee"|"ranged"}`; `mode` pins a melee_or_ranged action to one of its
+    two specs (the Bandit Captain's melee dagger is not its thrown one). A
+    routine is a multiset: the order the SRD lists the attacks in is not a
+    rule, and the entries are consumed name by name as the attacks are made,
+    which is what puts the Goblin Boss's disadvantage on its second scimitar.
+    """
+    raw = (c.stat_block or {}).get("multiattack") or []
+    options = raw if raw and all(isinstance(x, list) for x in raw) else [raw]
+    out: list[list[dict]] = []
+    for opt in options:
+        entries = [{"name": e} if isinstance(e, str) else dict(e) for e in opt]
+        if entries:
+            out.append(entries)
+    return out
+
+
 def _multiattack(c: Combatant) -> list[dict]:
-    """monsters.json: "multiattack": ["Scimitar", "Scimitar"] (ordered names)."""
+    """Every entry of every routine, flattened (the data check reads this)."""
+    return [e for opt in _multiattack_options(c) for e in opt]
+
+
+def _entry_fits(entry: dict, made: dict) -> bool:
+    """Does a routine entry describe an attack `made` = {"name", "ranged"}?"""
+    if entry.get("name") != made.get("name"):
+        return False
+    mode = entry.get("mode")
+    if mode == "ranged" and not made.get("ranged"):
+        return False
+    if mode == "melee" and made.get("ranged"):
+        return False
+    return True
+
+
+def _spec_made(spec: dict) -> dict:
+    return {"name": spec.get("weapon", spec["name"]), "ranged": bool(spec.get("ranged"))}
+
+
+def _routine_left(option: list[dict], used: list[dict]) -> list[dict] | None:
+    """What a routine still allows after the attacks in `used`, or None if they do not fit it."""
+    left = list(option)
+    for made in used:
+        for i, entry in enumerate(left):
+            if _entry_fits(entry, made):
+                left.pop(i)
+                break
+        else:
+            return None
+    return left
+
+
+def _multiattack_remaining(c: Combatant, used: list[dict]) -> list[list[dict]]:
+    """The leftovers of every routine the attacks made so far still fit."""
     out = []
-    for entry in (c.stat_block or {}).get("multiattack") or []:
-        out.append({"name": entry} if isinstance(entry, str) else dict(entry))
+    for opt in _multiattack_options(c):
+        left = _routine_left(opt, used)
+        if left is not None:
+            out.append(left)
     return out
 
 
 def _attacks_per_action(c: Combatant) -> int:
     if c.kind == "pc":
         return 2 if c.has_feature("extra_attack") else 1
-    return max(1, len(_multiattack(c)))
+    return max([len(opt) for opt in _multiattack_options(c)] or [1])
 
 
 def _spec_in_range(state: GameState, a: Combatant, t: Combatant, spec: dict) -> bool:
@@ -475,12 +533,11 @@ def legal_actions(state: GameState, actor_id: str) -> list[ActionTemplate]:
         # ---- weapon attacks
         if action_free or attacks_left > 0 or haste_free:
             specs = _attack_specs(actor)
-            seq = _multiattack(actor)
-            if attacks_left > 0 and seq:
-                idx = int(actor.flags.get("multi_index", 0))
-                if idx < len(seq):
-                    want = seq[idx]["name"]
-                    specs = [s for s in specs if s.get("weapon", s["name"]) == want]
+            used = actor.flags.get("multi_used")
+            if attacks_left > 0 and used is not None:
+                # Mid-routine: only what completes a routine the attacks so far fit.
+                remaining = [e for left in _multiattack_remaining(actor, used) for e in left]
+                specs = [s for s in specs if any(_entry_fits(e, _spec_made(s)) for e in remaining)]
             for spec in specs:
                 _attack_templates(state, actor, spec, add)
         # ---- off-hand (two-weapon fighting)
@@ -1190,21 +1247,18 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
         spec["damage"] = spec["dice"] if spec["mod"] >= 0 else _with_mod(spec["dice"], spec["mod"])
         spec["offhand"] = True
     else:
-        seq = _multiattack(actor)
+        routines = _multiattack_options(actor)
         if int(actor.turn.get("attacks_left", 0)) > 0:
             actor.turn["attacks_left"] -= 1
-            if seq:
-                idx = int(actor.flags.get("multi_index", 0))
-                if idx < len(seq) and seq[idx].get("disadvantage"):
-                    spec = {**spec, "disadvantage": True}
-                actor.flags["multi_index"] = idx + 1
+            if routines:
+                spec = _multiattack_step(actor, spec)
         elif actor.turn.get("action") and actor.turn.get("haste_action"):
             actor.turn["haste_action"] = False  # Haste: one extra weapon attack
         else:
             actor.turn["action"] = True
-            if seq and spec.get("weapon", spec["name"]) == seq[0]["name"]:
-                actor.turn["attacks_left"] = len(seq) - 1
-                actor.flags["multi_index"] = 1
+            if routines:
+                actor.flags["multi_used"] = []
+                spec = _multiattack_step(actor, spec)
             else:
                 actor.turn["attacks_left"] = _attacks_per_action(actor) - 1
         if spec.get("light") and not spec["ranged"]:
@@ -1212,6 +1266,31 @@ def _do_attack(new: GameState, events: list[Event], rng: RNG, actor: Combatant, 
         if spec.get("recharge") is not None:
             actor.resources.setdefault("recharge", {})[spec.get("weapon", spec["name"])] = False
     _resolve_attack(new, events, rng, actor, target, spec)
+
+
+def _multiattack_step(actor: Combatant, spec: dict) -> dict:
+    """Record one attack of a monster's Attack action against its routines.
+
+    The attack consumes the first entry it fits in each routine the attacks
+    so far still fit; the entry it consumes in the first such routine lends
+    the attack its modifier (the Goblin Boss's second scimitar is at
+    disadvantage). `attacks_left` becomes the longest leftover among the
+    routines still fitting — zero when the attack fits none, which is the
+    Goblin Boss's javelin or the Hill Giant's rock: a single attack, not the
+    first of a multiattack.
+    """
+    made = _spec_made(spec)
+    used: list[dict] = list(actor.flags.get("multi_used") or [])
+    for left in _multiattack_remaining(actor, used):
+        entry = next((e for e in left if _entry_fits(e, made)), None)
+        if entry is not None:
+            if entry.get("disadvantage"):
+                spec = {**spec, "disadvantage": True}
+            break
+    used.append(made)
+    actor.flags["multi_used"] = used
+    actor.turn["attacks_left"] = max([len(left) for left in _multiattack_remaining(actor, used)] or [0])
+    return spec
 
 
 def _attack_mode(new: GameState, attacker: Combatant, target: Combatant, spec: dict) -> tuple[str, list[str]]:
