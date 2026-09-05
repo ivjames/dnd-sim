@@ -146,5 +146,13 @@ def test_the_cues_fire_on_a_real_mock_game():
     # slipped past the first test only by never being emitted at all.
     seen = {e["kind"] for e in history}
     assert seen <= (C.UNSCORED_EVENT_KINDS | {c.match["kind"] for c in C.CUES if c.match})
-    assert {"music_combat", "sting_combat_start", "sfx_dice"} <= set(lit), sorted(lit)
+    assert {"music_combat", "sting_combat_start"} <= set(lit), sorted(lit)
+    # A `roll` event is emitted only by a few spells and recharges, so whether
+    # one lands inside this seeded game is a property of the game's course,
+    # not of the cue table; any engine change moves the dice stream. Require
+    # the dice cue only when the engine actually rolled, and prove the match
+    # rule directly below so the cue itself is always exercised.
+    if any(e["kind"] == "roll" for e in history):
+        assert "sfx_dice" in lit, sorted(lit)
+    assert C.cue_for_event(ev("roll"), "sfx").id == "sfx_dice"
     assert any(k.startswith("sfx_dmg_") for k in lit), sorted(lit)
