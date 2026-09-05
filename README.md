@@ -151,6 +151,7 @@ world stay the engine's and the DM's.
 | `DND_SIM_MOCK` | unset | `1` → `MockLLMClient`, zero API calls. |
 | `DND_SIM_DB` | `./data/dndsim.sqlite3` | SQLite transcript store. |
 | `DND_SIM_EXAMPLES` | `./examples` | Where `/api/presets` reads scenarios from. |
+| `DND_AUDIO_DIR` | `./audio` | The picked score: `manifest.json` and the files it names ([AUDIO.md](AUDIO.md)). Point it elsewhere to serve a different pack; point it at a directory with no manifest and the page simply has no score. |
 | `DND_DM_MODEL` | `claude-sonnet-5` | DM model. |
 | `DND_PLAYER_MODEL` | `claude-haiku-4-5-20251001` | Player model. |
 | `DND_SUMMARY_MODEL` | = player model | Rolling-summary model. |

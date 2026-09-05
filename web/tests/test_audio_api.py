@@ -100,6 +100,33 @@ def test_a_pack_with_no_credit_still_plays_and_says_nothing_it_cannot(db_file, t
         app.config["DND_REGISTRY"].shutdown()
 
 
+def test_the_pack_directory_comes_from_the_environment(db_file, tmp_path, monkeypatch):
+    """`DND_AUDIO_DIR` is documented, so it has to be read.
+
+    Flask copies no environment variable into `app.config` by itself, so an
+    operator setting this would have gone on being served the checkout's own
+    pack. `create_app` snapshots it, as it does the write token, and a test
+    still overrides it by passing `config=`.
+    """
+    monkeypatch.setenv("DND_AUDIO_DIR", str(tmp_path / "elsewhere"))
+    app = create_app(db_path=db_file, config={"DND_TTS": None, WRITE_TOKEN_ENV: "t"})
+    try:
+        assert app.config["DND_AUDIO_DIR"] == str(tmp_path / "elsewhere")
+        body = app.test_client().get("/api/audio").get_json()
+        assert body["available"] is False, "it served the checkout's pack, not the one named"
+    finally:
+        app.config["DND_REGISTRY"].shutdown()
+
+
+def test_an_unset_pack_directory_is_the_checkouts_own(db_file, monkeypatch):
+    monkeypatch.delenv("DND_AUDIO_DIR", raising=False)
+    app = create_app(db_path=db_file, config={"DND_TTS": None, WRITE_TOKEN_ENV: "t"})
+    try:
+        assert app.test_client().get("/api/audio").get_json()["available"] is True
+    finally:
+        app.config["DND_REGISTRY"].shutdown()
+
+
 def test_a_server_with_no_pack_says_so_rather_than_erroring(db_file, tmp_path):
     app = app_with(db_file, str(tmp_path / "nothing"))
     try:
